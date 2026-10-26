@@ -63,16 +63,21 @@ if (cmd === 'new-session') {
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'kill-session') {
-  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '').replace(/^\\$/, '$');
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
   if (${JSON.stringify(killSessionFallisce)} && bersaglio !== '') {
     process.stderr.write('operational error\\n'); process.exit(1);
   }
-  fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
+  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
   nota('kill-session:' + bersaglio);
   process.exit(0);
 }
 if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
-if (cmd === 'has-session') process.exit(0);
+if (cmd === 'has-session') {
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
+}
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 process.exit(0);
 `;

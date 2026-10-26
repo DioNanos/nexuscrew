@@ -71,19 +71,26 @@ DIAG=${shellQ(diagnostic)}
 SESS=${shellQ(sessions)}
 ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
+KILLED=${shellQ(path.join(root, 'killed'))}
 cmd="\${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   has-session)
+    # la sessione finta ha id '$1': dopo un kill-session (file KILLED) non
+    # risulta piu' viva per quell'id; ALIVE=0 la dichiara morta sempre.
+    for a in "$@"; do
+      if [ "$a" = '$1' ] && [ -f "$KILLED" ]; then exit 1; fi
+    done
     [ -f "$ALIVE" ] && [ "\$(cat "$ALIVE" 2>/dev/null)" = "0" ] && exit 1
     exit 0 ;;
   list-sessions)
     [ -f "$SESS" ] && cat "$SESS"
     exit 0 ;;
   kill-session)
-    echo "kill-session" >> "$LOG"; exit 0 ;;
+    echo "kill-session" >> "$LOG"; : > "$KILLED"; exit 0 ;;
   new-session)
     env > "$CAP/launch-env.txt" 2>/dev/null || true
     printf '%s\\t' "new-session" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
+    rm -f "$KILLED"
     if [ -s "$POISON" ]; then cat "$POISON" >&2; exit 2; fi
     # il runtime passa sempre -P -F '#{session_id}\t#{window_id}\t#{pane_id}':
     # stampa i 3 ID quando il flag -P e' presente (come tmux reale).
@@ -1011,9 +1018,13 @@ test('restart (builtin): kill-session (down) prima di new-session (up)', async (
   const w = makeWorld();
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    // La cella nasce da UN lancio di questo NC: il down del restart agisce
+    // solo sul record del lancio posseduto (id $1 del fake), non per nome.
+    await fleet.up('Dev');
+    const base = readLog(w).lines.length;
     const res = await fleet.restart('Dev');
     assert.equal(res.ok, true);
-    const { lines } = readLog(w);
+    const lines = readLog(w).lines.slice(base);
     const kill = lines.findIndex((l) => l.startsWith('kill-session'));
     const ns = lines.findIndex((l) => l.startsWith('new-session\t'));
     assert.ok(kill >= 0, 'kill-session lanciato (down)');

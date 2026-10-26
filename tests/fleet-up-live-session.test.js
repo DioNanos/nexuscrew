@@ -69,14 +69,20 @@ if (cmd === 'new-session') {
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'display-message') { process.stdout.write(${JSON.stringify(pronto ? '0\t\t%9\n' : '1\t\t%9\n')}); process.exit(0); }
-if (cmd === 'has-session') process.exit(0);
+if (cmd === 'has-session') {
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
+}
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 if (cmd === 'kill-session') {
   // La sessione muore DAVVERO: senza questo, list-sessions continuerebbe a
   // riportarla e un restart (down + up) troverebbe una sessione viva che non
-  // c'e' piu' - un fake che mente sul proprio stato.
+  // c'e' piu' - un fake che mente sul proprio stato. Il bersaglio puo' essere
+  // il NOME o l'ID ($5) della sessione creata da questo fake.
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
-  fs.writeFileSync(STATO, vive().filter((n) => n !== bersaglio).map((n) => n + '\\n').join(''));
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
   process.exit(0);
 }
 if (cmd === 'set-option' || cmd === 'respawn-pane') process.exit(0);
@@ -194,6 +200,13 @@ test('up su una cella spenta: generazione NUOVA nel payload, e su disco non scri
 
 test('restart: la cella muore e rinasce, con una generazione nuova e coerente', async (t) => {
   const w = mondo(t, { vive: [SESSIONE] });
+  // La sessione simulata e' stata lanciata da QUESTO NC: il record del
+  // lancio (id $5 del fake) lo dimostra. Senza record il down rifiuta —
+  // correttamente — di toccare una sessione che non puo' possedere.
+  const launchTarget = require('../lib/fleet/launch-target.js');
+  assert.equal(launchTarget.registra(w.filesRoot, SESSIONE, {
+    launchId: 'a'.repeat(16), sessionId: '$5', paneId: '%9',
+  }), true, 'record del lancio per la sessione simulata');
   genera(w, 'gen-del-lancio-vero');
 
   await w.runtime.restart('CellaProva');

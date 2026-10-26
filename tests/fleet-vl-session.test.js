@@ -69,8 +69,14 @@ if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.e
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 if (cmd === 'kill-session') {
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
-  fs.writeFileSync(STATO, vive().filter((n) => n !== bersaglio).map((n) => n + '\\n').join(''));
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
   process.exit(0);
+}
+if (cmd === 'has-session') {
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
 }
 process.exit(0);
 `;
