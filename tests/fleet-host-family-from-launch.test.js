@@ -39,7 +39,7 @@ exit 0
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
-  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   let buf = '';
   let n = 0;
   let viva = true;
@@ -81,7 +81,7 @@ process.exit(0);
     cells: [cella],
   });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {} },
+    cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'd'.repeat(64) }),

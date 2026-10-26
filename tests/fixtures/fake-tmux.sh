@@ -7,9 +7,7 @@ echo "$*" >> "${LOG:-/dev/null}"
 # directory del socket, cosi' il processo del canale e i comandi rieseguiti
 # vedono la stessa sessione senza env extra.
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
-  case "$*" in
-    *nc-control-open*) printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1' ;;
-  esac
+  printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
   sock="$2"
   state=$(dirname "$sock")
   n=0

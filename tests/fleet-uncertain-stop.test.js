@@ -35,7 +35,7 @@ const args = argv[0] === '-S' ? argv.slice(2) : argv;
 const STATO = ${JSON.stringify(stato)};
 const KILL = ${JSON.stringify(killLog)};
 if (args[0] === '-C') {
-  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   let buf = '';
   let n = 0;
   process.stdin.setEncoding('utf8');

@@ -397,7 +397,7 @@ const log = (s) => fs.appendFileSync(${JSON.stringify(path.join(dir, 'tmux.log')
 let argv = process.argv.slice(2);
 if (argv[0] === '-S') argv = argv.slice(2);
 if (argv[0] === '-C') {
-  if (argv.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   const { spawnSync } = require('node:child_process');
   let buf = '';
   let n = 0;

@@ -48,7 +48,7 @@ const log = ${JSON.stringify(log)};
 fs.appendFileSync(log, JSON.stringify(args) + '\\n');
 const fail = (name) => { if (stage === name) { process.stderr.write('synthetic ' + name + ' failure\\n'); process.exit(1); } };
 if (args[0] === '-C') {
-  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   let buf = '';
   let n = 0;
   process.stdin.setEncoding('utf8');

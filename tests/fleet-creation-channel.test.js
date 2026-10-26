@@ -36,7 +36,7 @@ const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
   const nato = fs.readFileSync(GEN, 'utf8').trim();
   nota('open:' + nato + ':' + (argv[1] || ''));
-  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   let buf = '';
   let n = 0;
   let viva = true;

@@ -213,22 +213,23 @@ test('verificatore del token: hash giusto ammesso, sbagliato/assente/revocato ri
 
   const spediti = [];
   const spedisci = (frame) => { spediti.push(frame); leaseCtl.sendControl(frame); };
+  const epoca = mgr.controlEpoch(cellId);
 
   // hash SBAGLIATO -> no-op
-  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, payload: { tokenHash: sha256hex('token-sbagliato') } });
+  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, epoch: epoca, payload: { tokenHash: sha256hex('token-sbagliato') } });
   // tokenHash ASSENTE -> no-op
-  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, payload: {} });
+  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, epoch: epoca, payload: {} });
   await new Promise((r) => setTimeout(r, 150));
   assert.strictEqual(controlAlServer.length, 0, 'hash sbagliato o assente: nessuna consegna');
 
   // hash GIUSTO -> consegnato; il token stesso non viaggia MAI
-  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, payload: { tokenHash: sha256hex(token) } });
+  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, epoch: epoca, payload: { tokenHash: sha256hex(token) } });
   await attendi(() => controlAlServer.length === 1);
   assert.ok(spediti.every((x) => !JSON.stringify(x).includes(token)), 'il token non appare in nessun frame spedito');
 
   // revoca a fine lancio: nessun frame piu' ammesso
   assert.strictEqual(mgr.revokeControl(cellId), true);
-  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, payload: { tokenHash: sha256hex(token) } });
+  spedisci({ op: 'stop-ack', requestId: hexId(), launchId, epoch: epoca, payload: { tokenHash: sha256hex(token) } });
   await new Promise((r) => setTimeout(r, 150));
   assert.strictEqual(controlAlServer.length, 1, 'revocato: nessuna nuova consegna');
 });
