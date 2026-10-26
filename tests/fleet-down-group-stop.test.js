@@ -561,7 +561,7 @@ function leaseFinto(modo) {
     status() { return { state: 'none' }; },
     setLaunchSubject() { return true; },
     attendiUscita() {
-      if (modo === 'pulito' || modo === 'residui') return Promise.resolve();
+      if (modo === 'pulito' || modo === 'residui') return Promise.resolve({ provato: true });
       return Promise.reject(new Error('exit unproven'));
     },
     osservaGruppo() {
