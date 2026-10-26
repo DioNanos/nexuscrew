@@ -21,17 +21,51 @@ const gruppo = require('../lib/fleet/group-stop.js');
 
 function hexId() { return crypto.randomBytes(8).toString('hex'); }
 
+test('un candidato illeggibile non conta come zero completo', () => {
+  const rd = fs.readFileSync;
+  const ls = fs.readdirSync;
+  try {
+    fs.readdirSync = (p, ...a) => (p === '/proc' ? ['543210'] : ls(p, ...a));
+    fs.readFileSync = (p, ...a) => {
+      if (p === `/proc/${process.pid}/stat`) return `${process.pid} (probe) S 1 4242 4242 0`;
+      if (p === '/proc/543210/stat') {
+        const err = new Error('synthetic denial');
+        err.code = 'EACCES';
+        throw err;
+      }
+      return rd(p, ...a);
+    };
+    const foto = gruppo.osservaProduzione([]);
+    assert.notEqual(foto.qualita, 'noti');
+  } finally {
+    fs.readFileSync = rd;
+    fs.readdirSync = ls;
+  }
+});
+
 test('classifica: l\'ammissione non e\' l\'esito, la deadline scaduta nemmeno', () => {
   assert.equal(gruppo.classificaEsito({ ack: true, ready: null, commit: null, report: null, eof: false }).outcome, 'stop-unknown');
   assert.equal(gruppo.classificaEsito({ ack: true, ready: { conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } }, eof: false }).outcome, 'stop-unknown');
   assert.equal(gruppo.classificaEsito({
     ready: { conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } }, eof: true,
+  }).outcome, 'stop-unknown');
+  assert.equal(gruppo.classificaEsito({
+    ready: { conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } },
+    uscito: true, dopo: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' },
   }).outcome, 'killed-clean');
   assert.equal(gruppo.classificaEsito({
     commit: { conti: { inGruppo: 0, fuoriGruppo: 1, qualita: 'noti' } }, eof: true,
-  }).outcome, 'killed-after-escalation');
+  }).outcome, 'stop-unknown');
   assert.equal(gruppo.classificaEsito({
     commit: { conti: { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' } }, eof: true,
+  }).outcome, 'stop-unknown');
+  assert.equal(gruppo.classificaEsito({
+    commit: { conti: { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' } },
+    uscito: true, dopo: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' },
+  }).outcome, 'killed-after-escalation');
+  assert.equal(gruppo.classificaEsito({
+    commit: { conti: { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' } },
+    uscito: true, dopo: { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' },
   }).outcome, 'stop-incomplete');
   assert.equal(gruppo.classificaEsito({
     ready: { conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti' } }, eof: true,
@@ -375,7 +409,7 @@ test('canale vero: ready-to-exit e EOF diventano killed-clean, il solo ack no', 
     // resta. Qui l'attesa include la chiusura: rivalutiamo solo se manca.
     resolve(esito);
   });
-  assert.equal(finale.outcome, 'killed-clean', JSON.stringify(esito));
+  assert.equal(finale.outcome, 'stop-unknown', JSON.stringify(esito));
   assert.ok(visti.some((f) => f.op === 'stop-ack'));
   assert.ok(visti.some((f) => f.op === 'ready-to-exit'));
   assert.equal(visti.some((f) => JSON.stringify(f).includes(token)), false);
@@ -518,17 +552,15 @@ function leaseFinto(modo) {
   };
 }
 
-test('down: gruppo pulito poi teardown, esito killed-clean', async (t) => {
+test('down: ready e EOF senza uscita osservata non sono uno stop pulito', async (t) => {
   const lease = leaseFinto('pulito');
   const w = mondo(t, lease);
   await w.runtime.up('CellaGS');
-  const esito = await w.runtime.down('CellaGS');
-  assert.equal(esito.killed, true);
-  assert.equal(esito.outcome, 'killed-clean');
-  assert.equal(esito.conti.inGruppo, 0);
-  assert.equal(w.sessioni().length, 0);
+  await assert.rejects(
+    () => w.runtime.down('CellaGS'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN',
+  );
   assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
-  assert.ok(w.log().some((r) => r.startsWith('kill-session:')));
 });
 
 test('down: solo ack non e\' successo, kill-session resta, restart non rilancia', async (t) => {
