@@ -70,3 +70,22 @@ test('lease-client svuota bounds drain with timeout and handles closed socket', 
 
   if (typeof client.stop === 'function') client.stop();
 });
+
+test('pending cancel delivery must be bounded by stop deadline', async () => {
+  const result = await Promise.race([
+    gruppo.eseguiFaseStop({
+      frame: { payload: { deadlineMs: 20 }, requestId: hexId(), epoch: 1 },
+      tokenHash: 'a'.repeat(64),
+      launchId: hexId(),
+      monoNow: () => 0,
+      sleep: async () => {},
+      killGruppo: () => {},
+      osserva: () => ({ inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }),
+      invia: () => {},
+      svuota: async () => true,
+      cancellaDelivery: () => new Promise(() => {}),
+    }).then(() => 'bounded'),
+    new Promise((r) => setTimeout(() => r('pending'), 100)),
+  ]);
+  assert.equal(result, 'bounded');
+});
