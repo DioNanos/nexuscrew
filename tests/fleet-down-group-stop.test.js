@@ -428,7 +428,7 @@ test('canale vero: ready-to-exit e EOF diventano killed-clean, il solo ack no', 
     // resta. Qui l'attesa include la chiusura: rivalutiamo solo se manca.
     resolve(esito);
   });
-  assert.equal(finale.outcome, 'stop-unknown', JSON.stringify(esito));
+  assert.equal(finale.outcome, 'killed-clean', JSON.stringify(esito));
   assert.ok(visti.some((f) => f.op === 'stop-ack'));
   assert.ok(visti.some((f) => f.op === 'ready-to-exit'));
   assert.equal(visti.some((f) => JSON.stringify(f).includes(token)), false);
@@ -546,6 +546,10 @@ function leaseFinto(modo) {
     controlLaunchId() { return idArmato; },
     status() { return { state: 'none' }; },
     setLaunchSubject() { return true; },
+    osservaGruppo() {
+      if (modo === 'residui') return { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' };
+      return null;
+    },
     ascoltaControl(fn) { ascoltatori.push(fn); return () => {}; },
     suChiusuraControl(_id, cb) { chiusura = cb; return () => { chiusura = null; }; },
     sendControl(cellId, frame) {
@@ -561,6 +565,17 @@ function leaseFinto(modo) {
             payload: { ...base.payload, conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } },
           });
           if (chiusura) chiusura();
+        } else if (modo === 'residui') {
+          for (const fn of ascoltatori) fn(cellId, {
+            ...base, op: 'escalate-commit',
+            payload: { ...base.payload, conti: { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' } },
+          });
+          if (chiusura) chiusura();
+        } else if (modo === 'senza-eof') {
+          for (const fn of ascoltatori) fn(cellId, {
+            ...base, op: 'ready-to-exit',
+            payload: { ...base.payload, conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } },
+          });
         } else if (modo === 'solo-ack') {
           for (const fn of ascoltatori) fn(cellId, { ...base, op: 'stop-ack' });
         } else if (modo === 'eof-senza-impegno') {
@@ -572,15 +587,38 @@ function leaseFinto(modo) {
   };
 }
 
-test('down: ready e EOF senza uscita osservata non sono uno stop pulito', async (t) => {
+test('down: gruppo pulito con uscita e osservazione residui zero, esito killed-clean', async (t) => {
   const lease = leaseFinto('pulito');
+  const w = mondo(t, lease);
+  await w.runtime.up('CellaGS');
+  const esito = await w.runtime.down('CellaGS');
+  assert.equal(esito.killed, true);
+  assert.equal(esito.outcome, 'killed-clean');
+  assert.equal(w.sessioni().length, 0);
+  assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
+  assert.ok(w.log().some((r) => r.startsWith('kill-session:')));
+});
+
+test('down: proc incompleto con processi residui rifiuta teardown', async (t) => {
+  const lease = leaseFinto('residui');
   const w = mondo(t, lease);
   await w.runtime.up('CellaGS');
   await assert.rejects(
     () => w.runtime.down('CellaGS'),
-    (e) => e.fleetCode === 'STOP_UNKNOWN',
+    (e) => e.fleetCode === 'STOP_INCOMPLETE' && e.data.outcome === 'stop-incomplete',
   );
-  assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+});
+
+test('down: pronto senza EOF rifiuta teardown alla deadline', async (t) => {
+  const lease = leaseFinto('senza-eof');
+  const w = mondo(t, lease);
+  await w.runtime.up('CellaGS');
+  await assert.rejects(
+    () => w.runtime.down('CellaGS'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN' && e.data.outcome === 'stop-unknown',
+  );
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
 });
 
 test('down: solo ack non e\' successo, la sessione resta, restart non rilancia', async (t) => {
