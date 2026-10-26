@@ -465,7 +465,30 @@ function customWorld(t, { engineExtra = {} } = {}) {
   fs.writeFileSync(tmuxBin, `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
+if (args[0] === '-C') {
+  if (args.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  const { spawnSync } = require('node:child_process');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
 const log = ${JSON.stringify(log)};
 const nato = ${JSON.stringify(natoFile)};
 fs.appendFileSync(log, JSON.stringify(args) + '\\n');

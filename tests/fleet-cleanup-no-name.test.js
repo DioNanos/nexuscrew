@@ -46,7 +46,8 @@ function mondo(t) {
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
 const STATO = ${JSON.stringify(statoPath)};
 const KILLLOG = ${JSON.stringify(killLog)};
 const cmd = args[0] || '';

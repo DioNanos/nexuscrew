@@ -394,15 +394,39 @@ function writeFakeTmux(dir, cfg) {
 const fs = require('node:fs');
 const cfg = ${JSON.stringify(cfg)};
 const log = (s) => fs.appendFileSync(${JSON.stringify(path.join(dir, 'tmux.log'))}, s + '\\n');
-const cmd = process.argv[2] || '';
+let argv = process.argv.slice(2);
+if (argv[0] === '-S') argv = argv.slice(2);
+if (argv[0] === '-C') {
+  if (argv.includes('nc-control-open')) process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  const { spawnSync } = require('node:child_process');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+const cmd = argv[0] || '';
 const out = (s) => process.stdout.write(s);
-const fmt = process.argv[process.argv.length - 1] || '';
-const tgt = (() => { const i = process.argv.indexOf('-t'); return i >= 0 ? process.argv[i + 1] : ''; })();
+const fmt = argv[argv.length - 1] || '';
+const tgt = (() => { const i = argv.indexOf('-t'); return i >= 0 ? argv[i + 1] : ''; })();
 const sess = (() => { const m = /^=([^:]+):?$/.exec(tgt); return m ? m[1] : 'work-kimi'; })();
 switch (cmd) {
   case 'new-session':
     log('new-session');
-    if (process.argv.includes('-P')) out('$1\\t@1\\t%42\\n');
+    if (argv.includes('-P')) out('$1\\t@1\\t%42\\n');
     process.exit(0);
   case 'has-session':
     process.exit(0);
@@ -417,7 +441,7 @@ switch (cmd) {
     process.exit(0);
   case 'load-buffer': case 'paste-buffer': case 'delete-buffer': case 'send-keys':
   case 'set-option': case 'set-hook': case 'respawn-pane':
-    log(process.argv.slice(2).join(' '));
+    log(argv.join(' '));
     process.exit(0);
   case 'kill-session':
     log('kill-session');
