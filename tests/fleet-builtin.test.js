@@ -438,7 +438,8 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
     assert.deepEqual(alternate, ['-t', '=work-build:', '-w', 'alternate-screen', 'off'],
       'alternate-screen disabilitato solo per la sessione Fleet');
     const hook = (byCmd['set-hook'] || []).find((a) => a.includes('after-new-window'));
-    assert.deepEqual(hook, ['-t', '=work-build:', 'after-new-window', 'set-option -w alternate-screen off'],
+    assert.equal((hook || []).join(' ').replace(/'/g, ''),
+      '-t =work-build: after-new-window set-option -w alternate-screen off',
       'nuove finestre della stessa sessione ereditano alternate-screen off');
     assert.equal([...alternate, ...hook].includes('-g'), false, 'nessuna opzione tmux globale viene toccata');
     // il vero child (cell-exec via broker) e' lanciato da respawn-pane sul %N esatto
@@ -498,6 +499,24 @@ test('early exit: cattura bounded/redacted, exit code e rimuove il pane diagnost
   try {
     const script = `#!/bin/sh
 LOG=${shellQ(w.log)}
+if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  case "$*" in
+    *nc-control-open*) printf '%s\\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1' ;;
+  esac
+  sock="$2"
+  n=0
+  while IFS= read -r riga; do
+    n=$((n + 1))
+    [ -z "$riga" ] && continue
+    out=$("$0" -S "$sock" $riga 2>/dev/null)
+    rc=$?
+    printf '%%begin 1 %s 1\\n' "$n"
+    [ -n "$out" ] && printf '%s\\n' "$out"
+    if [ "$rc" = "0" ]; then printf '%%end 1 %s 1\\n' "$n"; else printf '%%error 1 %s 1\\n' "$n"; fi
+  done
+  exit 0
+fi
+if [ "$1" = "-S" ]; then shift 2; fi
 case "$1" in
   new-session) printf '%s\\t%s\\t%s\\n' '$1' '@1' '%9'; exit 0 ;;
   display-message) printf '1\\t7\\t%%9\\n'; exit 0 ;;
