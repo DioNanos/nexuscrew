@@ -392,10 +392,14 @@ function writeFakeTmux(dir, cfg) {
   const body = `#!/usr/bin/env node
 'use strict';
 const fs = require('node:fs');
+const path = require('node:path');
 const cfg = ${JSON.stringify(cfg)};
+const stateDir = ${JSON.stringify(path.join(dir, '.sessions'))};
+try { fs.mkdirSync(stateDir, { recursive: true }); } catch (_) {}
 const log = (s) => fs.appendFileSync(${JSON.stringify(path.join(dir, 'tmux.log'))}, s + '\\n');
 let argv = process.argv.slice(2);
-if (argv[0] === '-S') argv = argv.slice(2);
+let socketArg = '';
+if (argv[0] === '-S') { socketArg = argv[1]; argv = argv.slice(2); }
 if (argv[0] === '-C') {
   process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
   const { spawnSync } = require('node:child_process');
@@ -411,7 +415,7 @@ if (argv[0] === '-C') {
       if (!riga) continue;
       if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
       n += 1;
-      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      const r = spawnSync(process.execPath, [__filename, '-S', socketArg || 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
       if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
       else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
     }
@@ -423,13 +427,28 @@ const cmd = argv[0] || '';
 const out = (s) => process.stdout.write(s);
 const fmt = argv[argv.length - 1] || '';
 const tgt = (() => { const i = argv.indexOf('-t'); return i >= 0 ? argv[i + 1] : ''; })();
-const sess = (() => { const m = /^=([^:]+):?$/.exec(tgt); return m ? m[1] : 'work-kimi'; })();
+const cleanTgt = tgt.replace(/^=/, '').replace(/:.*$/, '');
+const sIdx = argv.indexOf('-s');
+const sessName = sIdx >= 0 ? argv[sIdx + 1] : '';
+const sess = (() => { const m = /^=([^:]+):?$/.exec(tgt); return m ? m[1] : (sessName || cleanTgt || 'work-kimi'); })();
+const fileFor = (s) => path.join(stateDir, encodeURIComponent(s || 'work-kimi'));
+
 switch (cmd) {
   case 'new-session':
     log('new-session');
-    if (argv.includes('-P')) out('$1\\t@1\\t%42\\n');
+    try { fs.writeFileSync(fileFor(sess), '1'); } catch (_) {}
+    if (sessName) { try { fs.writeFileSync(fileFor(sessName), '1'); } catch (_) {} }
+    if (argv.includes('-P')) {
+      try { fs.writeFileSync(fileFor('$1'), '1'); } catch (_) {}
+      out('$1\\t@1\\t%42\\n');
+    }
     process.exit(0);
   case 'has-session':
+    log('has-session ' + argv.join(' '));
+    const targetToCheck = cleanTgt || sess;
+    if (fs.existsSync(fileFor(targetToCheck))) {
+      process.exit(0);
+    }
     process.exit(1);
   case 'display-message':
     log('display-message ' + fmt);
@@ -446,6 +465,10 @@ switch (cmd) {
     process.exit(0);
   case 'kill-session':
     log('kill-session');
+    const targetToRemove = cleanTgt || sess;
+    try { fs.unlinkSync(fileFor(targetToRemove)); } catch (_) {}
+    try { fs.unlinkSync(fileFor(sess)); } catch (_) {}
+    try { fs.unlinkSync(fileFor('$1')); } catch (_) {}
     process.exit(0);
   default:
     process.exit(0);
@@ -1602,6 +1625,7 @@ test('runtime: il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di 
     assert.equal(activityFiles.scriviRecordTerminale(dir, {
       launchId: gen1, reason: 'lease-lost', ora: 1,
     }), true);
+    await w.runtime.down('Dev');
     await w.runtime.up('Dev');
     const gen2 = w.ticket().activity.generation;
     assert.notEqual(gen2, gen1);
@@ -2266,7 +2290,10 @@ for (const hooksOff of [false, true]) test(`registry: unreadable newer primary t
     const a = w.mkRuntime();
     assert.equal((await a.runtime.up('Dev')).ok, true);
     fs.chmodSync(q, 0o500);
-    for (let i = 0; i < 2; i += 1) assert.equal((await a.runtime.up('Dev')).ok, true);
+    for (let i = 0; i < 2; i += 1) {
+      await a.runtime.down('Dev');
+      assert.equal((await a.runtime.up('Dev')).ok, true);
+    }
     const idA = a.ticket().activity.generation;
     assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
     const old = JSON.parse(fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'));
@@ -2378,7 +2405,10 @@ for (const hooksOff of [false, true]) test(`registry: unreadable newer spare the
     const a = w.mkRuntime();
     assert.equal((await a.runtime.up('Dev')).ok, true);
     fs.chmodSync(p, 0o500);
-    for (let i = 0; i < 2; i += 1) assert.equal((await a.runtime.up('Dev')).ok, true);
+    for (let i = 0; i < 2; i += 1) {
+      await a.runtime.down('Dev');
+      assert.equal((await a.runtime.up('Dev')).ok, true);
+    }
     const idA = a.ticket().activity.generation;
     assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
     const old = JSON.parse(fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'));
