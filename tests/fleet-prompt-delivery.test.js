@@ -430,7 +430,7 @@ switch (cmd) {
     if (argv.includes('-P')) out('$1\\t@1\\t%42\\n');
     process.exit(0);
   case 'has-session':
-    process.exit(0);
+    process.exit(1);
   case 'display-message':
     log('display-message ' + fmt);
     if (fmt.includes('@nc_delivery')) { out((cfg.delivery || '') + '\\n'); process.exit(0); }
