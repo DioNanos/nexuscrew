@@ -4,7 +4,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -76,6 +75,7 @@ process.stdout.write(gia ? '{"state":"none"}\\n' : '{"state":"live"}\\n');
   assert.equal(pin.ok, true);
   const esito = await host.fermaHost({
     record: rec, bin: pin.path, budgetMs: 4000, monoNow: () => Date.now(),
+    isolamento: 'isolato',
   });
   assert.equal(esito.outcome, 'host-stopped-clean');
   const vistoJson = JSON.parse(fs.readFileSync(visto, 'utf8'));
@@ -127,7 +127,8 @@ process.stdout.write('{"state":"lock"}\\n');
   const pin = host.pinBinario({ source: bin, home, owner: 'local', cellId: 'Cella' });
   const esito = await host.fermaHost({ record: rec, bin: pin.path, budgetMs: 4000, monoNow: () => Date.now() });
   assert.equal(esito.outcome, 'host-stop-failed');
-  assert.equal(esito.code, 'BARRIER');
+  assert.equal(esito.code, 'IDENTITY_UNKNOWN');
+  assert.equal(esito.spawned, 1);
 });
 
 test('shutdown appeso: muore solo il CLI, l\'host resta', async () => {
@@ -145,7 +146,7 @@ setInterval(() => {}, 1000);
     record: rec, bin: pin.path, budgetMs: 1500, monoNow: () => Date.now(),
   });
   assert.equal(esito.outcome, 'host-stop-failed');
-  assert.equal(esito.code, 'TIMEOUT');
+  assert.equal(esito.code, 'IDENTITY_UNKNOWN');
   assert.equal(fs.readFileSync(hostVivo, 'utf8'), '1');
   assert.ok(Date.now() - t0 < 8000);
 });
@@ -191,19 +192,23 @@ test('cache pin non corrispondente: quarantena e ricopia', async () => {
   assert.ok(fs.readdirSync(dir).some((n) => n.includes('corrupt')));
 });
 
-test('host nel gruppo del pane: nessun spawn', async () => {
+test('un flag booleano non autorizza ne rifiuta lo stop', async () => {
   const home = casa();
-  let nati = 0;
-  const bin = scriviBin(path.join(home, 'vl'), '#!/bin/sh\nexit 0\n');
+  const bin = scriviBin(path.join(home, 'vl'), `#!${process.execPath}
+process.stdout.write('{"state":"live","pid":4242}\\n');
+`);
   const rec = recordDi(home, bin);
+  const visti = [];
   const esito = await host.fermaHost({
     record: rec, bin, budgetMs: 2000, monoNow: () => Date.now(), nelGruppo: true,
-    spawnImpl: () => { nati += 1; return spawn(process.execPath, ['-e', 'process.exit(0)']); },
+    spawnImpl: (b, args) => {
+      visti.push(args[0]);
+      return procEsito('{"state":"live","pid":4242}\n', 0);
+    },
   });
   assert.equal(esito.outcome, 'host-stop-failed');
-  assert.equal(esito.code, 'HOST_IN_GROUP');
-  assert.equal(nati, 0);
-  assert.equal(esito.spawned, 0);
+  assert.equal(esito.code, 'IDENTITY_UNKNOWN');
+  assert.deepEqual(visti, ['host']);
 });
 
 test('cella non vl non e un esito di questo modulo: il record si legge e si scrive', () => {
