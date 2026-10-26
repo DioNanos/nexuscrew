@@ -15,6 +15,7 @@ if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
   while IFS= read -r riga; do
     n=$((n + 1))
     [ -z "$riga" ] && continue
+    [ "$riga" = "display-message -p nc-control-open" ] && continue
     out=$("$0" -S "$sock" $riga 2>"$errf")
     rc=$?
     printf '%%begin 1 %s 1\n' "$n"

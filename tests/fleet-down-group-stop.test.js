@@ -460,6 +460,7 @@ if (args[0] === '-C') {
     while ((i = buf.indexOf('\\n')) >= 0) {
       const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
       if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
       n += 1;
       const { spawnSync } = require('node:child_process');
       const r = spawnSync(process.execPath, [__filename, '-S', 'x'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });

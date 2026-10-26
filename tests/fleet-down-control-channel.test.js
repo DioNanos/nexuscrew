@@ -52,6 +52,7 @@ if (args[0] === '-C') {
     while ((i = buf.indexOf('\\n')) >= 0) {
       const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
       if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
       if (riga.startsWith('kill-session') && fs.existsSync(MUORI_SU_KILL)) process.exit(0);
       n += 1;
       const r = spawnSync(process.execPath,

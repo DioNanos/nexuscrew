@@ -182,6 +182,7 @@ if (args[0] === '-C') {
       const riga = buf.slice(0, i).trim();
       buf = buf.slice(i + 1);
       if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
       n += 1;
       if (riga.startsWith('kill-session')) fs.appendFileSync(${JSON.stringify(killPath)}, 'kill\\n');
       process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
