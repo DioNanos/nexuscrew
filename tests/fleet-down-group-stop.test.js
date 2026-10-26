@@ -419,7 +419,12 @@ test('canale vero: ready-to-exit e EOF diventano killed-clean, il solo ack no', 
     monoNow: () => Number(process.hrtime.bigint() / 1000000n),
     deadlineAt: Number(process.hrtime.bigint() / 1000000n) + 2000,
     graziaMs: 400,
-    attendiUscita: async () => { if (coord.attiva()) await coord.attiva(); },
+    attendiUscita: async () => {
+      // Prova reale: l'attesa del coordinatore (supervisore simulato) risolta
+      // e' il riscontro d'uscita, distinto dalla chiusura del canale.
+      if (coord.attiva()) await coord.attiva();
+      return { provato: true };
+    },
     osserva: () => ({ inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }),
   });
   // Il coordinatore esce chiudendo il socket: senza EOF l'esito non e' pulito.
@@ -453,7 +458,14 @@ const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
   process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
   let n = 0; let buf = '';
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (c) => {
