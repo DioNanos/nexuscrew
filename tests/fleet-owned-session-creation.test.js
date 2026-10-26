@@ -248,6 +248,7 @@ test('deterministic: 8. positivo sul lancio originale: collaudo reale con tmux 3
     await res.canale.killSession('real-owned-test');
     res.canale.chiudi();
   } finally {
+    try { spawnSync('/usr/bin/tmux', ['-S', sock, 'kill-server']); } catch (_) {}
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
