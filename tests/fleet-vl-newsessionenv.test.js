@@ -68,6 +68,14 @@ test('verifyLauncherCaps: manifest JSON non valido o malformato -> MANIFEST_INVA
     const r2 = verifyLauncherCaps(launcher);
     assert.equal(r2.ok, false);
     assert.equal(r2.code, 'MANIFEST_MALFORMED');
+
+    // Non parsabile con sentinella privata
+    fs.writeFileSync(`${launcher}.nc-caps.json`, 'S4_PRIVATE_SENTINEL deliberately invalid');
+    const r3 = verifyLauncherCaps(launcher);
+    assert.equal(r3.ok, false);
+    assert.equal(r3.code, 'MANIFEST_INVALID_JSON');
+    assert.equal(r3.reason, 'manifest non parsabile');
+    assert.ok(!r3.reason.includes('S4_PRIVATE'));
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
@@ -476,6 +484,31 @@ test('adattatore: hash mismatch tra launcher e manifest -> 400 LAUNCHER_UNSUPPOR
     assert.equal(e.status, 400);
     assert.equal(e.fleetCode, 'LAUNCHER_UNSUPPORTED');
     assert.match(e.message, /non corrisponde/);
+    return true;
+  });
+
+  const st = fleet.vlNewSessionState('CellaAdapter');
+  assert.equal(st.state, 'pending');
+  assert.equal(w.tickets.length, 0);
+});
+
+test('adattatore: runtime route error must not leak manifest excerpts or launcher pathname', async (t) => {
+  const w = fakeAdapterMondo(t, {
+    modifyLauncher: (bin) => {
+      fs.writeFileSync(`${bin}.nc-caps.json`, 'S4_PRIVATE_SENTINEL deliberately invalid');
+    },
+  });
+  const fleet = await w.fleet();
+
+  await fleet.vlNewSession('CellaAdapter');
+
+  await assert.rejects(() => fleet.up('CellaAdapter'), (e) => {
+    assert.equal(e.status, 400);
+    assert.equal(e.fleetCode, 'LAUNCHER_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    assert.equal(e.message, 'launcher non compatibile con newSessionEnv: manifest non parsabile');
+    assert.ok(!e.message.includes('S4_PRIVATE'));
+    assert.ok(!e.message.includes(w.launcherBin));
     return true;
   });
 
