@@ -7,6 +7,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+// Percorso assoluto via __dirname: il modulo resta caricabile anche quando
+// questo file viene eseguito in un contesto con require reindirizzato.
+const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
 function createHarness(options = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dup-'));
@@ -127,10 +130,9 @@ function createHarness(options = {}) {
           try {
             process.kill(serverPid, 'SIGKILL');
           } catch (_) {}
-          try {
-            const psOut = spawnSync('ps', ['-p', String(serverPid), '-o', 'pid='], { encoding: 'utf8', timeout: 2000 });
-            assert.equal(String(psOut.stdout || '').trim(), '', `il server tmux ${serverPid} deve essere terminato`);
-          } catch (_) {}
+          // Verifica obbligatoria di terminazione, FUORI da ogni catch: un
+          // server superstite — o una ps senza verdetto — fa fallire il test.
+          verificaUscitaServer(spawnSync, serverPid);
         }
       }
     }

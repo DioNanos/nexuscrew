@@ -8,6 +8,9 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
 const tmuxControl = require('../lib/fleet/tmux-control.js');
+// Percorso assoluto via __dirname: il modulo resta caricabile anche quando
+// questo file viene eseguito in un contesto con require reindirizzato.
+const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -384,10 +387,9 @@ test('deterministic: 8. positivo sul lancio originale: collaudo reale con tmux 3
         spawnSync('sleep', ['0.05']);
       }
       try { process.kill(serverPid, 'SIGKILL'); } catch (_) {}
-      try {
-        const psOut = spawnSync('ps', ['-p', String(serverPid), '-o', 'pid='], { encoding: 'utf8', timeout: 2000 });
-        assert.equal(String(psOut.stdout || '').trim(), '', `il server tmux ${serverPid} deve essere terminato`);
-      } catch (_) {}
+      // Verifica obbligatoria di terminazione, FUORI da ogni catch: un
+      // server superstite — o una ps senza verdetto — fa fallire il test.
+      verificaUscitaServer(spawnSync, serverPid);
     }
     fs.rmSync(tmp, { recursive: true, force: true });
   }
