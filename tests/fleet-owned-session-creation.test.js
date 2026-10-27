@@ -332,6 +332,7 @@ test('deterministic: 8. positivo sul lancio originale: collaudo reale con tmux 3
 
   const tmp = makeTempDir('nc-real-collaudo-');
   const sock = path.join(tmp, 'private.sock');
+  let serverPid = null;
   try {
     const res = await tmuxControl.creaSessionePosseduta({
       tmuxBin: '/usr/bin/tmux',
@@ -355,6 +356,11 @@ test('deterministic: 8. positivo sul lancio originale: collaudo reale con tmux 3
     assert.equal(att.ok, true);
     assert.equal(att.testo[0], '1', 'il client posseduto risulta attaccato');
 
+    const pidMsg = await res.canale.chiama('display-message', ['-p', '#{pid}']);
+    if (pidMsg.ok && pidMsg.testo && /^\d+$/.test(pidMsg.testo[0])) {
+      serverPid = Number(pidMsg.testo[0]);
+    }
+
     // dimensioni fissate a 80x24
     const sz = await res.canale.chiama('display-message', ['-p', '#{window_width}x#{window_height}']);
     assert.equal(sz.ok, true);
@@ -367,6 +373,22 @@ test('deterministic: 8. positivo sul lancio originale: collaudo reale con tmux 3
     try {
       spawnSync('/usr/bin/tmux', ['-S', sock, 'kill-server'], { timeout: 5000 });
     } catch (_) {}
+    if (serverPid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try {
+          process.kill(serverPid, 0);
+        } catch (e) {
+          if (e && e.code === 'ESRCH') break;
+        }
+        spawnSync('sleep', ['0.05']);
+      }
+      try { process.kill(serverPid, 'SIGKILL'); } catch (_) {}
+      try {
+        const psOut = spawnSync('ps', ['-p', String(serverPid), '-o', 'pid='], { encoding: 'utf8', timeout: 2000 });
+        assert.equal(String(psOut.stdout || '').trim(), '', `il server tmux ${serverPid} deve essere terminato`);
+      } catch (_) {}
+    }
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });

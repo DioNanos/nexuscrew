@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 
 function createHarness(options = {}) {
@@ -85,7 +86,61 @@ function createHarness(options = {}) {
     boot: defs,
   });
 
-  return { home, defs, runtime, events, targets, alive: () => alive, cleanup: () => fs.rmSync(home, { recursive: true, force: true }) };
+  const cleanup = async () => {
+    try {
+      if (runtime && typeof runtime.shutdown === 'function') {
+        runtime.shutdown();
+      }
+    } catch (_) {}
+
+    const runDir = path.join(home, '.nexuscrew', 'run');
+    if (fs.existsSync(runDir)) {
+      let socks = [];
+      try {
+        socks = fs.readdirSync(runDir)
+          .filter((f) => f.endsWith('.sock'))
+          .map((f) => path.join(runDir, f));
+      } catch (_) {}
+
+      for (const sock of socks) {
+        let serverPid = null;
+        try {
+          const pidOut = spawnSync('/bin/tmux', ['-S', sock, 'display-message', '-p', '#{pid}'], { encoding: 'utf8', timeout: 2000 });
+          const n = Number(String(pidOut.stdout || '').trim());
+          if (Number.isInteger(n) && n > 0) serverPid = n;
+        } catch (_) {}
+
+        try {
+          spawnSync('/bin/tmux', ['-S', sock, 'kill-server'], { timeout: 5000 });
+        } catch (_) {}
+
+        if (serverPid) {
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            try {
+              process.kill(serverPid, 0);
+            } catch (e) {
+              if (e && e.code === 'ESRCH') break;
+            }
+            spawnSync('sleep', ['0.05']);
+          }
+          try {
+            process.kill(serverPid, 'SIGKILL');
+          } catch (_) {}
+          try {
+            const psOut = spawnSync('ps', ['-p', String(serverPid), '-o', 'pid='], { encoding: 'utf8', timeout: 2000 });
+            assert.equal(String(psOut.stdout || '').trim(), '', `il server tmux ${serverPid} deve essere terminato`);
+          } catch (_) {}
+        }
+      }
+    }
+
+    try {
+      fs.rmSync(home, { recursive: true, force: true });
+    } catch (_) {}
+  };
+
+  return { home, defs, runtime, events, targets, alive: () => alive, cleanup };
 }
 
 test('second up of a live owned cell is rejected with 409 SESSION_DUPLICATE', async () => {
@@ -104,7 +159,7 @@ test('second up of a live owned cell is rejected with 409 SESSION_DUPLICATE', as
       },
     );
   } finally {
-    h.cleanup();
+    await h.cleanup();
   }
 });
 
@@ -122,7 +177,7 @@ test('repeated boot preserves live cell and refuses duplicate launch', async () 
     const newSessionsAfter = h.events.filter((e) => e.startsWith('tmux:new-session')).length;
     assert.equal(newSessionsBefore, newSessionsAfter, 'no new tmux session created on duplicate up');
   } finally {
-    h.cleanup();
+    await h.cleanup();
   }
 });
 
@@ -143,6 +198,6 @@ test('engine definition changed after launch still sees live cell and rejects du
       },
     );
   } finally {
-    h.cleanup();
+    await h.cleanup();
   }
 });
