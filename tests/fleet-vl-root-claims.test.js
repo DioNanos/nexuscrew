@@ -316,3 +316,40 @@ test('budget esaurito durante la preparazione rifiuta prima dello spawn', async 
     fs.readFileSync = read;
   }
 });
+
+test('il pin e una copia privata: la sorgente sostituita non entra nel pin', () => {
+  const { spawnSync } = require('node:child_process');
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-pin-copia-'));
+  const source = path.join(base, 'helper.js');
+  const stage = path.join(base, 'stage');
+  const a = 'process.stdout.write("A")\n';
+  const b = 'process.stdout.write("B")\n';
+  const atteso = crypto.createHash('sha256').update(a).digest('hex');
+  const read = fs.readFileSync;
+  const hash = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+  fs.writeFileSync(source, a, { mode: 0o700 });
+  let cambiata = false;
+  let p;
+  try {
+    fs.readFileSync = (file, ...rest) => {
+      const data = read(file, ...rest);
+      if (file === source && !cambiata) {
+        cambiata = true;
+        fs.writeFileSync(source, b);
+      }
+      return data;
+    };
+    p = radici.pinna(source, atteso, stage);
+  } finally {
+    fs.readFileSync = read;
+  }
+  assert.equal(cambiata, true);
+  assert.equal(p.ok, true);
+  assert.equal(hash(read(p.path)), atteso, 'il pin contiene i byte verificati, non la sorgente riscritta');
+  const eseguito = spawnSync(process.execPath, [p.path], { encoding: 'utf8', timeout: 2000 });
+  assert.equal(eseguito.status, 0);
+  assert.equal(eseguito.stdout, 'A');
+  fs.writeFileSync(source, b);
+  assert.equal(hash(read(p.path)), atteso, 'il pin ammesso non cambia con la sorgente');
+  assert.notEqual(fs.statSync(source).ino, fs.statSync(p.path).ino, 'il pin non e un alias della sorgente');
+});
