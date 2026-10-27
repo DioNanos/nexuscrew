@@ -936,3 +936,148 @@ test('P1-4: identity con formato valido (hex 16) accettata; reconnect con proof 
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+test('attendiUscita: returns false when panePid is absent or invalid (no socket EOF as exit)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-nopid-'));
+  const clock = { t: 10_000 };
+  let mgr = null;
+  try {
+    mgr = createLeaseManager({ home, log: () => {} }, { now: () => clock.t });
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+    const { PassThrough } = require('node:stream');
+    const pair = new PassThrough();
+    mgr.attachInitial('Dev', pair, { generation: 0 });
+    pair.end();
+
+    const r1 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111' });
+    assert.equal(r1, false, 'without panePid must return false');
+
+    const r2 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: null });
+    assert.equal(r2, false, 'null panePid must return false');
+
+    const r3 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: 0 });
+    assert.equal(r3, false, 'zero panePid must return false');
+
+    const r4 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: -1 });
+    assert.equal(r4, false, 'negative panePid must return false');
+
+    const r5 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: '123' });
+    assert.equal(r5, false, 'string panePid must return false');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('attendiUscita: returns false when procfs is unavailable', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-noproc-'));
+  let mgr = null;
+  try {
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      { procDisponibile: () => false },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+    const res = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.equal(res, false, 'unavailable procfs must return false');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('attendiUscita: confirms exit when pid starttime differs from captured supervisor identity (pid reuse)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-pidreuse-'));
+  let mgr = null;
+  try {
+    let currentStarttime = 99999;
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      {
+        procDisponibile: () => true,
+        leggiStarttime: () => currentStarttime,
+      },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+
+    const res = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.deepEqual(res, {
+      provato: true,
+      pid: 12345,
+      launchId: '1111111111111111',
+    });
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('attendiUscita: returns false when process remains alive with matching starttime', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-alive-'));
+  const clock = { t: 10_000 };
+  let mgr = null;
+  try {
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      {
+        now: () => clock.t,
+        procDisponibile: () => true,
+        leggiStarttime: () => 1000,
+        setTimeout: (fn) => { clock.t += 600; fn(); return 1; },
+      },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+
+    const res = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.equal(res, false, 'process still alive with matching starttime must return false');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('attendiUscita: confirms exit when process no longer exists in procfs', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-dead-'));
+  let mgr = null;
+  try {
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      {
+        procDisponibile: () => true,
+        leggiStarttime: () => null,
+      },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+
+    const res = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.deepEqual(res, {
+      provato: true,
+      pid: 12345,
+      launchId: '1111111111111111',
+    });
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
