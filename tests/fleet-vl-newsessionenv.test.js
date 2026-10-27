@@ -128,6 +128,56 @@ test('verifyLauncherCaps: hash mismatch -> HASH_MISMATCH, hash corrispondente ->
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
+test('verifyLauncherCaps: untrusted writable manifest must be refused (0777)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's4-manifest-'));
+  try {
+    const command = path.join(root, 'launch');
+    fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(`${command}.nc-caps.json`, JSON.stringify({
+      version: '1',
+      caps: { newSessionEnv: 1 },
+      launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(command)).digest('hex'),
+    }));
+    fs.chmodSync(`${command}.nc-caps.json`, 0o777);
+    const result = verifyLauncherCaps(command);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MANIFEST_PERMS_UNSAFE');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyLauncherCaps: manifest read is bounded (2 MiB rejected)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's4-bound-'));
+  try {
+    const command = path.join(root, 'launch');
+    fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    fs.writeFileSync(`${command}.nc-caps.json`, JSON.stringify({
+      version: 'v'.repeat(2 * 1024 * 1024),
+      caps: { newSessionEnv: 1 },
+      launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(command)).digest('hex'),
+    }));
+    const result = verifyLauncherCaps(command);
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'MANIFEST_TOO_LARGE');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyLauncherCaps: symlink manifest is rejected', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's4-sym-'));
+  try {
+    const command = path.join(root, 'launch');
+    fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    const realManifest = path.join(root, 'real-caps.json');
+    fs.writeFileSync(realManifest, JSON.stringify({
+      version: '1',
+      caps: { newSessionEnv: 1 },
+      launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(command)).digest('hex'),
+    }));
+    fs.symlinkSync(realManifest, `${command}.nc-caps.json`);
+    const result = verifyLauncherCaps(command);
+    assert.equal(result.ok, false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- 2. validPayload: trasporto e denylist -----------------------------------
 
 test('validPayload: newSessionTransport ammesso solo come launcher-env', () => {
