@@ -7,77 +7,37 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
 // Percorso assoluto via __dirname: il modulo resta caricabile anche quando
 // questo file viene eseguito in un contesto con require reindirizzato.
 const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
+// La precondizione di questi test e' una cella REALMENTE viva: tmux vero,
+// broker di lancio vero (con listener) e un comando engine longevo. Con il
+// broker ascoltante il supervisore cell-exec ritira il payload e tiene il pane
+// in vita, quindi la sessione, il server tmux per-lancio e il canale di
+// controllo posseduto sopravvivono fino alla seconda up(). La fixture con un
+// broker senza listener faceva uscire cell-exec subito: spento il
+// remain-on-exit diagnostico, tmux chiudeva la sessione prima del secondo up()
+// e il 409 dipendeva dall'istante in cui il canale registrava la morte del
+// proprio server (referto DevAuditor 2026-10-27: 3-4 fail su 15,
+// «Missing expected rejection»).
 function createHarness(options = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dup-'));
   fs.mkdirSync(path.join(home, 'cwd'));
   fs.mkdirSync(path.join(home, 'files'));
-  fs.mkdirSync(path.join(home, '.nexuscrew', 'run'), { recursive: true });
+  // 0700: il broker di lancio vero rifiuta una run dir leggibile ad altri
+  // (ensureRuntimeDir e' fail-closed sulla modalita' della directory).
+  fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(home, '.nexuscrew', 'run'), { mode: 0o700 });
 
   const defs = {
-    engines: [{ id: 'e', command: '/bin/true', args: [] }],
+    engines: [{ id: 'e', command: '/bin/sleep', args: ['600'] }],
     cells: [{ id: 'Cell', engine: 'e', tmuxSession: 'test-Cell', cwd: path.join(home, 'cwd') }],
   };
 
   const events = [];
-  let alive = false;
-  let server = 'A';
-
-  const channel = {
-    chiama: async (tipo, args) => {
-      events.push(`owned:${tipo}:${server}`);
-      return { ok: true, testo: tipo === 'display-message' ? ['4242'] : [] };
-    },
-    morto: () => false,
-    chiudi: () => { events.push('channelClose'); },
-    hasSession: async () => ({ ok: alive }),
-    killSession: async () => { events.push(`killViaChannel:${server}`); alive = false; return { ok: true }; },
-  };
-
-  const tmuxExec = async (bin, args) => {
-    let socket = null;
-    let effectiveArgs = args;
-    if (args[0] === '-S') {
-      socket = args[1];
-      effectiveArgs = args.slice(2);
-    }
-    events.push(`tmux:${effectiveArgs[0]}:${server}`);
-    if (effectiveArgs[0] === 'list-sessions') {
-      return { err: null, stdout: '', stderr: '' };
-    }
-    if (effectiveArgs[0] === 'has-session') {
-      return { err: alive ? null : Object.assign(new Error('absent'), { code: 1 }), stdout: '', stderr: '' };
-    }
-    if (effectiveArgs[0] === 'new-session') {
-      alive = true;
-      return { err: null, stdout: '$5\t@5\t%5\n', stderr: '' };
-    }
-    if (effectiveArgs[0] === 'display-message') {
-      return { err: null, stdout: `${socket || '/synthetic/socket'}\t4242\n`, stderr: '' };
-    }
-    if (effectiveArgs[0] === 'set-option') {
-      return { err: null, stdout: '', stderr: '' };
-    }
-    if (effectiveArgs[0] === 'respawn-pane') {
-      return { err: null, stdout: '', stderr: '' };
-    }
-    if (effectiveArgs[0] === 'kill-session') {
-      alive = false;
-      return { err: null, stdout: '', stderr: '' };
-    }
-    return { err: null, stdout: '', stderr: '' };
-  };
-
-  let savedTarget = null;
-  const targets = {
-    registra: (r, s, o) => { savedTarget = o; return true; },
-    leggi: () => (savedTarget ? { stato: 'presente', record: savedTarget } : { stato: 'assente' }),
-    marcaIncerto: () => { if (savedTarget) savedTarget.incerto = true; return true; },
-    rimuovi: () => { savedTarget = null; return true; },
-  };
+  const broker = createLaunchBroker({ home });
 
   const runtime = createBuiltinRuntime({
     cfg: { activityHooks: false, launchReadyMs: 0, filesRoot: path.join(home, 'files'), log: () => {}, vlLaunchCooldownMs: 0 },
@@ -85,7 +45,14 @@ function createHarness(options = {}) {
     defsPath: path.join(home, 'defs.json'),
     tmuxBin: '/bin/tmux',
     readonly: () => false,
-    launchBroker: { issue: async () => ({ nonce: 'n'.repeat(64), socketPath: path.join(home, 'broker') }), revoke: async () => {} },
+    // Broker reale: ogni ticket emesso e' ritirabile dal supervisore. Un issue
+    // precede sempre la new-session nello stesso up(), quindi il conteggio
+    // degli issue e' il conteggio dei lanci effettivi (il vecchio filtro
+    // 'tmux:new-session' contava eventi di un mock mai cablato nel runtime).
+    launchBroker: {
+      issue: async (payload) => { events.push('launch:issue'); return broker.issue(payload); },
+      revoke: async (nonce) => { events.push('launch:revoke'); return broker.revoke(nonce); },
+    },
     boot: defs,
   });
 
@@ -95,6 +62,7 @@ function createHarness(options = {}) {
         runtime.shutdown();
       }
     } catch (_) {}
+    try { await broker.close(); } catch (_) { /* best-effort: socket gia' chiusa */ }
 
     const runDir = path.join(home, '.nexuscrew', 'run');
     if (fs.existsSync(runDir)) {
@@ -142,7 +110,7 @@ function createHarness(options = {}) {
     } catch (_) {}
   };
 
-  return { home, defs, runtime, events, targets, alive: () => alive, cleanup };
+  return { home, defs, runtime, events, cleanup };
 }
 
 test('second up of a live owned cell is rejected with 409 SESSION_DUPLICATE', async () => {
@@ -169,15 +137,17 @@ test('repeated boot preserves live cell and refuses duplicate launch', async () 
   const h = createHarness();
   try {
     await h.runtime.up('Cell');
-    const newSessionsBefore = h.events.filter((e) => e.startsWith('tmux:new-session')).length;
+    const launchesBefore = h.events.filter((e) => e.startsWith('launch:issue')).length;
 
     await assert.rejects(
       async () => h.runtime.up('Cell'),
       (err) => err.status === 409 && err.fleetCode === 'SESSION_DUPLICATE',
     );
 
-    const newSessionsAfter = h.events.filter((e) => e.startsWith('tmux:new-session')).length;
-    assert.equal(newSessionsBefore, newSessionsAfter, 'no new tmux session created on duplicate up');
+    // Un issue precede sempre la new-session nello stesso up(): nessun issue
+    // in piu' = nessuna sessione nuova creata dal duplicato.
+    const launchesAfter = h.events.filter((e) => e.startsWith('launch:issue')).length;
+    assert.equal(launchesBefore, launchesAfter, 'no new tmux session created on duplicate up');
   } finally {
     await h.cleanup();
   }
