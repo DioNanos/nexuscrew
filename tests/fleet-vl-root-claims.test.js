@@ -353,3 +353,68 @@ test('il pin e una copia privata: la sorgente sostituita non entra nel pin', () 
   assert.equal(hash(read(p.path)), atteso, 'il pin ammesso non cambia con la sorgente');
   assert.notEqual(fs.statSync(source).ino, fs.statSync(p.path).ino, 'il pin non e un alias della sorgente');
 });
+
+test('matrice del budget: assegnazione dentro il residuo, rifiuto sotto le granularita minime', async () => {
+  const { EventEmitter } = require('node:events');
+  const { PassThrough, Writable } = require('node:stream');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-matrice-'));
+  const casi = [
+    [0, 0], [1, 1], [10, 10], [199, 199], [200, 200],
+    [10, 0.25], [10, 0.5], [10, 0.99], [10, 1], [10, 1.5], [10, 2], [10, 3],
+  ];
+  const risultati = [];
+  const prima = Object.getOwnPropertyDescriptor(performance, 'now');
+  try {
+    for (const [budgetMs, residuo] of casi) {
+      let chiamate = 0;
+      Object.defineProperty(performance, 'now', {
+        value: () => (chiamate++ === 0 ? 0 : budgetMs - residuo),
+        configurable: true,
+      });
+      let visto = null;
+      const spawnImpl = (bin, args) => {
+        const child = new EventEmitter();
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        let corpo = '';
+        child.stdin = new Writable({
+          write(b, enc, done) { corpo += b; done(); },
+          final(done) {
+            const req = JSON.parse(corpo);
+            const attesa = Number(args[args.indexOf('-w') + 1]) * 1000;
+            visto = { sezione: req.sectionBudgetMs, attesa, totale: req.sectionBudgetMs + attesa };
+            setImmediate(() => {
+              child.stdout.end(`${JSON.stringify({ v: 1, requestId: req.requestId, ok: true, outcome: 'released' })}\n`);
+              child.emit('close', 0);
+            });
+            done();
+          },
+        });
+        child.kill = () => true;
+        return child;
+      };
+      const esito = await radici.rilascia({
+        home, root: path.join(home, 'host'), launchId: id(),
+        ownerInstanceId: 'local', cellId: 'Cella', budgetMs, spawnImpl,
+      });
+      risultati.push({ budgetMs, residuo, esito: { ok: esito.ok, code: esito.code }, visto });
+    }
+  } finally {
+    if (prima) Object.defineProperty(performance, 'now', prima);
+    else delete performance.now;
+  }
+  const per = (b, r) => risultati.find((x) => x.budgetMs === b && x.residuo === r);
+  for (const [b, r] of [[0, 0], [1, 1], [10, 0.25], [10, 0.5], [10, 0.99], [10, 1], [10, 1.5]]) {
+    const x = per(b, r);
+    assert.equal(x.esito.ok, false, `${b}/${r}`);
+    assert.equal(x.esito.code, 'BUDGET', `${b}/${r}`);
+    assert.equal(x.visto, null, `${b}/${r}: nessun figlio con un residuo che non copre i minimi`);
+  }
+  for (const [b, r] of [[10, 10], [199, 199], [200, 200], [10, 2], [10, 3]]) {
+    const x = per(b, r);
+    assert.ok(x.visto, `${b}/${r}: il positivo deve generare il figlio`);
+    assert.ok(x.visto.sezione >= 1 && x.visto.attesa >= 1, `${b}/${r}: granularita minime`);
+    assert.ok(x.visto.totale <= r + 1e-8, `${b}/${r}: assegnato ${x.visto.totale}`);
+    assert.equal(x.esito.ok, true, `${b}/${r}`);
+  }
+});
