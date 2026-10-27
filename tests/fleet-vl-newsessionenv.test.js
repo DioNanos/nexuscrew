@@ -619,6 +619,162 @@ test('adattatore: launcher swapped between gen0 and gen1 still executes pinned b
   assert.equal(result, 'AA', 'both gen0 and gen1 executed pinned bytes A, never swapped B');
 });
 
+// --- 4b. Riuso del pin in cache: stessa disciplina del pin nuovo ---------------
+
+function pinPathFor(w, shaHex) {
+  return path.join(w.home, '.nexuscrew', 'launcher-pins', 'CellaAdapter', String(shaHex).toLowerCase(), 'launcher');
+}
+
+test('pin in cache: cache vuota -> staging di un file regolare 0500 con i byte verificati, ticket sul pin', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex');
+  const pin = pinPathFor(w, sha);
+  assert.equal(fs.existsSync(pin), false, 'cache vuota prima del lancio');
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+  const st = fs.lstatSync(pin);
+  assert.equal(st.isSymbolicLink(), false, 'il pin non e un symlink');
+  assert.equal(st.isFile(), true, 'il pin e un file regolare');
+  assert.equal(st.mode & 0o777, 0o500, 'permessi del pin: solo il proprietario legge ed esegue');
+  assert.deepEqual(fs.readFileSync(pin), fs.readFileSync(w.launcherBin), 'i byte pinnati sono quelli verificati');
+  assert.equal(w.tickets[0].command, pin, 'il ticket porta il pathname del pin');
+  const generazioni = fs.readdirSync(path.join(w.home, '.nexuscrew', 'launcher-pins', 'CellaAdapter'));
+  assert.deepEqual(generazioni, [sha.toLowerCase()], 'solo la generazione corrente nel namespace');
+});
+
+test('pin in cache: riuso valido -> il pin esistente qualificato viene RIUSATO, non riscritto', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+  const pin = pinPathFor(w, crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'));
+  const before = fs.statSync(pin);
+  await fleet.down('CellaAdapter');
+  await fleet.vlNewSession('CellaAdapter');
+  const res = await fleet.up('CellaAdapter');
+  assert.equal(res.ok, true);
+  assert.equal(res.vlNewSession, true);
+  const after = fs.statSync(pin);
+  assert.equal(after.ino, before.ino, 'riuso: stessa inode, il pin non e stato riscritto');
+  assert.equal(after.mtimeMs, before.mtimeMs, 'riuso: mtime invariato');
+  assert.equal(w.tickets[1].command, pin, 'il secondo ticket punta ancora al pin riusato');
+});
+
+test('pin in cache: symlink all\'operativo -> mai eseguito attraverso il link: esegue A, mai B', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const out = path.join(w.root, 'execution-cached-symlink.txt');
+  const code = (tag) => `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(out)}, ${JSON.stringify(tag)});\n`;
+  fs.writeFileSync(w.launcherBin, code('A'), { mode: 0o755 });
+  fs.writeFileSync(`${w.launcherBin}.nc-caps.json`, JSON.stringify({
+    version: '1',
+    caps: { newSessionEnv: 1 },
+    launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'),
+  }));
+  const pin = pinPathFor(w, crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'));
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.symlinkSync(w.launcherBin, pin);
+  w.cfgBase.launchBroker.issue = async (payload) => {
+    w.tickets.push(payload);
+    fs.writeFileSync(w.launcherBin, code('B'));
+    return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+  };
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+  const payload = {
+    ...w.tickets[0],
+    identityChannel: false,
+    supervise: { enabled: false, initialReadyMs: 50 },
+  };
+  delete payload.activity;
+  delete payload.control;
+  delete payload.lease;
+  await cellExecMain(['--socket', '/synthetic', '--nonce', 'a'.repeat(64)], {
+    receivePayload: async () => payload,
+  });
+  assert.equal(payload.command, pin, 'il ticket porta il pathname del pin');
+  assert.equal(fs.lstatSync(pin).isSymbolicLink(), false, 'dopo il lancio il pin in cache non e piu un symlink');
+  assert.equal(fs.readFileSync(out, 'utf8'), 'A', 'eseguiti i byte verificati A, mai B attraverso il link');
+});
+
+test('pin in cache: barriera di sostituzione verde anche col ramo di riuso (pin valido preesistente)', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const out = path.join(w.root, 'execution-cached-reuse.txt');
+  const code = (tag) => `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(out)}, ${JSON.stringify(tag)});\n`;
+  fs.writeFileSync(w.launcherBin, code('A'), { mode: 0o755 });
+  fs.writeFileSync(`${w.launcherBin}.nc-caps.json`, JSON.stringify({
+    version: '1',
+    caps: { newSessionEnv: 1 },
+    launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'),
+  }));
+  const pin = pinPathFor(w, crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'));
+  // Pin preesistente VALIDO: stessi byte, regolare, eseguibile -> ramo di riuso
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(pin, code('A'), { mode: 0o500 });
+  w.cfgBase.launchBroker.issue = async (payload) => {
+    w.tickets.push(payload);
+    fs.writeFileSync(w.launcherBin, code('B'));
+    return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+  };
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+  const payload = {
+    ...w.tickets[0],
+    identityChannel: false,
+    supervise: { enabled: false, initialReadyMs: 50 },
+  };
+  delete payload.activity;
+  delete payload.control;
+  delete payload.lease;
+  await cellExecMain(['--socket', '/synthetic', '--nonce', 'a'.repeat(64)], {
+    receivePayload: async () => payload,
+  });
+  assert.equal(payload.command, pin, 'il ticket usa il pin riusato, non il pathname operativo');
+  assert.equal(fs.readFileSync(out, 'utf8'), 'A', 'il ramo di riuso esegue i byte pinnati A, mai B');
+});
+
+test('pin in cache: file regolare non eseguibile (0600) -> rifiuto pre-consumo, 0 ticket, marcatore pending', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex');
+  const pin = pinPathFor(w, sha);
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(w.launcherBin, pin);
+  fs.chmodSync(pin, 0o600);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  let error;
+  try { await fleet.up('CellaAdapter'); } catch (e) { error = e; }
+  assert.ok(error, 'up() deve rifiutare');
+  assert.equal(error.status, 400);
+  assert.equal(error.fleetCode, 'LAUNCHER_UNSUPPORTED');
+  assert.equal(w.tickets.length, 0, 'zero ticket');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending', 'marcatore pending');
+  assert.equal(fs.statSync(pin).mode & 0o777, 0o600, 'il pin degradato non e stato auto-riparato ne sostituito');
+});
+
+test('pin namespace: symlink nella catena privata -> rifiuto senza alcuna scrittura attraverso di esso', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const pinsDir = path.join(w.home, '.nexuscrew', 'launcher-pins');
+  fs.mkdirSync(pinsDir, { recursive: true, mode: 0o700 });
+  const alienRoot = path.join(w.root, 'alien-pins');
+  fs.mkdirSync(alienRoot, { recursive: true, mode: 0o700 });
+  fs.symlinkSync(alienRoot, path.join(pinsDir, 'CellaAdapter'));
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await assert.rejects(() => fleet.up('CellaAdapter'), (e) => {
+    assert.equal(e.status, 400);
+    assert.equal(e.fleetCode, 'LAUNCHER_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0);
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending');
+  assert.deepEqual(fs.readdirSync(alienRoot), [], 'nessuna scrittura oltre il symlink');
+  assert.equal(fs.lstatSync(path.join(pinsDir, 'CellaAdapter')).isSymbolicLink(), true, 'il symlink non e stato toccato');
+});
+
 test('adattatore: fallimento pinning preflight -> 400 LAUNCHER_UNSUPPORTED, marcatore resta pending, 0 ticket', async (t) => {
   const w = fakeAdapterMondo(t);
   const pinsDir = path.join(w.home, '.nexuscrew', 'launcher-pins');
