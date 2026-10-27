@@ -289,3 +289,30 @@ test('percorso con spazi e richiesta frammentata: un solo esito, fd tenuto', asy
   assert.equal(fs.readdirSync(radici.dirClaim(home)).some((n) => n.endsWith('.own')), true);
   assert.equal(fs.readdirSync(radici.dirClaim(home)).some((n) => n.endsWith('.lease')), false);
 });
+
+test('budget esaurito durante la preparazione rifiuta prima dello spawn', async () => {
+  const home = casa('nc-budget-expired-');
+  const root = path.join(home, 'srv');
+  let spawned = false;
+  const read = fs.readFileSync;
+  let delayed = false;
+  try {
+    fs.readFileSync = (p, ...rest) => {
+      if (typeof p === 'string' && p.endsWith('flock') && !delayed) {
+        delayed = true;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+      }
+      return read(p, ...rest);
+    };
+    const esito = await radici.riserva({
+      home, root, launchId: id(), ownerInstanceId: 'own', cellId: 'Cella', budgetMs: 10,
+      spawnImpl: () => { spawned = true; throw new Error('must not spawn'); },
+    });
+    assert.equal(esito.ok, false);
+    assert.equal(esito.outcome, 'refused');
+    assert.equal(esito.code, 'BUDGET');
+    assert.equal(spawned, false);
+  } finally {
+    fs.readFileSync = read;
+  }
+});
