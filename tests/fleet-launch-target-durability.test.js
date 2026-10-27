@@ -179,3 +179,26 @@ test('a restarted reader process sees the durable intent', () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('nested newly created ancestors are all committed and retried on failure', () => {
+  const base = scratch();
+  try {
+    const root = path.join(base, 'a', 'b', 'c');
+    const sync = fs.fsyncSync;
+    const synced = [];
+    try {
+      fs.fsyncSync = (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) synced.push(fs.readlinkSync('/proc/self/fd/' + fd));
+        return sync(fd);
+      };
+      assert.equal(target.registraIntent(root, 'Cell', INTENT), true);
+    } finally {
+      fs.fsyncSync = sync;
+    }
+    assert.ok(synced.includes(path.join(base, 'a', 'b')));
+    assert.ok(synced.includes(path.join(base, 'a')));
+    assert.ok(synced.includes(base));
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
