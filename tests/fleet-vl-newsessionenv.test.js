@@ -866,6 +866,82 @@ test('adattatore: runtime route error must not leak manifest excerpts or launche
   assert.equal(w.tickets.length, 0);
 });
 
+// --- 4c. Eccezioni di I/O del verificatore -> rifiuti chiusi e bounded ---------
+
+// Fault injection deterministica: fs.readSync fallisce con EIO SOLO sul fd
+// del manifest sintetico, con un messaggio che porta sentinella E pathname.
+// Se una qualunque parte di quel testo attraversa il rifiuto, l'asserzione
+// diventa rossa.
+function patchReadSyncEioOnManifest(w) {
+  const original = fs.readSync;
+  fs.readSync = function (fd, ...args) {
+    let file;
+    try { file = fs.readlinkSync(`/proc/self/fd/${fd}`); } catch (_) {}
+    if (file === `${w.launcherBin}.nc-caps.json`) {
+      const e = new Error(`S4_PRIVATE_SENTINEL ${w.launcherBin}`);
+      e.code = 'EIO';
+      throw e;
+    }
+    return original.call(this, fd, ...args);
+  };
+  return () => { fs.readSync = original; };
+}
+
+test('fault EIO sulla lettura del manifest -> rifiuto preflight chiuso: mai sentinella né pathname (metodo)', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  const restore = patchReadSyncEioOnManifest(w);
+  let error;
+  try {
+    await fleet.up('CellaAdapter');
+  } catch (e) { error = e; } finally { restore(); }
+  assert.ok(error, 'up() deve rifiutare');
+  assert.equal(error.status, 400);
+  assert.equal(error.fleetCode, 'LAUNCHER_UNSUPPORTED');
+  assert.equal(error.fleetPhase, 'preflight');
+  assert.ok(!error.message.includes('S4_PRIVATE_SENTINEL'), 'niente sentinella nel messaggio');
+  assert.ok(!error.message.includes(w.launcherBin), 'niente pathname del launcher nel messaggio');
+  assert.ok(!error.message.includes(w.home), 'niente pathname della home nel messaggio');
+  assert.equal(w.tickets.length, 0, 'zero ticket');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending', 'marcatore pending');
+});
+
+test('fault EIO sulla lettura del manifest -> route vera POST /api/fleet/up: body chiuso, senza sentinella né pathname', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  const app = require('express')();
+  app.use('/api/fleet', require('../lib/fleet/routes.js').fleetRoutes(Promise.resolve(fleet)));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  const restore = patchReadSyncEioOnManifest(w);
+  let status;
+  let body;
+  try {
+    const r = await fetch(`http://127.0.0.1:${server.address().port}/api/fleet/up`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cell: 'CellaAdapter' }),
+      signal: AbortSignal.timeout(3000),
+    });
+    status = r.status;
+    body = await r.json();
+  } finally {
+    restore();
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
+  assert.equal(status, 400);
+  assert.equal(body.code, 'LAUNCHER_UNSUPPORTED', 'codice strutturato chiuso nel body');
+  const serialized = JSON.stringify(body);
+  assert.ok(!serialized.includes('S4_PRIVATE_SENTINEL'), 'niente sentinella nel body HTTP');
+  assert.ok(!serialized.includes(w.launcherBin), 'niente pathname del launcher nel body HTTP');
+  assert.ok(!serialized.includes(w.home), 'niente pathname della home nel body HTTP');
+  assert.equal(w.tickets.length, 0, 'zero ticket');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending', 'marcatore pending');
+});
+
 test('adattatore: fallimento validateCommandTrust prima del consumo -> marcatore resta pending', async (t) => {
   const w = fakeAdapterMondo(t, {
     modifyLauncher: (bin) => {
