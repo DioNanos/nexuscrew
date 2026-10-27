@@ -497,6 +497,102 @@ test('adattatore: pending -> up consuma UNA volta, porta vlNewSession e launcher
   assert.equal('vlNewSession' in w.tickets[1], false);
 });
 
+test('counterproof: launcher pathname swapped after verification must execute the pinned bytes', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const out = path.join(w.root, 'execution.txt');
+  const code = (tag) => `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(out)}, ${JSON.stringify(tag)});\n`;
+  fs.writeFileSync(w.launcherBin, code('A'), { mode: 0o755 });
+  fs.writeFileSync(`${w.launcherBin}.nc-caps.json`, JSON.stringify({
+    version: '1',
+    caps: { newSessionEnv: 1 },
+    launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'),
+  }));
+  w.cfgBase.launchBroker.issue = async (payload) => {
+    w.tickets.push(payload);
+    fs.writeFileSync(w.launcherBin, code('B'));
+    return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+  };
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+  const payload = {
+    ...w.tickets[0],
+    identityChannel: false,
+    supervise: { enabled: false, initialReadyMs: 50 },
+  };
+  delete payload.activity;
+  delete payload.control;
+  delete payload.lease;
+  await cellExecMain(['--socket', '/synthetic', '--nonce', 'a'.repeat(64)], {
+    receivePayload: async () => payload,
+  });
+  const result = fs.readFileSync(out, 'utf8');
+  assert.equal(payload.command === w.launcherBin, false, 'payload.command is pinned path, not original launcherBin');
+  assert.equal(result, 'A');
+});
+
+test('adattatore: launcher swapped between gen0 and gen1 still executes pinned bytes on restart', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const out = path.join(w.root, 'execution-multigen.txt');
+  const code = (tag) => `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(out)}, ${JSON.stringify(tag)});\nif (${JSON.stringify(tag)} === 'A') process.exit(1);\n`;
+  fs.writeFileSync(w.launcherBin, code('A'), { mode: 0o755 });
+  fs.writeFileSync(`${w.launcherBin}.nc-caps.json`, JSON.stringify({
+    version: '1',
+    caps: { newSessionEnv: 1 },
+    launcherSha256: crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex'),
+  }));
+  w.cfgBase.launchBroker.issue = async (payload) => {
+    w.tickets.push(payload);
+    fs.writeFileSync(w.launcherBin, code('B'));
+    return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+  };
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  await fleet.up('CellaAdapter');
+
+  const payload = {
+    ...w.tickets[0],
+    identityChannel: false,
+    supervise: {
+      enabled: true,
+      initialReadyMs: 10,
+      restartDelayMs: 10,
+      maxTotalRestarts: 1,
+    },
+  };
+  delete payload.activity;
+  delete payload.control;
+  delete payload.lease;
+
+  await cellExecMain(['--socket', '/synthetic', '--nonce', 'a'.repeat(64)], {
+    receivePayload: async () => payload,
+  });
+
+  const result = fs.readFileSync(out, 'utf8');
+  assert.equal(result, 'AA', 'both gen0 and gen1 executed pinned bytes A, never swapped B');
+});
+
+test('adattatore: fallimento pinning preflight -> 400 LAUNCHER_UNSUPPORTED, marcatore resta pending, 0 ticket', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const pinsDir = path.join(w.home, '.nexuscrew', 'launcher-pins');
+  fs.mkdirSync(pinsDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(pinsDir, 'CellaAdapter'), 'blocking file');
+
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+
+  await assert.rejects(() => fleet.up('CellaAdapter'), (e) => {
+    assert.equal(e.status, 400);
+    assert.equal(e.fleetCode, 'LAUNCHER_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    return true;
+  });
+
+  const st = fleet.vlNewSessionState('CellaAdapter');
+  assert.equal(st.state, 'pending');
+  assert.equal(w.tickets.length, 0);
+});
+
 test('adattatore: manifest mancante -> 400 LAUNCHER_UNSUPPORTED, marcatore resta pending, 0 ticket', async (t) => {
   const w = fakeAdapterMondo(t, { caps: null }); // nessun caps.json
   const fleet = await w.fleet();
