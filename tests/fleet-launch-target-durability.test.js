@@ -202,3 +202,121 @@ test('nested newly created ancestors are all committed and retried on failure', 
     fs.rmSync(base, { recursive: true, force: true });
   }
 });
+
+// Un fsync fallito su UN antenato (a qualunque livello, incluso il primo
+// antenato GIA' ESISTENTE) deve restare tra i commit ancora dovuti: il retry
+// non puo' dichiarare successo senza risincronizzare proprio quel livello.
+function iniettaEioSulPrimoSyncDi(fallito, registra) {
+  const sync = fs.fsyncSync;
+  let iniettato = false;
+  try {
+    fs.fsyncSync = (fd) => {
+      if (fs.fstatSync(fd).isDirectory()
+        && fs.readlinkSync('/proc/self/fd/' + fd) === fallito && !iniettato) {
+        iniettato = true;
+        throw Object.assign(new Error('synthetic ancestor sync EIO'), { code: 'EIO' });
+      }
+      return sync(fd);
+    };
+    return { esito: registra(), iniettato };
+  } finally {
+    fs.fsyncSync = sync;
+  }
+}
+
+function registraRegistrandoSync(registra, registro) {
+  const sync = fs.fsyncSync;
+  try {
+    fs.fsyncSync = (fd) => {
+      if (fs.fstatSync(fd).isDirectory()) registro.push(fs.readlinkSync('/proc/self/fd/' + fd));
+      return sync(fd);
+    };
+    return registra();
+  } finally {
+    fs.fsyncSync = sync;
+  }
+}
+
+test('a failed ancestor fsync at any level stays in the retry plan', () => {
+  // La catena: base esiste gia', x/y/z e launch-targets vengono creati.
+  // Il fallimento viene iniettato una volta per livello, incluso base.
+  const base = scratch();
+  try {
+    const root = path.join(base, 'x', 'y', 'z');
+    const livelli = [
+      path.join(root, target.DIR),
+      root,
+      path.join(base, 'x', 'y'),
+      path.join(base, 'x'),
+      base,
+    ];
+    for (const fallito of livelli) {
+      const primo = iniettaEioSulPrimoSyncDi(
+        fallito,
+        () => target.registraIntent(root, 'Cell', INTENT),
+      );
+      assert.equal(primo.iniettato, true, `il fault doveva scattare su ${fallito}`);
+      assert.equal(primo.esito, false, `il primo tentativo con EIO su ${fallito} deve fallire`);
+
+      const ritentati = [];
+      const secondo = registraRegistrandoSync(
+        () => target.registraIntent(root, 'Cell', INTENT),
+        ritentati,
+      );
+      assert.equal(secondo, true, `il retry dopo EIO su ${fallito} deve completare la catena`);
+      assert.ok(ritentati.includes(fallito),
+        `il retry deve risincronizzare proprio ${fallito} prima di dichiarare successo`);
+
+      // La catena completata per questa iterazione non deve inquinare la
+      // successiva: si riparte da una base nuova.
+      fs.rmSync(base, { recursive: true, force: true });
+      fs.mkdirSync(base, { recursive: true });
+    }
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('the commit plan survives consecutive failures until the chain completes', () => {
+  const base = scratch();
+  try {
+    const root = path.join(base, 'x', 'y');
+    const livelloBasso = path.join(base, 'x', 'y');
+    const livelloAlto = base;
+
+    // Primo tentativo: EIO sul padre della record dir.
+    const primo = iniettaEioSulPrimoSyncDi(
+      livelloBasso,
+      () => target.registraIntent(root, 'Cell', INTENT),
+    );
+    assert.equal(primo.iniettato, true);
+    assert.equal(primo.esito, false);
+
+    // Secondo tentativo: il livello basso viene risincronizzato (il suo
+    // fsync fallito rientra tra i commit da rifare), ma stavolta fallisce
+    // l'antenato gia' esistente. Nessun successo parziale puo' essere
+    // dichiarato.
+    const ritentati = [];
+    const secondo = iniettaEioSulPrimoSyncDi(
+      livelloAlto,
+      () => registraRegistrandoSync(() => target.registraIntent(root, 'Cell', INTENT), ritentati),
+    );
+    assert.equal(secondo.iniettato, true);
+    assert.equal(secondo.esito, false);
+    assert.ok(ritentati.includes(livelloBasso),
+      'il retry deve includere il livello il cui fsync era fallito prima');
+
+    // Terzo tentativo pulito: la catena si chiude fino in cima, incluso
+    // l'antenato esistente il cui sync e' fallito al secondo tentativo.
+    const finali = [];
+    const terzo = registraRegistrandoSync(
+      () => target.registraIntent(root, 'Cell', INTENT),
+      finali,
+    );
+    assert.equal(terzo, true);
+    assert.ok(finali.includes(livelloAlto),
+      'la chiusura della catena deve risincronizzare l\'antenato rimasto in sospeso');
+  } finally {
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+});
