@@ -178,6 +178,53 @@ test('verifyLauncherCaps: symlink manifest is rejected', () => {
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// Un FIFO senza writer NON deve parcheggiare il preflight sincrono prima
+// della qualifica di regolarita'. Il verificatore gira in un processo figlio
+// CON TIMEOUT: se l'open torna a bloccare, il figlio viene terminato e la
+// suite resta in piedi — l'asserzione diventa rossa, non appesa.
+function childVerify(command, timeoutMs) {
+  const cp = require('node:child_process');
+  return cp.spawnSync(process.execPath, ['-e',
+    `const v = require(${JSON.stringify(path.join(__dirname, '..', 'lib', 'fleet', 'vl-session.js'))});`
+    + `console.log(JSON.stringify(v.verifyLauncherCaps(${JSON.stringify(command)})));`,
+  ], { encoding: 'utf8', timeout: timeoutMs });
+}
+
+test('verifyLauncherCaps: manifest FIFO senza writer -> rifiuto immediato, nessun blocco (figlio con timeout)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's4-fifo-'));
+  try {
+    const command = path.join(root, 'launch');
+    fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    assert.equal(require('node:child_process').spawnSync('/usr/bin/mkfifo', [`${command}.nc-caps.json`]).status, 0);
+    const r = childVerify(command, 2500);
+    assert.equal(r.error, undefined, 'il figlio non deve restare bloccato sull\'open del FIFO');
+    assert.equal(r.status, 0, 'il figlio deve uscire da solo con il rifiuto');
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, 'MANIFEST_NOT_REGULAR');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('verifyLauncherCaps: launcher FIFO senza writer -> rifiuto immediato, nessun blocco (figlio con timeout)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 's4-fifo2-'));
+  try {
+    const command = path.join(root, 'launch');
+    assert.equal(require('node:child_process').spawnSync('/usr/bin/mkfifo', [command]).status, 0);
+    // Manifest regolare e coerente con un launcher che non si potra' mai leggere
+    fs.writeFileSync(`${command}.nc-caps.json`, JSON.stringify({
+      version: '1',
+      caps: { newSessionEnv: 1 },
+      launcherSha256: crypto.createHash('sha256').update('x').digest('hex'),
+    }), { mode: 0o644 });
+    const r = childVerify(command, 2500);
+    assert.equal(r.error, undefined, 'il figlio non deve restare bloccato sull\'open del FIFO launcher');
+    assert.equal(r.status, 0, 'il figlio deve uscire da solo con il rifiuto');
+    const parsed = JSON.parse(r.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, 'LAUNCHER_NOT_REGULAR');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- 2. validPayload: trasporto e denylist -----------------------------------
 
 test('validPayload: newSessionTransport ammesso solo come launcher-env', () => {
