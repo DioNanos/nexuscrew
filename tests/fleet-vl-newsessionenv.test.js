@@ -754,6 +754,99 @@ test('pin in cache: file regolare non eseguibile (0600) -> rifiuto pre-consumo, 
   assert.equal(fs.statSync(pin).mode & 0o777, 0o600, 'il pin degradato non e stato auto-riparato ne sostituito');
 });
 
+test('pin in cache: 0641 di proprieta del servizio (x solo per gli altri) -> rifiuto pre-consumo, 0 ticket, marcatore pending', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex');
+  const pin = pinPathFor(w, sha);
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(w.launcherBin, pin);
+  fs.chmodSync(pin, 0o641);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  let error;
+  try { await fleet.up('CellaAdapter'); } catch (e) { error = e; }
+  assert.ok(error, 'up() deve rifiutare: nel DAC non c e fallback, x per gli altri non esegue per l owner');
+  assert.equal(error.status, 400);
+  assert.equal(error.fleetCode, 'LAUNCHER_UNSUPPORTED');
+  assert.equal(w.tickets.length, 0, 'zero ticket');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending', 'marcatore pending');
+  assert.equal(fs.statSync(pin).mode & 0o777, 0o641, 'il pin non e stato chmoddato ne sostituito');
+  assert.equal(
+    crypto.createHash('sha256').update(fs.readFileSync(pin)).digest('hex'),
+    sha,
+    'il rifiuto non deriva dai byte: il pin contiene quelli verificati'
+  );
+});
+
+test('pin in cache: 0500 e 0700 owner-eseguibili -> riuso del pin senza riscrittura', async (t) => {
+  const w = fakeAdapterMondo(t);
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex');
+  const pin = pinPathFor(w, sha);
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(w.launcherBin, pin);
+  fs.chmodSync(pin, 0o500);
+  const fleet = await w.fleet();
+  await fleet.vlNewSession('CellaAdapter');
+  let res = await fleet.up('CellaAdapter');
+  assert.equal(res.ok, true);
+  assert.equal(res.vlNewSession, true);
+  assert.equal(w.tickets[0].command, pin, '0500: il ticket punta al pin riusato');
+  const inoPrima = fs.statSync(pin).ino;
+  await fleet.down('CellaAdapter');
+  fs.chmodSync(pin, 0o700);
+  await fleet.vlNewSession('CellaAdapter');
+  res = await fleet.up('CellaAdapter');
+  assert.equal(res.ok, true, '0700: owner-x del servizio, riuso valido');
+  assert.equal(w.tickets[1].command, pin, '0700: il secondo ticket punta allo stesso pin');
+  assert.equal(fs.statSync(pin).ino, inoPrima, 'il pin non e stato riscritto');
+  assert.equal(fs.statSync(pin).mode & 0o777, 0o700, 'permessi del pin: 0700');
+  assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'consumed');
+});
+
+test('pin root-owned: ammesso solo se eseguibile dalla classe del servizio (0755 riuso, 0700 rifiuto)', async (t) => {
+  if (process.getuid && process.getuid() === 0) return t.skip('da root la classe DAC e sempre owner: il caso root-owned non e distinguibile');
+  const w = fakeAdapterMondo(t);
+  const sha = crypto.createHash('sha256').update(fs.readFileSync(w.launcherBin)).digest('hex');
+  const pin = pinPathFor(w, sha);
+  fs.mkdirSync(path.dirname(pin), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(w.launcherBin, pin);
+  // Un file root-owned non e creabile senza CAP_CHOWN: si modella root:root
+  // sui soli campi identita' (uid/gid) del lstat del pin, sul pathname
+  // esatto; mode e byte restano reali. Il ramo root-owned del riuso viene
+  // cosi' esercitato con la stessa classe DAC che il kernel applicherebbe a
+  // un vero file di root eseguito da questo processo.
+  const lstatReale = fs.lstatSync;
+  fs.lstatSync = function lstatRootOwned(p, opts) {
+    const st = lstatReale.call(fs, p, opts);
+    if (p === pin) { st.uid = 0; st.gid = 0; }
+    return st;
+  };
+  try {
+    fs.chmodSync(pin, 0o755);
+    const fleet = await w.fleet();
+    await fleet.vlNewSession('CellaAdapter');
+    const res = await fleet.up('CellaAdapter');
+    assert.equal(res.ok, true, 'root-owned 0755: eseguibile dalla classe del servizio, riuso ammesso');
+    assert.equal(w.tickets[0].command, pin, 'il ticket punta al pin root-owned riusato');
+    assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'consumed');
+    const inoPrima = fs.statSync(pin).ino;
+    await fleet.down('CellaAdapter');
+    fs.chmodSync(pin, 0o700);
+    await fleet.vlNewSession('CellaAdapter');
+    let error;
+    try { await fleet.up('CellaAdapter'); } catch (e) { error = e; }
+    assert.ok(error, 'root-owned 0700: owner-x c e, ma il servizio non e owner e gli altri non hanno x');
+    assert.equal(error.status, 400);
+    assert.equal(error.fleetCode, 'LAUNCHER_UNSUPPORTED');
+    assert.equal(w.tickets.length, 1, 'nessun secondo ticket');
+    assert.equal(vlNewSessionStatus({ home: w.home, cellId: 'CellaAdapter' }).state, 'pending', 'marcatore pending');
+    assert.equal(fs.statSync(pin).ino, inoPrima, 'il pin non e stato riscritto');
+    assert.equal(fs.statSync(pin).mode & 0o777, 0o700, 'nessun chmod di auto-riparazione');
+  } finally {
+    fs.lstatSync = lstatReale;
+  }
+});
+
 test('pin namespace: symlink nella catena privata -> rifiuto senza alcuna scrittura attraverso di esso', async (t) => {
   const w = fakeAdapterMondo(t);
   const pinsDir = path.join(w.home, '.nexuscrew', 'launcher-pins');
