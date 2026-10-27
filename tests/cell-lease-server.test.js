@@ -1081,3 +1081,87 @@ test('attendiUscita: confirms exit when process no longer exists in procfs', asy
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
   }
 });
+
+test('attendiUscita: unreadable procfs or malformed stat cannot prove exit', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-unreadable-'));
+  const clock = { t: 10_000 };
+  let mgr = null;
+  try {
+    let mode = 'eacces';
+    const fakeFs = {
+      ...fs,
+      existsSync: (p) => (p === '/proc/self/stat' ? true : fs.existsSync(p)),
+      readFileSync: (p, enc) => {
+        if (p === '/proc/12345/stat') {
+          if (mode === 'eacces') {
+            const err = new Error('Permission denied');
+            err.code = 'EACCES';
+            throw err;
+          }
+          return 'corrupted stat content without parenthesis';
+        }
+        return fs.readFileSync(p, enc);
+      },
+    };
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      {
+        fs: fakeFs,
+        now: () => clock.t,
+        setTimeout: (fn) => { clock.t += 600; fn(); return 1; },
+      },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+
+    const resEacces = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.equal(resEacces, false, 'unreadable procfs must fail closed');
+
+    mode = 'malformed';
+    const resMalformed = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: 1000,
+    });
+    assert.equal(resMalformed, false, 'malformed procfs stat must fail closed');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('attendiUscita: missing pre-stop starttime cannot prove exit', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-exit-nostarttime-'));
+  let mgr = null;
+  try {
+    mgr = createLeaseManager(
+      { home, log: () => {} },
+      {
+        procDisponibile: () => true,
+        leggiStarttime: () => null,
+      },
+    );
+    await mgr.track('Dev');
+    mgr.armControl('Dev', { launchId: '1111111111111111', token: 'aa'.repeat(32) });
+
+    const r1 = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+    });
+    assert.equal(r1, false, 'missing starttime must return false');
+
+    const r2 = await mgr.attendiUscita('Dev', {
+      launchId: '1111111111111111',
+      panePid: 12345,
+      starttime: null,
+    });
+    assert.equal(r2, false, 'null starttime must return false');
+  } finally {
+    try { if (mgr) mgr.close(); } catch (_) {}
+    try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
+  }
+});
