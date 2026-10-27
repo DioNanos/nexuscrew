@@ -661,3 +661,80 @@ test('cellStatus: panelUrl dell\'engine MANAGED raggiunge la cella (fallback eng
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('newSessionEnv: opt-in booleano valido e conservato su engine custom', () => {
+  const { isVlNewSessionSupported } = require('../lib/fleet/definitions.js');
+  const def = {
+    schemaVersion: 1,
+    engines: [{
+      id: 'custom-vl', label: 'Custom VL', rc: true,
+      command: '/bin/echo', args: [], env: {}, promptMode: 'send-keys',
+      newSessionEnv: true,
+    }],
+    cells: [],
+  };
+  const parsed = parseDefinitions(def);
+  assert.ok(parsed, 'definizione custom con newSessionEnv: true accettata');
+  assert.equal(parsed.engines[0].newSessionEnv, true);
+  assert.equal(isVlNewSessionSupported(parsed.engines[0]), true);
+
+  def.engines[0].newSessionEnv = false;
+  const parsedFalse = parseDefinitions(def);
+  assert.ok(parsedFalse, 'definizione custom con newSessionEnv: false accettata');
+  assert.equal(parsedFalse.engines[0].newSessionEnv, false);
+  assert.equal(isVlNewSessionSupported(parsedFalse.engines[0]), false);
+});
+
+test('newSessionEnv: rifiuto su managed (fail-closed) e su tipi non booleani', () => {
+  // 1. Managed con newSessionEnv -> null
+  const defManaged = {
+    schemaVersion: 1,
+    engines: [{
+      id: 'managed-vl', label: 'Managed VL', rc: true,
+      managed: { client: 'vl', provider: 'native', permissionPolicy: 'unsafe' },
+      newSessionEnv: true,
+    }],
+    cells: [],
+  };
+  assert.equal(parseDefinitions(defManaged), null, 'managed con newSessionEnv rifiutato');
+
+  // 2. Custom con tipi non booleani -> null
+  for (const bad of ['true', 'yes', 1, 0, {}, [], null]) {
+    const defCustom = {
+      schemaVersion: 1,
+      engines: [{
+        id: 'custom-vl', label: 'Custom VL', rc: true,
+        command: '/bin/echo', args: [], env: {}, promptMode: 'send-keys',
+        newSessionEnv: bad,
+      }],
+      cells: [],
+    };
+    assert.equal(parseDefinitions(defCustom), null, `newSessionEnv=${JSON.stringify(bad)} rifiutato`);
+  }
+});
+
+test('env denylist: NEXUSCREW_VL_NEW rifiutato in engine env', () => {
+  const def = {
+    schemaVersion: 1,
+    engines: [{
+      id: 'custom-denied', label: 'Denied', rc: true,
+      command: '/bin/echo', args: [],
+      env: { NEXUSCREW_VL_NEW: '1' },
+      promptMode: 'send-keys',
+    }],
+    cells: [],
+  };
+  assert.equal(parseDefinitions(def), null, 'NEXUSCREW_VL_NEW in env rifiuta la definizione');
+});
+
+test('isVlNewSessionSupported: predicato condiviso coerente tra managed e custom', () => {
+  const { isVlNewSessionSupported } = require('../lib/fleet/definitions.js');
+  assert.equal(isVlNewSessionSupported(null), false);
+  assert.equal(isVlNewSessionSupported({}), false);
+  assert.equal(isVlNewSessionSupported({ managed: { client: 'vl' } }), true);
+  assert.equal(isVlNewSessionSupported({ managed: { client: 'claude' } }), false);
+  assert.equal(isVlNewSessionSupported({ managed: { client: 'shell' } }), false);
+  assert.equal(isVlNewSessionSupported({ command: '/bin/echo', newSessionEnv: true }), true);
+  assert.equal(isVlNewSessionSupported({ command: '/bin/echo', newSessionEnv: false }), false);
+  assert.equal(isVlNewSessionSupported({ command: '/bin/echo' }), false);
+});
