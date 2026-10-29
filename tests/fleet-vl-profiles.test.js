@@ -373,6 +373,12 @@ test('no key value reaches the answer: extra fields of the document are dropped'
     const wire = JSON.stringify(info);
     assert.ok(!wire.includes(CANARY), 'canary in the answer');
     assert.ok(!wire.includes('h.invalid') && !wire.includes('/home/someone'), wire);
+    // the validated inventory itself is already value-free: it is rebuilt from a
+    // whitelist, not filtered afterwards
+    const validated = vlProfiles.validateInventory(doc);
+    assert.equal(validated.ok, true);
+    assert.deepEqual(Object.keys(validated.inventory.profiles[0]).sort(), ['contextWindow', 'id', 'key', 'maxOutputTokens', 'model', 'provider', 'source']);
+    assert.ok(!JSON.stringify(validated).includes(CANARY));
     const keys = Object.keys(info.vlProfiles.options[0]).sort();
     assert.deepEqual(keys, ['contextWindow', 'key', 'label', 'maxOutputTokens', 'model', 'provider', 'source', 'value']);
     // and the launch diagnostic carries a state, never a value
