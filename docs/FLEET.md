@@ -109,19 +109,43 @@ NexusCrew never reads the profile catalog itself.
   `key: present|absent|not_needed` leave NexusCrew; no key value, endpoint, path
   or environment can, whatever the document carries. Profiles that share a model
   (accounts A and P) stay two entries.
+- **The selector is opaque.** On `vl.native` without a fixed profile the saved
+  value (and the per-cell override) is a profile **selector**: it is stored and
+  passed exactly as typed. The model aliases that map a legacy model name to its
+  new name never apply to it — a legacy name can be the id of another profile — and
+  the exact, case-sensitive profile id is matched before any comparison by model.
+  Every other client, and every remote variant, keeps its aliases.
 - **UI.** The engine editor and the cell editor list `<model> · <profile id>`; the
   profile **id** is what is saved and passed. A profile with no key on the node is
-  listed and marked, not hidden: the choice is the operator's. The profiles the
-  node declares it could not list (`excluded`) are shown as a count. The built-in
-  presets are never offered: the runtime resolves them by name
-  (`preset_names_resolvable`), but the list is what the operator declared.
+  listed and marked, not hidden: the choice is the operator's, and `key: present`
+  is a view of the node's credentials, not proof that the credential works. The
+  profiles the node declares it could not list (`excluded`) are shown as a count.
+- **Only what the operator declared.** The built-in presets are never offered and
+  never accepted by the preflight, whatever the inventory kind: the runtime
+  resolves them by name (`preset_names_resolvable`, information about the runtime,
+  not permission for NexusCrew to propose them). When the configuration declares no
+  profile at all the inventory is the built-in catalog; the editors then say
+  "no profile declared" and offer nothing, and the preflight refuses with the same
+  reason.
+- **A new engine.** The list of a `vl.native` engine that is not saved yet comes
+  with the node's definitions (`vlProfilesDefault`): the default `vl` binary of
+  the node that serves them, with the operator's catalog. A form that declares its
+  own binary, catalog file or fixed profile never reuses it — it would describe
+  another binary or catalog — and says the list is not read there; the same holds
+  when a saved engine's binary, catalog or profile is edited. The form also says
+  when the node is being read, when the node gave no list, and when its binary is
+  old or its inventory invalid.
 - **Preflight.** At launch the value must be the id of a profile of the inventory
   or the model of exactly one: an unknown value, or a model shared by several
   profiles, refuses the start naming the available profiles, instead of failing
   inside the cell. A missing key does not refuse the start (the runtime says what
   is missing); the launch diagnostics carry its state.
-- **Unchanged.** Remote and custom variants (`VL_PROVIDER` + `VL_BASE_URL`) keep
-  the raw model; so does an engine with a fixed `vlProfile`.
+- **Unchanged, and what is checked where.** Remote and custom variants
+  (`VL_PROVIDER` + `VL_BASE_URL`) keep the raw model. With a declared catalog file
+  (`vlConfigFile`) there is no list; the launch checks the choice against the
+  catalog copied into the cell. With a fixed `vlProfile` the model is a plain model
+  override and the launch only checks that the profile exists in the catalog: the
+  inventory preflight does not apply.
 
 Every `vl` cell also gets its own identity directory under the NexusCrew state
 tree, keyed by owner instance id and cell id, with private `XDG_STATE_HOME`,
