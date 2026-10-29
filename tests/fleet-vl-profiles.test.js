@@ -17,6 +17,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { describeManaged, resolveManagedEngine } = require('../lib/fleet/managed.js');
 const vlProfiles = require('../lib/fleet/vl-profiles.js');
+const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { atomicWrite } = require('../lib/fleet/definitions.js');
 
 const CANARY = 'CANARY-KEY-9f3a1c-NOT-A-REAL-KEY';
 
@@ -442,5 +444,63 @@ test('a binary that does not answer is described as old, with a reason, not as a
     assert.equal(info.vlProfiles.state, 'old');
     assert.deepEqual(info.vlProfiles.options, []);
     assert.match(info.vlProfiles.reason, /does not answer/);
+  } finally { cleanup(w); }
+});
+
+test('an ambient VL_MODEL, VL_PROVIDER or VL_BASE_URL of the service is not part of the probe', () => {
+  const w = world();
+  try {
+    const r = launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus' }), {
+      env: { VL_MODEL: 'ambient-model', VL_PROVIDER: 'anthropic', VL_BASE_URL: 'https://ambient.invalid' },
+    });
+    assert.equal(r.ok, true, r.reason);
+    const models = calls(w.dir).find((c) => c.startsWith('models --json'));
+    assert.ok(models.includes('VL_MODEL=unset') && models.includes('VL_PROVIDER=unset'), models);
+  } finally { cleanup(w); }
+});
+
+// ---- what the real fleet hands to the UI and to nc_status -------------------
+
+async function fleetFor(w, managed) {
+  const defsPath = path.join(w.root, 'fleet.json');
+  const cwd = path.join(w.home, 'Cella');
+  fs.mkdirSync(cwd, { recursive: true });
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'vl.native', label: 'VL', rc: false, managed }],
+    cells: [{ id: 'Cella', tmuxSession: 'cloud-Cella', cwd, engine: 'vl.native', boot: false }],
+  });
+  return createBuiltinFleet({
+    home: w.home, fleetDefsPath: defsPath, tmuxBin: '/bin/true',
+    env: { XDG_CONFIG_HOME: path.join(w.home, '.config') },
+  });
+}
+
+test('the definitions and the status carry the list of the node, ids as models, nothing else', async () => {
+  const w = world();
+  try {
+    const fleet = await fleetFor(w, vlNative({ vlBinary: w.bin }));
+    const defs = fleet.definitions();
+    const engine = defs.engines.find((e) => e.id === 'vl.native');
+    assert.equal(engine.managedInfo.vlProfiles.state, 'ready');
+    assert.equal(engine.managedInfo.vlProfiles.options.length, 8);
+    const st = await fleet.status();
+    const row = st.engines.find((e) => e.id === 'vl.native');
+    assert.deepEqual(row.models, eight().profiles.map((p) => p.id), 'what is saved is the profile id');
+    assert.equal(row.vlProfiles.state, 'ready');
+    assert.ok(!JSON.stringify([defs, st]).includes(CANARY));
+    await fleet.close();
+  } finally { cleanup(w); }
+});
+
+test('with an old binary the status keeps its plain models and says why there is no list', async () => {
+  const w = world({ status: OLD_STATUS });
+  try {
+    const fleet = await fleetFor(w, vlNative({ vlBinary: w.bin }));
+    const st = await fleet.status();
+    const row = st.engines.find((e) => e.id === 'vl.native');
+    assert.equal(row.vlProfiles.state, 'old');
+    assert.ok(!row.models.includes('a-opus'));
+    await fleet.close();
   } finally { cleanup(w); }
 });
