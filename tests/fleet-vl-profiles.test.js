@@ -24,7 +24,7 @@ const CANARY = 'CANARY-KEY-9f3a1c-NOT-A-REAL-KEY';
 
 const FAKE_VL = `#!/bin/sh
 D="$(dirname "$0")"
-echo "$* | XDG_CONFIG_HOME=$XDG_CONFIG_HOME VL_MODEL=\${VL_MODEL-unset} VL_PROVIDER=\${VL_PROVIDER-unset} NC_FAKE_KEY=\${NC_FAKE_KEY-unset}" >> "$D/calls.log"
+echo "$* | XDG_CONFIG_HOME=$XDG_CONFIG_HOME VL_MODEL=\${VL_MODEL-unset} VL_PROVIDER=\${VL_PROVIDER-unset} FAKE_PASS_KEY=\${FAKE_PASS_KEY-unset}" >> "$D/calls.log"
 case "$1" in
   --version) echo "vl 0.4.0" ;;
   status) if [ -f "$D/status.json" ]; then cat "$D/status.json"; else exit 1; fi ;;
@@ -226,10 +226,10 @@ test('the preflight asks the binary with the cell\'s own environment', () => {
 test('the names an engine passes through reach the probe, by name, as the cell gets them', () => {
   const w = world();
   try {
-    const r = launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus', envPassthrough: ['NC_FAKE_KEY'] }), { env: { NC_FAKE_KEY: CANARY } });
+    const r = launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus', envPassthrough: ['FAKE_PASS_KEY'] }), { env: { FAKE_PASS_KEY: CANARY } });
     assert.equal(r.ok, true, r.reason);
     const models = calls(w.dir).find((c) => c.startsWith('models --json'));
-    assert.ok(models.includes(`NC_FAKE_KEY=${CANARY}`), 'the probe sees what the cell sees');
+    assert.ok(models.includes(`FAKE_PASS_KEY=${CANARY}`), 'the probe sees what the cell sees');
   } finally { cleanup(w); }
 });
 
@@ -370,7 +370,7 @@ test('no key value reaches the answer: extra fields of the document are dropped'
   doc.env = { HOME: '/home/someone', K: CANARY };
   const w = world({ models: doc });
   try {
-    const info = describe(w, vlNative({ vlBinary: w.bin, envPassthrough: ['NC_FAKE_KEY'] }), { env: { XDG_CONFIG_HOME: path.join(w.home, '.config'), NC_FAKE_KEY: CANARY } });
+    const info = describe(w, vlNative({ vlBinary: w.bin, envPassthrough: ['FAKE_PASS_KEY'] }), { env: { XDG_CONFIG_HOME: path.join(w.home, '.config'), FAKE_PASS_KEY: CANARY } });
     assert.equal(info.vlProfiles.state, 'ready');
     const wire = JSON.stringify(info);
     assert.ok(!wire.includes(CANARY), 'canary in the answer');
@@ -384,7 +384,7 @@ test('no key value reaches the answer: extra fields of the document are dropped'
     const keys = Object.keys(info.vlProfiles.options[0]).sort();
     assert.deepEqual(keys, ['contextWindow', 'key', 'label', 'maxOutputTokens', 'model', 'provider', 'source', 'value']);
     // and the launch diagnostic carries a state, never a value
-    const r = launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus', envPassthrough: ['NC_FAKE_KEY'] }), { env: { NC_FAKE_KEY: CANARY } });
+    const r = launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus', envPassthrough: ['FAKE_PASS_KEY'] }), { env: { FAKE_PASS_KEY: CANARY } });
     assert.equal(r.ok, true, r.reason);
     assert.ok(!JSON.stringify(r.info).includes(CANARY), 'canary in the diagnostics');
   } finally { cleanup(w); }
