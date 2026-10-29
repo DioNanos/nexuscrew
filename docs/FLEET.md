@@ -86,6 +86,43 @@ saved, the *truth on the node* at every launch.
   or unknown level refuses the start with a declared error instead of being
   ignored or promoted to another level.
 
+### Choosing the model of a `vl.native` cell: the profiles of the node
+
+On `vl.native` the model is chosen among the **profiles of the node that runs the
+cell**, not among models NexusCrew knows. The list comes from two commands of the
+binary that will actually run, started with the cell's own environment and
+without a turn: `vl status` (the gate) and `vl models --json` (the inventory).
+NexusCrew never reads the profile catalog itself.
+
+- **Capability gate.** A profile name goes in `VL_MODEL` only when `vl status`
+  declares `capabilities.model_selector = "profile"`. The version number is never
+  consulted: an old and a new `vl` both say 0.4.0, and an old one would send the
+  name to the provider as a model id. A binary that does not declare it, or whose
+  `vl status` does not answer, never receives a profile name in `VL_MODEL`: if the
+  value names a profile of the cell's catalog the launch uses the bridge
+  `-p <profile>` with `VL_MODEL` absent, otherwise the raw model travels as it
+  always did.
+- **Inventory.** The document is validated before use — `schema_version` 1, every
+  value inside its closed vocabulary, every id and model shaped like an
+  identifier — and refused whole otherwise, naming the field and never echoing the
+  value. Only id, provider, model, context, output limit, source and
+  `key: present|absent|not_needed` leave NexusCrew; no key value, endpoint, path
+  or environment can, whatever the document carries. Profiles that share a model
+  (accounts A and P) stay two entries.
+- **UI.** The engine editor and the cell editor list `<model> · <profile id>`; the
+  profile **id** is what is saved and passed. A profile with no key on the node is
+  listed and marked, not hidden: the choice is the operator's. The profiles the
+  node declares it could not list (`excluded`) are shown as a count. The built-in
+  presets are never offered: the runtime resolves them by name
+  (`preset_names_resolvable`), but the list is what the operator declared.
+- **Preflight.** At launch the value must be the id of a profile of the inventory
+  or the model of exactly one: an unknown value, or a model shared by several
+  profiles, refuses the start naming the available profiles, instead of failing
+  inside the cell. A missing key does not refuse the start (the runtime says what
+  is missing); the launch diagnostics carry its state.
+- **Unchanged.** Remote and custom variants (`VL_PROVIDER` + `VL_BASE_URL`) keep
+  the raw model; so does an engine with a fixed `vlProfile`.
+
 Every `vl` cell also gets its own identity directory under the NexusCrew state
 tree, keyed by owner instance id and cell id, with private `XDG_STATE_HOME`,
 `XDG_DATA_HOME` and `XDG_CONFIG_HOME`. Two cells on the same engine are

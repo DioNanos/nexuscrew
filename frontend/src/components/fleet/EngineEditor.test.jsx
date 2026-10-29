@@ -637,3 +637,68 @@ describe('EngineEditor vl fields', () => {
     expect(Object.prototype.hasOwnProperty.call(saved.managed, 'effort')).toBe(false);
   });
 });
+
+// --- vl.native: the model is chosen among the profiles of the node ----------
+describe('EngineEditor vl profile list', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const opt = (value, model, key = 'present') => ({ value, label: `${model} · ${value}`, model, provider: 'anthropic-bearer', contextWindow: 1000000, maxOutputTokens: 131072, source: 'config', key });
+  const READY = {
+    state: 'ready', inventory: 'config', presetNamesResolvable: true,
+    excluded: { notAssembled: 0, invalidIdentifier: 0 },
+    options: [opt('zai-A-glm53', 'glm-5.3'), opt('zai-P-glm53', 'glm-5.3', 'absent'), opt('a-opus', 'claude-opus-5-5')],
+  };
+  const form = (extra = {}) => ({ ...profileForm('vl.native'), vlProfiles: READY, ...extra });
+  const options = (container) => [...container.querySelectorAll('#nc-managed-models option')].map((o) => ({ value: o.getAttribute('value'), label: o.getAttribute('label') }));
+
+  it('lists `<model> · <profile id>`, A and P as two options, key-less one marked, nothing else', () => {
+    const { container } = render(<Harness initial={form()} />);
+    expect(options(container)).toEqual([
+      { value: 'zai-A-glm53', label: 'glm-5.3 · zai-A-glm53' },
+      { value: 'zai-P-glm53', label: 'glm-5.3 · zai-P-glm53 — key missing' },
+      { value: 'a-opus', label: 'claude-opus-5-5 · a-opus' },
+    ]);
+  });
+
+  it('saves and passes the profile id, not the model', async () => {
+    const user = userEvent.setup();
+    let seen = null;
+    const { container } = render(<Harness initial={form()} onForm={(f) => { seen = f; }} />);
+    const input = container.querySelector('input[list="nc-managed-models"]');
+    await user.clear(input);
+    await user.type(input, 'zai-A-glm53');
+    expect(buildEngine(seen, true, catalog).managed.model).toBe('zai-A-glm53');
+    expect(JSON.stringify(buildEngine(seen, true, catalog))).not.toContain('vlProfiles');
+  });
+
+  it('warns about a profile with no key, an ambiguous model, an unknown value and declared exclusions', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<Harness initial={form({ vlProfiles: { ...READY, excluded: { notAssembled: 1, invalidIdentifier: 1 } } })} />);
+    const input = container.querySelector('input[list="nc-managed-models"]');
+    const notes = () => [...container.querySelectorAll('[data-vl-note]')].map((n) => n.getAttribute('data-vl-note'));
+    expect(notes()).toEqual(['excluded']);
+    await user.type(input, 'zai-P-glm53');
+    expect(notes()).toEqual(['key', 'excluded']);
+    await user.clear(input);
+    await user.type(input, 'glm-5.3');
+    expect(notes()).toEqual(['ambiguous', 'excluded']);
+    await user.clear(input);
+    await user.type(input, 'ghost');
+    expect(notes()).toEqual(['unknown', 'excluded']);
+  });
+
+  it('shows a declared note for an old binary and keeps the plain model input', () => {
+    const { container } = render(<Harness initial={form({ vlProfiles: { state: 'old', reason: 'x', options: [] }, modelOptions: ['raw-model'] })} />);
+    expect(container.querySelector('[data-vl-note="old"]')).toBeTruthy();
+    expect(options(container)).toEqual([{ value: 'raw-model', label: null }]);
+  });
+
+  it('leaves another engine, and a vl variant that is not native, untouched', () => {
+    const claude = render(<Harness initial={{ ...profileForm('claude.native'), vlProfiles: READY, modelOptions: ['m1'] }} />);
+    expect(options(claude.container)).toEqual([{ value: 'm1', label: null }]);
+    expect(claude.container.querySelector('[data-vl-note]')).toBeNull();
+    claude.unmount();
+    const remote = render(<Harness initial={{ ...form(), provider: 'anthropic', modelOptions: ['raw'] }} />);
+    expect(options(remote.container)).toEqual([{ value: 'raw', label: null }]);
+  });
+});

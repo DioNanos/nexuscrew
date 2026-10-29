@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import { listDirs } from '../../lib/api.js';
+import { modelDatalistOptions, vlProfileNotes } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: STESSO validatore gia' usato per il round-trip del
 // backup (validBackupPanelUrl in fleet-backup.js), non una terza copia — e
 // quella e' gia' sorvegliata da un test di parita' col validatore autorevole
@@ -20,6 +21,9 @@ export default function CellEditor({ token, route, targets = [], location, setLo
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const selectedEngine = engines.find((engine) => engine.id === f.engine);
   const isShell = selectedEngine?.managed?.client === 'shell';
+  // vl.native: the model is chosen among the profiles of the node (server side).
+  const vlNative = selectedEngine?.managed?.client === 'vl' && selectedEngine?.managed?.provider === 'native';
+  const vlProfiles = selectedEngine?.vlProfiles || selectedEngine?.managedInfo?.vlProfiles || null;
   const mcpClient = selectedEngine?.managed?.client || '';
   // DEC2: cell.mcp ha effetto solo per i client che NexusCrew gestisce (claude,
   // mcpManaged nel catalogo). Per gli altri (codex, vl, kimi, pi, agy, grok) i
@@ -97,7 +101,8 @@ export default function CellEditor({ token, route, targets = [], location, setLo
       {hasShellMetachar && <small className="nc-note">{t('fleet-shell-command-metachar')}</small>}
     </> : <>
       <input value={f.model || ''} list="nc-cell-models" placeholder={t('fleet-model-override')} onChange={(e) => set({ model: e.target.value })} />
-      <datalist id="nc-cell-models">{(selectedEngine?.availableModels || []).map((model) => <option key={model} value={model} />)}</datalist>
+      <datalist id="nc-cell-models">{modelDatalistOptions(selectedEngine?.availableModels || [], vlNative ? vlProfiles : null, t).map((o) => <option key={o.value} value={o.value} label={o.label} />)}</datalist>
+      {vlNative && vlProfileNotes(vlProfiles, f.model || selectedEngine?.managed?.model || '', t).map((n) => <small key={n.id} className="nc-note" data-vl-note={n.id}>{n.text}</small>)}
       {/* Non passava da t(): in inglese e in spagnolo mostrava «prompt» cosi'
           com'era. E soprattutto non diceva QUANDO quel testo viene usato — chi
           lo conosce gia' non ne aveva bisogno, chi apre l'editor per la prima

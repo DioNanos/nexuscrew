@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../../lib/i18n.js';
-import { catalogEntry } from '../../lib/fleet-forms.js';
+import { catalogEntry, modelDatalistOptions, vlProfileNotes } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
 // sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
@@ -291,7 +291,8 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
       </div>
       {f.client !== 'shell' && <>
         <input value={f.managedModel} list="nc-managed-models" placeholder={t(selectedProfile?.requiresModel ? 'fleet-model-required' : 'fleet-model-default')} onChange={(e) => set({ managedModel: e.target.value })} />
-        <datalist id="nc-managed-models">{[...(selectedProfile?.models || []), ...(f.modelOptions || [])].filter((value, index, all) => value && all.indexOf(value) === index).map((model) => <option key={model} value={model} />)}</datalist>
+        <datalist id="nc-managed-models">{modelDatalistOptions([...(selectedProfile?.models || []), ...(f.modelOptions || [])], f.client === 'vl' && f.provider === 'native' ? f.vlProfiles : null, t).map((o) => <option key={o.value} value={o.value} label={o.label} />)}</datalist>
+        {f.client === 'vl' && f.provider === 'native' && vlProfileNotes(f.vlProfiles, f.managedModel, t).map((n) => <small key={n.id} className="nc-note" data-vl-note={n.id}>{n.text}</small>)}
         {fetchModels && (state.mode === 'edit' ? f.id : selectedProfile?.id) && <ModelDiscoverySection
           engineId={state.mode === 'edit' ? f.id : selectedProfile?.id}
           fetchModels={fetchModels}

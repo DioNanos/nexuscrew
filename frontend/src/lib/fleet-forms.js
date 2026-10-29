@@ -18,7 +18,7 @@ export function engineForm(e) {
     kind: e.managed ? 'managed' : 'custom',
     id: e.id, label: e.label || '', command: e.command || '', argsText: (e.args || []).join('\n'), rc: !!e.rc,
     client: e.managed?.client || 'claude', provider: e.managed?.provider || 'native', credentialProfile: e.managed?.credentialProfile || '', managedModel: e.managed?.model || '',
-    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '', effort: e.managed?.effort || '', modelOptions: e.availableModels || e.managedInfo?.models || [],
+    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '', effort: e.managed?.effort || '', modelOptions: e.availableModels || e.managedInfo?.models || [], vlProfiles: e.vlProfiles || e.managedInfo?.vlProfiles || null,
     promptMode: e.promptMode || 'send-keys', promptFlag: e.promptFlag || '', submit: e.submit === 'enter',
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
@@ -85,4 +85,55 @@ export function buildEngine(form, creating, catalog = []) {
   if (form.promptMode === 'send-keys' && form.submit) out.submit = 'enter';
   if (creating) out.env = Object.fromEntries(form.envRows.filter((r) => !r.remove && r.key).map((r) => [r.key, r.value]));
   return withPanelUrl(out, form, creating);
+}
+
+// ---- vl.native: the model choice is the profile list of the node -------------
+//
+// The engine and the cell editors show, for `vl.native`, the profiles of the node
+// that runs the cell — read by the server from the binary that will run — as
+// `<model> · <profile id>`. What is saved and passed is the profile ID. Two
+// profiles with one model are two options; a profile with no key stays in the
+// list, marked, and the operator decides (the launch names what is missing).
+// The built-in presets are never added to the list.
+
+export const vlProfilesReady = (vlProfiles) => !!vlProfiles && vlProfiles.state === 'ready' && Array.isArray(vlProfiles.options);
+
+export function modelDatalistOptions(values, vlProfiles, t) {
+  if (vlProfilesReady(vlProfiles)) {
+    return vlProfiles.options.map((o) => ({
+      value: o.value,
+      label: o.key === 'absent' ? `${o.label} — ${t('fleet-vl-key-absent')}` : o.label,
+    }));
+  }
+  return [...new Set((values || []).filter(Boolean))].map((value) => ({ value, label: undefined }));
+}
+
+// What the node would make of the typed value, decided the way the runtime
+// decides it: the exact profile id, else the model of exactly one profile.
+export function vlSelectorStatus(vlProfiles, value) {
+  if (!vlProfilesReady(vlProfiles) || !value) return { state: 'none' };
+  const options = vlProfiles.options;
+  const byId = options.find((o) => o.value === value);
+  if (byId) return { state: 'profile', profile: byId.value, key: byId.key };
+  const byModel = options.filter((o) => o.model === value);
+  if (byModel.length === 1) return { state: 'model', profile: byModel[0].value, key: byModel[0].key };
+  if (byModel.length > 1) return { state: 'ambiguous', ids: byModel.map((o) => o.value) };
+  return { state: 'unknown' };
+}
+
+// Notes under the model input, as [{ id, text }] — an empty list when there is
+// nothing to say. `t` is the i18n function.
+export function vlProfileNotes(vlProfiles, value, t) {
+  if (!vlProfiles) return [];
+  if (vlProfiles.state === 'old') return [{ id: 'old', text: t('fleet-vl-old-binary') }];
+  if (vlProfiles.state === 'invalid') return [{ id: 'invalid', text: t('fleet-vl-inventory-invalid') }];
+  if (!vlProfilesReady(vlProfiles)) return [];
+  const notes = [];
+  const status = vlSelectorStatus(vlProfiles, value);
+  if (status.state === 'unknown') notes.push({ id: 'unknown', text: t('fleet-vl-selector-unknown') });
+  if (status.state === 'ambiguous') notes.push({ id: 'ambiguous', text: t('fleet-vl-selector-ambiguous').replace('{ids}', status.ids.join(', ')) });
+  if ((status.state === 'profile' || status.state === 'model') && status.key === 'absent') notes.push({ id: 'key', text: t('fleet-vl-key-absent-help') });
+  const excluded = vlProfiles.excluded ? (vlProfiles.excluded.notAssembled || 0) + (vlProfiles.excluded.invalidIdentifier || 0) : 0;
+  if (excluded > 0) notes.push({ id: 'excluded', text: t('fleet-vl-excluded').replace('{n}', String(excluded)) });
+  return notes;
 }

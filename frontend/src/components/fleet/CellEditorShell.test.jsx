@@ -115,3 +115,41 @@ describe('CellEditor panelUrl', () => {
     expect(screen.queryByText('fleet-panel-url-invalid')).toBeNull();
   });
 });
+
+// --- vl.native: the cell's model override is chosen among the node's profiles
+describe('CellEditor vl profile list', () => {
+  const opt = (value, model, key = 'present') => ({ value, label: `${model} · ${value}`, model, key });
+  const vlEngine = (vlProfiles) => ({
+    id: 'vl.native', label: 'vl', managed: { client: 'vl', provider: 'native', model: '' },
+    availableModels: ['zai-A-glm53', 'zai-P-glm53'], vlProfiles,
+  });
+  const READY = { state: 'ready', excluded: { notAssembled: 0, invalidIdentifier: 0 }, options: [opt('zai-A-glm53', 'glm-5.3'), opt('zai-P-glm53', 'glm-5.3', 'absent')] };
+  const draw = (engine, model = '') => render(<CellEditor
+    token="t" route={null} targets={[]} location={null} setLocation={vi.fn()}
+    state={{ mode: 'new', form: { id: 'Dev', cwd: '/home/user/work', engine: engine.id, model } }}
+    setState={vi.fn()} engines={[engine]} busy={false} onSave={vi.fn()}
+  />);
+  const options = (c) => [...c.querySelectorAll('#nc-cell-models option')].map((o) => [o.getAttribute('value'), o.getAttribute('label')]);
+
+  it('offers `<model> · <id>` with both accounts, the key-less one marked', () => {
+    const { container } = draw(vlEngine(READY));
+    expect(options(container)).toEqual([
+      ['zai-A-glm53', 'glm-5.3 · zai-A-glm53'],
+      ['zai-P-glm53', 'glm-5.3 · zai-P-glm53 — fleet-vl-key-absent'],
+    ]);
+  });
+
+  it('warns on a value the node would refuse and on a missing key', () => {
+    const unknown = draw(vlEngine(READY), 'ghost');
+    expect(unknown.container.querySelector('[data-vl-note="unknown"]')).toBeTruthy();
+    unknown.unmount();
+    const nokey = draw(vlEngine(READY), 'zai-P-glm53');
+    expect(nokey.container.querySelector('[data-vl-note="key"]')).toBeTruthy();
+  });
+
+  it('keeps the plain list for another engine', () => {
+    const { container } = draw({ id: 'claude.native', label: 'claude', managed: { client: 'claude', provider: 'native', model: '' }, availableModels: ['m1'], vlProfiles: READY });
+    expect(options(container)).toEqual([['m1', null]]);
+    expect(container.querySelector('[data-vl-note]')).toBeNull();
+  });
+});
