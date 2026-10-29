@@ -18,7 +18,7 @@ export function engineForm(e) {
     kind: e.managed ? 'managed' : 'custom',
     id: e.id, label: e.label || '', command: e.command || '', argsText: (e.args || []).join('\n'), rc: !!e.rc,
     client: e.managed?.client || 'claude', provider: e.managed?.provider || 'native', credentialProfile: e.managed?.credentialProfile || '', managedModel: e.managed?.model || '',
-    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '', effort: e.managed?.effort || '', modelOptions: e.availableModels || e.managedInfo?.models || [], vlProfiles: e.vlProfiles || e.managedInfo?.vlProfiles || null,
+    permissionPolicy: e.managed?.permissionPolicy || defaultPermission(e.managed?.client), credentialSourcePolicy: e.managed?.credentialSourcePolicy || 'auto', displayName: e.managed?.displayName || '', protocol: e.managed?.protocol || '', baseUrl: e.managed?.baseUrl || '', envKey: e.managed?.envKey || '', providerId: e.managed?.providerId || 'nexuscrew-custom', vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '', effort: e.managed?.effort || '', modelOptions: e.availableModels || e.managedInfo?.models || [], vlProfiles: e.vlProfiles || e.managedInfo?.vlProfiles || null, vlSaved: { vlBinary: e.managed?.vlBinary || '', vlConfigFile: e.managed?.vlConfigFile || '', vlProfile: e.managed?.vlProfile || '' },
     promptMode: e.promptMode || 'send-keys', promptFlag: e.promptFlag || '', submit: e.submit === 'enter',
     modelFlag: e.model?.flag || '', modelValue: e.model?.value || '',
     envRows: (e.envKeys || []).map((key) => ({ key, value: '', configured: true, remove: false })),
@@ -98,7 +98,33 @@ export function buildEngine(form, creating, catalog = []) {
 
 export const vlProfilesReady = (vlProfiles) => !!vlProfiles && vlProfiles.state === 'ready' && Array.isArray(vlProfiles.options);
 
+// Which listing a vl.native FORM may show. The list a saved engine carries was
+// read for ITS binary, catalog and fixed profile; a new engine has none and takes
+// the node's default listing (`definitions().vlProfilesDefault`), which belongs to
+// the default binary and the operator's catalog. Whenever the form declares a
+// binary, a catalog or a fixed profile that is not the one the listing was read
+// for, the listing is NOT reused: it would describe another binary or catalog.
+//   loading      the node's definitions are still being read;
+//   unavailable  the node did not provide a listing (older node, or an error);
+//   unsupported  the form declares binary/catalog/fixed profile: no list here.
+export function vlFormProfiles(form, vlDefault, loading) {
+  if (!form || form.client !== 'vl' || form.provider !== 'native') return null;
+  const saved = form.vlSaved || { vlBinary: '', vlConfigFile: '', vlProfile: '' };
+  const cur = { vlBinary: (form.vlBinary || '').trim(), vlConfigFile: (form.vlConfigFile || '').trim(), vlProfile: (form.vlProfile || '').trim() };
+  const unchanged = cur.vlBinary === saved.vlBinary && cur.vlConfigFile === saved.vlConfigFile && cur.vlProfile === saved.vlProfile;
+  if (unchanged && form.vlProfiles) return form.vlProfiles;
+  if (!cur.vlBinary && !cur.vlConfigFile && !cur.vlProfile) {
+    if (loading) return { state: 'loading', options: [] };
+    if (vlDefault && typeof vlDefault === 'object' && vlDefault.state) return vlDefault;
+    return { state: 'unavailable', options: [] };
+  }
+  return { state: 'unsupported', options: [] };
+}
+
 export function modelDatalistOptions(values, vlProfiles, t) {
+  // A node with no declared profile offers nothing: the built-in presets are not
+  // its list, and the raw model ids are not profile ids.
+  if (vlProfiles && vlProfiles.state === 'none') return [];
   if (vlProfilesReady(vlProfiles)) {
     return vlProfiles.options.map((o) => ({
       value: o.value,
@@ -127,6 +153,10 @@ export function vlProfileNotes(vlProfiles, value, t) {
   if (!vlProfiles) return [];
   if (vlProfiles.state === 'old') return [{ id: 'old', text: t('fleet-vl-old-binary') }];
   if (vlProfiles.state === 'invalid') return [{ id: 'invalid', text: t('fleet-vl-inventory-invalid') }];
+  if (vlProfiles.state === 'none') return [{ id: 'none', text: t('fleet-vl-none-declared') }];
+  if (vlProfiles.state === 'loading') return [{ id: 'loading', text: t('fleet-vl-loading') }];
+  if (vlProfiles.state === 'unavailable') return [{ id: 'unavailable', text: t('fleet-vl-unavailable') }];
+  if (vlProfiles.state === 'unsupported') return [{ id: 'unsupported', text: t('fleet-vl-unsupported') }];
   if (!vlProfilesReady(vlProfiles)) return [];
   const notes = [];
   const status = vlSelectorStatus(vlProfiles, value);

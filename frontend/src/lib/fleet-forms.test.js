@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   blankEngine, blankCell, buildEngine, engineForm,
-  modelDatalistOptions, vlSelectorStatus, vlProfileNotes, vlProfilesReady,
+  modelDatalistOptions, vlSelectorStatus, vlProfileNotes, vlProfilesReady, vlFormProfiles,
 } from './fleet-forms.js';
 import { DICTS } from './i18n.js';
 
@@ -147,11 +147,64 @@ describe('vl.native profile choice', () => {
 
   it('has its sentences in every language', () => {
     for (const lang of Object.keys(DICTS)) {
-      for (const key of ['fleet-vl-key-absent', 'fleet-vl-key-absent-help', 'fleet-vl-selector-unknown', 'fleet-vl-selector-ambiguous', 'fleet-vl-excluded', 'fleet-vl-old-binary', 'fleet-vl-inventory-invalid']) {
+      for (const key of ['fleet-vl-key-absent', 'fleet-vl-key-absent-help', 'fleet-vl-selector-unknown', 'fleet-vl-selector-ambiguous', 'fleet-vl-excluded', 'fleet-vl-old-binary', 'fleet-vl-inventory-invalid', 'fleet-vl-none-declared', 'fleet-vl-loading', 'fleet-vl-unavailable', 'fleet-vl-unsupported']) {
         expect(DICTS[lang][key], `${lang}:${key}`).toBeTruthy();
       }
       expect(DICTS[lang]['fleet-vl-excluded']).toContain('{n}');
       expect(DICTS[lang]['fleet-vl-selector-ambiguous']).toContain('{ids}');
     }
+  });
+});
+
+// ---- the list of a vl.native FORM: a new engine, and a form that changes what the list belongs to
+
+describe('vl.native form listing', () => {
+  const vlForm = (extra = {}) => ({ ...blankEngine(), client: 'vl', provider: 'native', ...extra });
+  const NONE = { state: 'none', reason: 'x', options: [] };
+
+  it('is null for anything that is not vl.native', () => {
+    expect(vlFormProfiles({ ...blankEngine() }, READY, false)).toBeNull();
+    expect(vlFormProfiles(vlForm({ provider: 'anthropic' }), READY, false)).toBeNull();
+    expect(vlFormProfiles(null, READY, false)).toBeNull();
+  });
+
+  it('a NEW engine takes the node default listing, without it being injected in the form', () => {
+    const form = vlForm();
+    expect(form.vlProfiles).toBeUndefined();
+    expect(vlFormProfiles(form, READY, false)).toBe(READY);
+    expect(vlFormProfiles(form, NONE, false)).toBe(NONE);
+  });
+
+  it('says loading while the node is read, and unavailable when the node gave nothing', () => {
+    expect(vlFormProfiles(vlForm(), undefined, true)).toEqual({ state: 'loading', options: [] });
+    expect(vlFormProfiles(vlForm(), undefined, false)).toEqual({ state: 'unavailable', options: [] });
+    expect(vlFormProfiles(vlForm(), {}, false)).toEqual({ state: 'unavailable', options: [] });
+  });
+
+  it('a declared binary, catalog or fixed profile never reuses the default listing (it belongs to another binary or catalog)', () => {
+    for (const extra of [{ vlBinary: '/opt/other/vl' }, { vlConfigFile: '/opt/other/config.toml' }, { vlProfile: 'work' }]) {
+      expect(vlFormProfiles(vlForm(extra), READY, false)).toEqual({ state: 'unsupported', options: [] });
+    }
+    expect(vlFormProfiles(vlForm({ vlBinary: '  ' }), READY, false)).toBe(READY);
+  });
+
+  it('a saved engine keeps its own listing while binary, catalog and profile are the saved ones', () => {
+    const saved = engineForm({ id: 'vl.native', label: 'vl', managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard', vlBinary: '/opt/vl/bin/vl' }, managedInfo: { vlProfiles: READY } });
+    expect(saved.vlSaved).toEqual({ vlBinary: '/opt/vl/bin/vl', vlConfigFile: '', vlProfile: '' });
+    expect(vlFormProfiles(saved, NONE, false)).toBe(READY);
+    expect(vlFormProfiles({ ...saved, vlBinary: '/opt/vl/bin/other' }, NONE, false)).toEqual({ state: 'unsupported', options: [] });
+    expect(vlFormProfiles({ ...saved, vlConfigFile: '/opt/c.toml' }, NONE, false)).toEqual({ state: 'unsupported', options: [] });
+    expect(vlFormProfiles({ ...saved, vlProfile: 'work' }, NONE, false)).toEqual({ state: 'unsupported', options: [] });
+    // clearing the declared binary hands the form to the node default, not to the stale list
+    expect(vlFormProfiles({ ...saved, vlBinary: '' }, NONE, false)).toBe(NONE);
+  });
+
+  it('a node with no declared profile offers nothing and says so; the new states have a note', () => {
+    expect(modelDatalistOptions(['anthropic', 'zai'], NONE, tt)).toEqual([]);
+    const id = (vl) => vlProfileNotes(vl, 'x', tt).map((n) => n.id);
+    expect(id(NONE)).toEqual(['none']);
+    expect(id({ state: 'loading', options: [] })).toEqual(['loading']);
+    expect(id({ state: 'unavailable', options: [] })).toEqual(['unavailable']);
+    expect(id({ state: 'unsupported', options: [] })).toEqual(['unsupported']);
   });
 });
