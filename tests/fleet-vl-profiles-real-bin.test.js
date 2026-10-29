@@ -105,3 +105,22 @@ test('the preflight decides on the real inventory: id, unique model, ambiguity, 
     assert.ok(!String(ambiguous.reason + unknown.reason).includes(CANARY));
   } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
 });
+
+test('a config that declares no profile: the real fallback lists only presets, so nothing is offered and no preset is accepted', { skip: SKIP }, () => {
+  const w = world();
+  try {
+    fs.writeFileSync(path.join(w.home, '.config', 'vl', 'config.toml'), '# no profiles declared\n');
+    const info = describeManaged(managed(), { home: w.home, platform: 'linux', env: w.env, withVlProfiles: true, vlProfilesNoCache: true });
+    assert.equal(info.vlProfiles.state, 'none', info.vlProfiles.reason);
+    assert.deepEqual(info.vlProfiles.options, []);
+    assert.equal(info.vlProfiles.inventory, 'catalog');
+    assert.equal(info.vlProfiles.presetNamesResolvable, true, 'information about the runtime, not an authorization');
+    const launch = (model) => resolveManagedEngine({ id: 'vl.native', managed: managed({ model }) },
+      { id: 'CellaProva' }, { home: w.home, platform: 'linux', env: w.env });
+    for (const name of ['anthropic', 'zai', 'ollama']) {
+      const r = launch(name);
+      assert.equal(r.ok, false, `${name} must not be accepted`);
+      assert.match(String(r.reason), /nessun profilo dichiarato/);
+    }
+  } finally { fs.rmSync(w.root, { recursive: true, force: true }); }
+});

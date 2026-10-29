@@ -15,7 +15,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { describeManaged, resolveManagedEngine } = require('../lib/fleet/managed.js');
+const { describeManaged, resolveManagedEngine, normalizeManagedSpec } = require('../lib/fleet/managed.js');
 const vlProfiles = require('../lib/fleet/vl-profiles.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
@@ -503,4 +503,176 @@ test('with an old binary the status keeps its plain models and says why there is
     assert.ok(!row.models.includes('a-opus'));
     await fleet.close();
   } finally { cleanup(w); }
+});
+
+
+// ---- the selector is opaque: model aliases never rewrite a profile id --------
+
+const LEGACY = 'qwen3.8-max-preview'; // a legacy MODEL alias of qwen3.8-max
+const RENAMED = 'qwen3.8-max';
+
+function aliasWorld(ids) {
+  const profiles = [];
+  if (ids.includes(LEGACY)) profiles.push(profile(LEGACY, 'chosen-original'));
+  if (ids.includes(RENAMED)) profiles.push(profile(RENAMED, 'other-account'));
+  const catalog = profiles.map((p) => `[profiles.${p.id}]\nmodel = "${p.model}"\n`).join('');
+  return world({ models: eight({ profiles }), catalog });
+}
+
+test('R1: both ids present, the saved value, the final env and the match stay the exact id', () => {
+  const w = aliasWorld([LEGACY, RENAMED]);
+  try {
+    const spec = normalizeManagedSpec(vlNative({ vlBinary: w.bin, model: LEGACY }));
+    assert.equal(spec.model, LEGACY, 'the persisted selector is not aliased');
+    const r = launch(w, vlNative({ vlBinary: w.bin, model: LEGACY }));
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.engine.env.VL_MODEL, LEGACY);
+    assert.equal(r.info.vlRuntime.selector.profile, LEGACY);
+    assert.equal(r.info.vlRuntime.selector.by, 'profile', 'matched by id, before any comparison by model');
+    const other = launch(w, vlNative({ vlBinary: w.bin, model: RENAMED }));
+    assert.equal(other.engine.env.VL_MODEL, RENAMED);
+    assert.equal(other.info.vlRuntime.selector.profile, RENAMED);
+  } finally { cleanup(w); }
+});
+
+test('R1: the per-cell override is opaque too', () => {
+  const w = aliasWorld([LEGACY, RENAMED]);
+  try {
+    const r = launch(w, vlNative({ vlBinary: w.bin }), { cell: { id: 'CellaProva', model: LEGACY } });
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.engine.env.VL_MODEL, LEGACY);
+    assert.equal(r.info.vlRuntime.selector.profile, LEGACY);
+  } finally { cleanup(w); }
+});
+
+test('R1: with only the legacy id declared the choice is accepted, not refused by a renamed lookup', () => {
+  const w = aliasWorld([LEGACY]);
+  try {
+    const r = launch(w, vlNative({ vlBinary: w.bin, model: LEGACY }));
+    assert.equal(r.ok, true, r.reason);
+    assert.equal(r.engine.env.VL_MODEL, LEGACY);
+    const cell = launch(w, vlNative({ vlBinary: w.bin }), { cell: { id: 'CellaProva', model: LEGACY } });
+    assert.equal(cell.ok, true, cell.reason);
+    assert.equal(cell.engine.env.VL_MODEL, LEGACY);
+  } finally { cleanup(w); }
+});
+
+test('R1: the alias still applies to every other client path (remote variant, fixed profile, other clients)', () => {
+  const remote = normalizeManagedSpec({ client: 'vl', provider: 'anthropic', model: LEGACY, permissionPolicy: 'standard' });
+  assert.equal(remote && remote.model, RENAMED, 'a remote variant keeps the alias');
+  const fixed = normalizeManagedSpec(vlNative({ vlProfile: 'zai-P-glm53', model: LEGACY }));
+  assert.equal(fixed && fixed.model, RENAMED, 'a fixed profile keeps the model semantics');
+  const w = world();
+  try {
+    const r = launch(w, vlNative({ vlBinary: w.bin, vlProfile: undefined, model: '' }), { cell: { id: 'CellaProva', model: '' } });
+    assert.equal(r.ok, true, r.reason);
+  } finally { cleanup(w); }
+});
+
+// ---- presets are neither offered nor accepted, whatever the inventory kind ---
+
+const presetRow = (id, model) => profile(id, model, { source: 'preset', provider: 'anthropic' });
+const catalogOnly = () => eight({
+  inventory: 'catalog', active: null, active_error: 'unresolved',
+  profiles: [presetRow('anthropic', 'claude-haiku-5-5'), presetRow('zai', 'glm-5.3'), presetRow('ollama', 'llama3')],
+});
+
+test('R3: a catalog fallback (presets only) is "no declared profile": nothing offered, nothing accepted', () => {
+  const w = world({ models: catalogOnly() });
+  try {
+    const info = describe(w);
+    assert.equal(info.vlProfiles.state, 'none');
+    assert.deepEqual(info.vlProfiles.options, []);
+    assert.equal(info.vlProfiles.presetNamesResolvable, true, 'kept as information about the runtime');
+    assert.match(info.vlProfiles.reason, /nessun profilo dichiarato/);
+    for (const name of ['anthropic', 'zai', 'claude-haiku-5-5']) {
+      const r = launch(w, vlNative({ vlBinary: w.bin, model: name }));
+      assert.equal(r.ok, false, `${name} must not be accepted`);
+      assert.match(String(r.reason), /nessun profilo dichiarato/);
+    }
+    const cell = launch(w, vlNative({ vlBinary: w.bin }), { cell: { id: 'CellaProva', model: 'zai' } });
+    assert.equal(cell.ok, false);
+  } finally { cleanup(w); }
+});
+
+test('R3: a preset row next to declared profiles is not offered and not accepted; the declared ones are unchanged', () => {
+  const doc = eight();
+  doc.profiles.push(presetRow('anthropic', 'claude-haiku-5-5'));
+  const w = world({ models: doc });
+  try {
+    const info = describe(w);
+    assert.equal(info.vlProfiles.state, 'ready');
+    assert.deepEqual(info.vlProfiles.options.map((o) => o.value), eight().profiles.map((p) => p.id));
+    assert.equal(launch(w, vlNative({ vlBinary: w.bin, model: 'anthropic' })).ok, false);
+    assert.equal(launch(w, vlNative({ vlBinary: w.bin, model: 'a-opus' })).ok, true);
+    assert.equal(vlProfiles.resolveSelector(vlProfiles.validateInventory(doc).inventory, 'claude-haiku-5-5').by, 'model', 'the declared haiku profile still wins by model');
+  } finally { cleanup(w); }
+});
+
+test('R3: the status carries no models for a node with no declared profile, not even a declared raw model', async () => {
+  const w = world({ models: catalogOnly() });
+  try {
+    const fleet = await fleetFor(w, vlNative({ vlBinary: w.bin }));
+    const defsPath = path.join(w.root, 'fleet.json');
+    const defs = JSON.parse(fs.readFileSync(defsPath, 'utf8'));
+    defs.models = [{ id: 'raw-declared-model', engine: 'vl.native', contextWindow: 65536, maxTokens: 4096 }];
+    atomicWrite(defsPath, defs);
+    const fresh = await createBuiltinFleet({
+      home: w.home, fleetDefsPath: defsPath, tmuxBin: '/bin/true',
+      env: { XDG_CONFIG_HOME: path.join(w.home, '.config') },
+    });
+    const st = await fresh.status();
+    await fresh.close();
+    const row = st.engines.find((e) => e.id === 'vl.native');
+    assert.equal(row.vlProfiles.state, 'none');
+    assert.deepEqual(row.models, []);
+    await fleet.close();
+  } finally { cleanup(w); }
+});
+
+// ---- the listing of a NEW engine: the node's default, from definitions() ------
+
+function defaultBinaryWorld(over) {
+  const w = world(over);
+  const binDir = path.join(w.home, '.local', 'bin');
+  fs.writeFileSync(path.join(binDir, 'vl'), FAKE_VL, { mode: 0o755 });
+  fs.chmodSync(path.join(binDir, 'vl'), 0o755);
+  setDoc(binDir, 'status.json', over && over.status ? over.status : NEW_STATUS);
+  setDoc(binDir, 'models.json', over && over.models ? over.models : eight());
+  return { ...w, defaultDir: binDir };
+}
+
+test('R2: definitions() carries the node default listing for a new vl.native engine (the default binary, executor-local)', async () => {
+  const w = defaultBinaryWorld();
+  try {
+    const fleet = await fleetFor(w, vlNative({ vlBinary: w.bin }));
+    const defs = fleet.definitions();
+    assert.equal(defs.vlProfilesDefault.state, 'ready');
+    assert.deepEqual(defs.vlProfilesDefault.options.map((o) => o.value), eight().profiles.map((p) => p.id));
+    assert.ok(calls(w.defaultDir).some((c) => c.startsWith('models --json')), 'the default binary was asked, not the engine\'s declared one');
+    assert.ok(!JSON.stringify(defs).includes(CANARY));
+    await fleet.close();
+  } finally { cleanup(w); }
+});
+
+test('R2: the default listing says "old", "none" or "unavailable" instead of inventing a list', async () => {
+  const old = defaultBinaryWorld({ status: OLD_STATUS });
+  const none = defaultBinaryWorld({ models: catalogOnly() });
+  try {
+    const f1 = await fleetFor(old, vlNative({ vlBinary: old.bin }));
+    assert.equal(f1.definitions().vlProfilesDefault.state, 'old');
+    await f1.close();
+    const f2 = await fleetFor(none, vlNative({ vlBinary: none.bin }));
+    const d = f2.definitions().vlProfilesDefault;
+    assert.equal(d.state, 'none');
+    assert.deepEqual(d.options, []);
+    await f2.close();
+  } finally { cleanup(old); cleanup(none); }
+  const bare = world();
+  try {
+    fs.rmSync(path.join(bare.home, '.local', 'bin', 'vl'), { force: true });
+    const f3 = await fleetFor(bare, vlNative({ vlBinary: bare.bin }));
+    assert.equal(f3.definitions().vlProfilesDefault.state, 'unavailable');
+    await f3.close();
+  } finally { cleanup(bare); }
 });
