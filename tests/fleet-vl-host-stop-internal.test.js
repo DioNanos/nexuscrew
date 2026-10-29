@@ -22,7 +22,9 @@ function procEsito(output, code) {
   p.kill = () => {};
   p.unref = () => {};
   queueMicrotask(() => {
-    if (output) p.stdout.emit('data', Buffer.from(output));
+    // `output` e' un testo o un elenco di pezzi, ognuno un evento `data`.
+    const pezzi = Array.isArray(output) ? output : [output];
+    for (const pezzo of pezzi) if (pezzo) p.stdout.emit('data', Buffer.from(pezzo));
     p.emit('close', code);
   });
   return p;
@@ -449,3 +451,145 @@ process.stdout.write(JSON.stringify({ schema_version: 1, state: gia ? 'none' : '
   assert.equal(v.env.VL_API_KEY, undefined);
   assert.equal(v.env.API_KEY, undefined);
 });
+
+// ── un'uscita oltre il limite di raccolta non e un'uscita ───────────────────
+
+const LIMITE = host.MAX_OUT;
+const X = (n) => 'X'.repeat(n);
+const pezzi = (testo, dim) => {
+  const v = [];
+  for (let i = 0; i < testo.length; i += dim) v.push(testo.slice(i, i + dim));
+  return v;
+};
+// Uno status valido riempito fino a un numero esatto di byte.
+function statoDi(stato, byte, extra = {}) {
+  const base = { schema_version: 1, state: stato, ...extra, pad: '' };
+  const vuoto = `${JSON.stringify(base)}\n`;
+  base.pad = 'p'.repeat(byte - Buffer.byteLength(vuoto));
+  const testo = `${JSON.stringify(base)}\n`;
+  assert.equal(Buffer.byteLength(testo), byte);
+  return testo;
+}
+
+test('il limite di raccolta e quello dichiarato', () => {
+  assert.equal(LIMITE, 65536);
+});
+
+test('una riga valida seguita da un suffisso oltre il limite non e un esito: STOP_UNATTESTED, nessun ripiego', async () => {
+  const valida = riga(true, 'shutdown_ack');
+  const piani = {
+    'in pezzi da 16 KiB': [valida, ...pezzi(X(LIMITE), 16384)],
+    'in un solo evento': valida + X(LIMITE),
+    'la riga e poi un solo evento di 64 KiB': [valida, X(LIMITE)],
+    'tanti pezzi da 1 KiB': [valida, ...pezzi(X(LIMITE), 1024)],
+    'un byte oltre il limite, a confine di pezzo': [valida + X(LIMITE - valida.length), 'X'],
+    'un byte oltre il limite, dentro un pezzo': [valida, X(LIMITE - valida.length + 1)],
+  };
+  for (const [nome, out] of Object.entries(piani)) {
+    // Anche con lo status finale none: il suffisso perso non diventa un successo.
+    const { esito, chiamate } = await ferma(finto({ stati: [VIVO_CON_CAP, NONE], stop: { out, code: 0 } }));
+    assert.equal(esito.outcome, 'host-stop-failed', nome);
+    assert.equal(esito.code, 'STOP_UNATTESTED', nome);
+    assert.equal(esito.via, 'internal', nome);
+    assert.deepEqual(comandi(chiamate), ['status', 'internal'], nome);
+  }
+});
+
+test('esattamente al limite non e troncato, e non diventa valido per questo', async () => {
+  const valida = riga(true, 'shutdown_ack');
+  // Esattamente LIMITE byte: raccolti per intero, ma non sono una riga sola.
+  const { esito, chiamate } = await ferma(finto({
+    stati: [VIVO_CON_CAP, NONE], stop: { out: valida + X(LIMITE - valida.length), code: 0 },
+  }));
+  assert.equal(esito.code, 'STOP_UNATTESTED');
+  assert.deepEqual(comandi(chiamate), ['status', 'internal']);
+});
+
+test('uno status esattamente al limite si legge; un byte oltre e inutilizzabile', async () => {
+  // Al limite, in uno e in due pezzi: letto, e none vuol dire gia fermo.
+  for (const out of [statoDi('none', LIMITE), pezzi(statoDi('none', LIMITE), 40000)]) {
+    const { esito, chiamate } = await ferma(finto({ stati: [{ out }], stop: { out: '', code: 1 } }));
+    assert.equal(esito.outcome, 'host-already-stopped');
+    assert.deepEqual(comandi(chiamate), ['status']);
+  }
+  // Un byte oltre: troncato. Ne none ne live: nessun comando di stop.
+  const oltre = statoDi('none', LIMITE + 1);
+  const piani = {
+    'in un evento': oltre,
+    'a confine di pezzo': [oltre.slice(0, LIMITE), oltre.slice(LIMITE)],
+    'in pezzi piccoli': pezzi(oltre, 1024),
+  };
+  for (const [nome, out] of Object.entries(piani)) {
+    const { esito, chiamate } = await ferma(finto({ stati: [{ out }], stop: { out: '', code: 1 } }));
+    assert.equal(esito.outcome, 'host-stop-failed', nome);
+    assert.equal(esito.code, 'STATUS_UNUSABLE', nome);
+    assert.deepEqual(comandi(chiamate), ['status'], nome);
+  }
+});
+
+test('una capacita letta da uno status troncato non sceglie nessun comando', async () => {
+  // La capacita sta all'inizio, il resto e' oltre il limite: ne' interno ne' legacy.
+  const troncato = statoDi('live', LIMITE + 1, { capabilities: [CAP] });
+  assert.ok(troncato.startsWith('{"schema_version":1,"state":"live","capabilities":["host_stop_v1"]'));
+  const { esito, chiamate } = await ferma(finto({
+    stati: [{ out: troncato }, NONE], stop: { out: riga(true, 'shutdown_ack'), code: 0 },
+  }));
+  assert.equal(esito.code, 'STATUS_UNUSABLE');
+  assert.deepEqual(comandi(chiamate), ['status']);
+});
+
+test('uno status finale troncato non attesta il none', async () => {
+  const { esito, chiamate } = await ferma(finto({
+    stati: [VIVO_CON_CAP, { out: statoDi('none', LIMITE + 1, { capabilities: [CAP] }) }],
+    stop: { out: riga(true, 'shutdown_ack'), code: 0 },
+  }));
+  assert.equal(esito.outcome, 'host-stop-failed');
+  assert.equal(esito.code, 'BARRIER');
+  assert.deepEqual(comandi(chiamate), ['status', 'internal', 'status']);
+});
+
+// La stessa prova con un CLI vero: un processo che scrive, i pezzi li fa il kernel.
+test('CLI vero: la riga di ack seguita da 64 KiB di X e uscita 0 non e uno stop attestato', async () => {
+  const home = casa();
+  const log = path.join(home, 'chiamate.log');
+  const marca = path.join(home, 'fermato');
+  const bin = scriviBin(path.join(home, 'vl'), `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(${JSON.stringify(log)}, process.argv.slice(2, 4).join(' ') + '\\n');
+if (process.argv[2] === 'internal') {
+  fs.writeFileSync(${JSON.stringify(marca)}, '1');
+  process.stdout.write('{"ok":true,"reason":"shutdown_ack"}\\n');
+  process.stdout.write('X'.repeat(${LIMITE}));
+  process.exit(0);
+}
+const fermo = fs.existsSync(${JSON.stringify(marca)});
+process.stdout.write(JSON.stringify({ schema_version: 1, state: fermo ? 'none' : 'live', capabilities: ['host_stop_v1'] }) + '\\n');
+`);
+  const rec = record(home, bin);
+  const esito = await host.fermaHost({
+    record: rec, bin, budgetMs: 8000, monoNow: () => Date.now(), isolamento: 'isolato',
+  });
+  assert.equal(esito.outcome, 'host-stop-failed');
+  assert.equal(esito.code, 'STOP_UNATTESTED');
+  assert.equal(esito.via, 'internal');
+  // Lo status dopo c'e' none, e il vecchio comando non e' partito.
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), ['host status', 'internal host-stop']);
+});
+
+test('CLI vero: uno status di esattamente 64 KiB si legge, uno di un byte in piu no', async () => {
+  for (const [byte, atteso] of [[LIMITE, 'host-already-stopped'], [LIMITE + 1, 'host-stop-failed']]) {
+    const home = casa();
+    const bin = scriviBin(path.join(home, 'vl'), `#!${process.execPath}
+const base = { schema_version: 1, state: 'none', pad: '' };
+const vuoto = JSON.stringify(base) + '\\n';
+base.pad = 'p'.repeat(${byte} - Buffer.byteLength(vuoto));
+process.stdout.write(JSON.stringify(base) + '\\n');
+`);
+    const esito = await host.fermaHost({
+      record: record(home, bin), bin, budgetMs: 8000, monoNow: () => Date.now(), isolamento: 'isolato',
+    });
+    assert.equal(esito.outcome, atteso, `${byte} byte`);
+    if (atteso === 'host-stop-failed') assert.equal(esito.code, 'STATUS_UNUSABLE');
+  }
+});
+
