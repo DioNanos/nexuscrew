@@ -253,15 +253,18 @@ test('R2: EIO sul fsync del FILE della claim — fail-closed claim-unavailable, 
 test('R2: EIO sul fsync della DIRECTORY che contiene la claim — fail-closed, nessun paste, claim NON cancellata', (t) => {
   const home = tmpHome();
   const base = { home, ownerInstanceId: 'local', cellId: 'C' };
-  // la catena esiste GIA\' (materializzata da un avvio precedente): l'unica
-  // directory sincronizzata dopo la creazione del file e' quella della claim
+  // la catena esiste GIA\' (materializzata da un avvio precedente). D-558
+  // FIX2a (F3): l'anello `nc` viene sincronizzato a OGNI acquisizione, anche
+  // PRIMA di aprire il file — il fault quindi scatta SOLO quando la claim e'
+  // gia' sul disco (fsync della directory DOPO la creazione del file).
   assert.equal(decideVlBootstrap({ ...base, launchId: '0000000000000000' }).eligible, true);
-  injectFsyncFailure(t, (p) => p.endsWith(`${path.sep}nc`));
+  const nc = path.join(vlCellBaseDir(home, 'local', 'C'), 'nc');
+  const claim1111 = path.join(nc, 'bootstrap-1111111111111111.json');
+  injectFsyncFailure(t, (p) => p === nc && fs.existsSync(claim1111));
   const d = decideVlBootstrap({ ...base, launchId: '1111111111111111' });
   assert.equal(d.eligible, false, 'entry della claim non nota durevole: nessun paste');
   assert.equal(d.reason, 'claim-unavailable');
-  const nc = path.join(vlCellBaseDir(home, 'local', 'C'), 'nc');
-  assert.ok(fs.existsSync(path.join(nc, 'bootstrap-1111111111111111.json')), 'claim non cancellata');
+  assert.ok(fs.existsSync(claim1111), 'claim non cancellata');
 });
 
 test('R2: EIO sul fsync del PARENT della catena appena creata — fail-closed claim-unavailable', (t) => {
