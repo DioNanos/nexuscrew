@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   blankEngine, blankCell, buildEngine, engineForm,
-  modelDatalistOptions, vlSelectorStatus, vlProfileNotes, vlProfilesReady, vlFormProfiles,
+  modelDatalistOptions, vlSelectorStatus, vlProfileNotes, vlProfilesReady, vlFormProfiles, vlFormSavedValues,
 } from './fleet-forms.js';
 import { DICTS } from './i18n.js';
 
@@ -98,10 +98,21 @@ describe('vl.native profile choice', () => {
     expect(new Set(list.map((o) => o.value)).size).toBe(3);
   });
 
-  it('keeps the plain list for an engine with no ready inventory', () => {
-    for (const vl of [null, undefined, { state: 'old', options: [] }, { state: 'invalid', options: [] }, { state: 'unsupported', options: [] }]) {
+  it('keeps the plain list for other clients and for an old binary; every other state offers nothing', () => {
+    // Another client, a vl variant that is not native, no listing at all: the
+    // model list the engine carries is the datalist, as it has always been.
+    for (const vl of [null, undefined]) {
       const list = modelDatalistOptions(['m1', 'm2', 'm1'], vl, tt);
       expect(list).toEqual([{ value: 'm1', label: undefined }, { value: 'm2', label: undefined }]);
+    }
+    // An old binary keeps the legacy raw-model list: those models were read for
+    // that very binary (the caller drops them when the form no longer matches it).
+    expect(modelDatalistOptions(['m1', 'm2', 'm1'], { state: 'old', options: [] }, tt))
+      .toEqual([{ value: 'm1', label: undefined }, { value: 'm2', label: undefined }]);
+    // Any other state would offer `values` read for another binary or catalog —
+    // a saved engine's stale inventory: nothing is offered, the note says why.
+    for (const vl of [{ state: 'invalid', options: [] }, { state: 'unavailable', options: [] }, { state: 'unsupported', options: [] }, { state: 'loading', options: [] }]) {
+      expect(modelDatalistOptions(['m1', 'm2'], vl, tt)).toEqual([]);
     }
     expect(vlProfilesReady(READY)).toBe(true);
     expect(vlProfilesReady({ state: 'ready' })).toBe(false);
@@ -197,6 +208,25 @@ describe('vl.native form listing', () => {
     expect(vlFormProfiles({ ...saved, vlProfile: 'work' }, NONE, false)).toEqual({ state: 'unsupported', options: [] });
     // clearing the declared binary hands the form to the node default, not to the stale list
     expect(vlFormProfiles({ ...saved, vlBinary: '' }, NONE, false)).toBe(NONE);
+  });
+
+  it('knows when the saved engine inventory still describes the form (the caller drops it otherwise)', () => {
+    // `modelOptions` is what the node read for the SAVED engine: it may reach the
+    // datalist only while the form still declares those same values. EngineEditor
+    // relies on this so that not even an 'old' node default offers a saved
+    // engine's models after its binary, catalog or profile is edited away.
+    const saved = engineForm({ id: 'vl.native', label: 'vl', managed: { client: 'vl', provider: 'native', model: 'zai-A-glm53', permissionPolicy: 'standard', vlBinary: '/opt/vl/bin/vl' }, availableModels: ['zai-A-glm53', 'zai-P-glm53'], vlProfiles: READY });
+    expect(saved.modelOptions).toEqual(['zai-A-glm53', 'zai-P-glm53']);
+    expect(vlFormSavedValues(saved)).toBe(true);
+    for (const changed of [{ vlBinary: '/opt/other/vl' }, { vlConfigFile: '/opt/other/config.toml' }, { vlProfile: 'work' }]) {
+      expect(vlFormSavedValues({ ...saved, ...changed })).toBe(false);
+    }
+    // a blank form has nothing declared: it "matches" its (empty) saved values
+    expect(vlFormSavedValues(vlForm())).toBe(true);
+    expect(vlFormSavedValues(null)).toBe(true);
+    // and the inventory of a saved engine that went back to the saved values is current again
+    expect(vlFormSavedValues({ ...saved, vlBinary: '/opt/other/vl' })).toBe(false);
+    expect(vlFormSavedValues({ ...saved, vlBinary: '/opt/vl/bin/vl' })).toBe(true);
   });
 
   it('a node with no declared profile offers nothing and says so; the new states have a note', () => {

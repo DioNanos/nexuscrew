@@ -107,12 +107,23 @@ export const vlProfilesReady = (vlProfiles) => !!vlProfiles && vlProfiles.state 
 //   loading      the node's definitions are still being read;
 //   unavailable  the node did not provide a listing (older node, or an error);
 //   unsupported  the form declares binary/catalog/fixed profile: no list here.
+// True while the form still declares the binary, catalog file and fixed profile
+// of the engine it was loaded from: the listing and the model inventory the node
+// read for THAT engine (form.vlProfiles, form.modelOptions) still describe this
+// form. When false they were read for another binary or catalog, and none of
+// them may be offered here (see vlFormProfiles and modelDatalistOptions).
+export function vlFormSavedValues(form) {
+  if (!form) return true;
+  const saved = form.vlSaved || { vlBinary: '', vlConfigFile: '', vlProfile: '' };
+  return (form.vlBinary || '').trim() === saved.vlBinary
+    && (form.vlConfigFile || '').trim() === saved.vlConfigFile
+    && (form.vlProfile || '').trim() === saved.vlProfile;
+}
+
 export function vlFormProfiles(form, vlDefault, loading) {
   if (!form || form.client !== 'vl' || form.provider !== 'native') return null;
-  const saved = form.vlSaved || { vlBinary: '', vlConfigFile: '', vlProfile: '' };
+  if (vlFormSavedValues(form) && form.vlProfiles) return form.vlProfiles;
   const cur = { vlBinary: (form.vlBinary || '').trim(), vlConfigFile: (form.vlConfigFile || '').trim(), vlProfile: (form.vlProfile || '').trim() };
-  const unchanged = cur.vlBinary === saved.vlBinary && cur.vlConfigFile === saved.vlConfigFile && cur.vlProfile === saved.vlProfile;
-  if (unchanged && form.vlProfiles) return form.vlProfiles;
   if (!cur.vlBinary && !cur.vlConfigFile && !cur.vlProfile) {
     if (loading) return { state: 'loading', options: [] };
     if (vlDefault && typeof vlDefault === 'object' && vlDefault.state) return vlDefault;
@@ -122,16 +133,29 @@ export function vlFormProfiles(form, vlDefault, loading) {
 }
 
 export function modelDatalistOptions(values, vlProfiles, t) {
+  // Not a vl.native form (another client, or a vl variant that is not native):
+  // the plain model list is the datalist, as it has always been.
+  if (!vlProfiles) return [...new Set((values || []).filter(Boolean))].map((value) => ({ value, label: undefined }));
   // A node with no declared profile offers nothing: the built-in presets are not
   // its list, and the raw model ids are not profile ids.
-  if (vlProfiles && vlProfiles.state === 'none') return [];
+  if (vlProfiles.state === 'none') return [];
   if (vlProfilesReady(vlProfiles)) {
     return vlProfiles.options.map((o) => ({
       value: o.value,
       label: o.key === 'absent' ? `${o.label} — ${t('fleet-vl-key-absent')}` : o.label,
     }));
   }
-  return [...new Set((values || []).filter(Boolean))].map((value) => ({ value, label: undefined }));
+  // An old binary (no profile capability) keeps the legacy plain model list:
+  // those models were read for the very binary the state is about, so they are
+  // its own — and the caller keeps them out of `values` once the form declares
+  // another binary, catalog or fixed profile (v. EngineEditor). Any other state
+  // (unsupported, unavailable, invalid, loading, …) would offer a list read for
+  // another binary or catalog than the one now in the form: nothing is offered,
+  // and vlProfileNotes says which state the form is in.
+  if (vlProfiles.state === 'old') {
+    return [...new Set((values || []).filter(Boolean))].map((value) => ({ value, label: undefined }));
+  }
+  return [];
 }
 
 // What the node would make of the typed value, decided the way the runtime

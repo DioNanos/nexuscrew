@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../../lib/i18n.js';
-import { catalogEntry, modelDatalistOptions, vlFormProfiles, vlProfileNotes } from '../../lib/fleet-forms.js';
+import { catalogEntry, modelDatalistOptions, vlFormProfiles, vlFormSavedValues, vlProfileNotes } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
 // sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
@@ -264,6 +264,11 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
   const rows = f.envRows || [];
   // The profile list of a vl.native form: the saved engine's own, or the node's default for a new one (see vlFormProfiles).
   const vlList = vlFormProfiles(f, vlDefault, vlLoading);
+  // `f.modelOptions` is the model inventory the node read for the SAVED engine.
+  // Once the form declares another binary, catalog or fixed profile that
+  // inventory is another binary's or catalog's list, and it never reaches the
+  // datalist in any state: not even an 'old' node default may offer it.
+  const savedModels = f.client !== 'vl' || f.provider !== 'native' || vlFormSavedValues(f) ? (f.modelOptions || []) : [];
   const clients = [...new Map(catalog.map((p) => [p.client, p.clientLabel || p.client])).entries()];
   const profiles = catalog.filter((p) => p.client === f.client);
   const selectedProfile = catalogEntry(catalog, f);
@@ -293,7 +298,7 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
       </div>
       {f.client !== 'shell' && <>
         <input value={f.managedModel} list="nc-managed-models" placeholder={t(selectedProfile?.requiresModel ? 'fleet-model-required' : 'fleet-model-default')} onChange={(e) => set({ managedModel: e.target.value })} />
-        <datalist id="nc-managed-models">{modelDatalistOptions([...(selectedProfile?.models || []), ...(f.modelOptions || [])], vlList, t).map((o) => <option key={o.value} value={o.value} label={o.label} />)}</datalist>
+        <datalist id="nc-managed-models">{modelDatalistOptions([...(selectedProfile?.models || []), ...savedModels], vlList, t).map((o) => <option key={o.value} value={o.value} label={o.label} />)}</datalist>
         {vlList && vlProfileNotes(vlList, f.managedModel, t).map((n) => <small key={n.id} className="nc-note" data-vl-note={n.id}>{n.text}</small>)}
         {fetchModels && (state.mode === 'edit' ? f.id : selectedProfile?.id) && <ModelDiscoverySection
           engineId={state.mode === 'edit' ? f.id : selectedProfile?.id}

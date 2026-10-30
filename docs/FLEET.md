@@ -134,7 +134,12 @@ NexusCrew never reads the profile catalog itself.
   another binary or catalog — and says the list is not read there; the same holds
   when a saved engine's binary, catalog or profile is edited. The form also says
   when the node is being read, when the node gave no list, and when its binary is
-  old or its inventory invalid.
+  old or its inventory invalid. In any state but a ready listing the editor offers
+  no option at all: a list read for another binary, catalog or fixed profile —
+  including the one a saved engine had before the edit — is never suggested. A
+  binary without the profile capability (old) is the one exception: it keeps the
+  plain raw-model list it always had, because those models were read for that
+  very binary.
 - **Preflight.** At launch the value must be the id of a profile of the inventory
   or the model of exactly one: an unknown value, or a model shared by several
   profiles, refuses the start naming the available profiles, instead of failing
