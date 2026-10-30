@@ -414,7 +414,10 @@ test('confini: il ramo vl non porta send-keys né guardiano; il prompt viaggia S
   const home = homeWith();
   try {
     const r = resolve(home, vlNative(), { id: 'CellaProva', prompt: 'prompt di cella' }, { vlVersionProbe: PROBE('0.5.0') });
-    assert.equal(r.engine.promptMode, 'managed-argv', 'vl: nessuna consegna send-keys (niente pressione di Invio)');
+    // D-558: vl passa alla consegna classificata send-keys — il primo turno
+    // utente parte SOLO a generation 0 con claim del launcher (mai argv, mai
+    // pressione cieca di Invio: readiness 'ready' + guardia persistente).
+    assert.equal(r.engine.promptMode, 'send-keys', 'vl: consegna classificata send-keys (D-558)');
     assert.equal(r.engine.restartPrompt, undefined, 'niente reinjection: nessun guardiano dell\'Invio');
     assert.deepEqual(r.engine.args, [], 'il prompt NON sta su argv');
     assert.ok(r.engine.env.VL_SYSTEM_APPEND_FILE, 'l\'unico canale del prompt e\' il file per cella');
