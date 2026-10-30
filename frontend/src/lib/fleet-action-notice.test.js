@@ -117,3 +117,62 @@ describe('upActionNotice — avvio degradato MCP (claude gestite)', () => {
     expect(n.text).not.toContain('MCP');
   });
 });
+
+// D-558 FIX1b (R3): l'esito della consegna del prompt iniziale vl di un
+// avvio viaggia in vlBootstrap (closed enum). failed / uncertain /
+// not-delivered generano l'avviso; lo skip NORMALE (respawn/riattacco nello
+// stesso avvio) e submitted mai. Il recupero detto nel testo è riavviare la
+// cella: nessun reinvio automatico nello stesso avvio.
+describe('upActionNotice — esito bootstrap vl per avvio (D-558 FIX1b)', () => {
+  it('failed -> avviso i18n locale con recovery = riavvio della cella', () => {
+    const n = upActionNotice({
+      ok: true, cell: 'Dev', session: 'work-vl',
+      vlBootstrap: { state: 'failed', reason: 'failed-pre-paste' },
+    });
+    expect(n).not.toBeNull();
+    expect(n.code).toBe('VL_BOOTSTRAP_FAILED');
+    expect(n.text).toBeTruthy();
+    expect(n.text.length).toBeGreaterThan(10);
+    expect(n.text).not.toBe('fleet-vl-bootstrap-failed', 'chiave i18n risolta, non grezza');
+  });
+
+  it('uncertain -> avviso, senza suggerire un reinvio automatico', () => {
+    const n = upActionNotice({
+      ok: true, cell: 'Dev',
+      vlBootstrap: { state: 'uncertain', reason: 'delivery-unknown' },
+    });
+    expect(n.code).toBe('VL_BOOTSTRAP_FAILED');
+    expect(n.text).not.toBe('fleet-vl-bootstrap-uncertain');
+  });
+
+  it('failed con notReady (TUI non pronta) -> testo dedicato alla TUI', () => {
+    const n = upActionNotice({
+      ok: true, cell: 'Dev',
+      vlBootstrap: { state: 'failed', reason: 'skipped-not-ready', notReady: 'not-ready-consent' },
+    });
+    expect(n.code).toBe('VL_BOOTSTRAP_FAILED');
+    expect(n.text).not.toBe('fleet-vl-bootstrap-not-ready');
+    expect(n.text).not.toBe('fleet-vl-bootstrap-failed', 'caso TUI distinto dal fallimento generico');
+  });
+
+  it('not-delivered (claim non presa) -> avviso', () => {
+    const n = upActionNotice({
+      ok: true, cell: 'Dev',
+      vlBootstrap: { state: 'not-delivered', reason: 'claim-unavailable' },
+    });
+    expect(n.code).toBe('VL_BOOTSTRAP_FAILED');
+  });
+
+  it('skip NORMALE (generation) e submitted -> null, nessun falso allarme', () => {
+    expect(upActionNotice({ ok: true, vlBootstrap: { state: 'skipped', reason: 'generation' } })).toBeNull();
+    expect(upActionNotice({ ok: true, vlBootstrap: { state: 'submitted' } })).toBeNull();
+  });
+
+  it('payload fuori enum o reason malformata -> null (federazione: mai testo remoto)', () => {
+    expect(upActionNotice({ ok: true, vlBootstrap: { state: 'evil', reason: 'x' } })).toBeNull();
+    expect(upActionNotice({ ok: true, vlBootstrap: { state: 'failed', reason: 'DROP TABLE' } })).toBeNull();
+    expect(upActionNotice({ ok: true, vlBootstrap: { state: 'failed', reason: 'failed-pre-paste', notReady: 'DROP TABLE' } })).toBeNull();
+    expect(upActionNotice({ ok: true, vlBootstrap: 'failed' })).toBeNull();
+    expect(upActionNotice({ ok: true, vlBootstrap: ['failed'] })).toBeNull();
+  });
+});

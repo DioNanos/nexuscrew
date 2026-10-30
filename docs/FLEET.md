@@ -185,6 +185,32 @@ prompt only, at most once per process generation:
   a supervised restart delivers the prompt at most once again for the new
   process generation.
 
+### Bootstrap prompt delivery (VL cells)
+
+Every launch of a `vl` cell (`up`: generation 0 of a new supervisor) delivers
+`cell.prompt` exactly once, on a new host and on an existing one alike — that
+is what NexusCrew was built for. Respawns of the TUI inside the same launch
+(generation > 0, reattach) never re-deliver: the VL conversation is the same.
+Each launch is guarded by a per-launch claim file under the private `nc/`
+directory next to the cell root (`<base>/nc/bootstrap-<launchId>.json`).
+
+The transport outcome of that one delivery is settled on the claim file and
+surfaces in the `up` result (`vlBootstrap`) and in the UI. Bounded claim
+states: `pending` (no outcome yet — a crash without an outcome stays pending
+and reads as uncertain), `submitted` (paste+Enter succeeded — transport only,
+not "the model executed it"), `failed` (certain failure before any paste,
+including a not-ready TUI), `uncertain` (paste may have happened).
+
+**Recovery procedure.** With the per-launch rule, recovery is to **restart
+the cell**: a new launch performs a new, single delivery. There is never an
+automatic resend inside the same launch after an uncertain outcome. When the
+UI reports the initial VL prompt as `failed`, `uncertain`, not delivered, or
+not delivered because the TUI was not ready (`notReady`), the operator
+resolves the terminal condition if any (e.g. a login/consent dialog), then
+restarts the cell from the fleet panel. A normal skip (respawn/reattach of
+the same launch) is not a failure and raises no notice. Deleting a claim file
+by hand is never part of recovery.
+
 MCP servers started by an AI CLI inherit that process's environment according
 to the CLI's own configuration and behavior; that inheritance is owned by the
 CLI, not by NexusCrew.

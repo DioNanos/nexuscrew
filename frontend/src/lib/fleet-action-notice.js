@@ -37,6 +37,26 @@ export function upActionNotice(result) {
   if (result && typeof result === 'object' && result.vlPromptDegraded === true) {
     return { code: 'VL_PROMPT_DEGRADED', recovery: null, text: t('fleet-vl-prompt-degraded') };
   }
+  // D-558 FIX1b (R3): esito della consegna del prompt iniziale vl di QUESTO
+  // avvio. Il payload puo' arrivare da un nodo remoto federato: si accettano
+  // SOLO stati/reasons closed enum (slug `[a-z0-9-]`) e il testo e' i18n
+  // locale. Lo skip NORMALE ('skipped', respawn/riattacco nello stesso avvio)
+  // e l'esito 'submitted' NON generano avviso; 'failed', 'uncertain' e il non
+  // consegnato (anche per TUI non pronta, notReady bounded) si'. Il recupero
+  // e' sempre RIAVVIARE la cella: un avvio nuovo porta una consegna nuova,
+  // non esiste reinvio automatico nello stesso avvio.
+  if (result && typeof result === 'object' && result.vlBootstrap
+    && typeof result.vlBootstrap === 'object' && !Array.isArray(result.vlBootstrap)) {
+    const vb = result.vlBootstrap;
+    const slug = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
+    if (['failed', 'uncertain', 'not-delivered'].includes(vb.state) && slug(vb.reason)
+      && (vb.notReady === undefined || slug(vb.notReady))) {
+      const notReadyCase = vb.state === 'failed' && typeof vb.notReady === 'string' && vb.notReady;
+      const key = notReadyCase ? 'fleet-vl-bootstrap-not-ready'
+        : vb.state === 'uncertain' ? 'fleet-vl-bootstrap-uncertain' : 'fleet-vl-bootstrap-failed';
+      return { code: 'VL_BOOTSTRAP_FAILED', recovery: null, text: t(key) };
+    }
+  }
   // R27 #3: /fleet/up porta readinessDegraded:true quando una cella vl parte
   // senza marcatore di prontezza (DEC1 in runtime.js: degrada e procede).
   // Quel risultato veniva scartato e la cella appariva semplicemente «attiva»:
