@@ -61,6 +61,7 @@ function mondo(t, extraCfg = {}) {
   fs.writeFileSync(hostpid, '0\n');
   const modef = path.join(root, 'stopmode');
   const nopidf = path.join(root, 'live-no-pid');
+  const notinusef = path.join(root, 'live-not-in-use');
   const vllog = path.join(root, 'vl.log');
   fs.writeFileSync(vllog, '');
   const muori = path.join(root, 'muori');
@@ -72,6 +73,7 @@ const LOG = ${JSON.stringify(vllog)};
 const HOSTPID = ${JSON.stringify(hostpid)};
 const MODE = ${JSON.stringify(modef)};
 const NOPID = ${JSON.stringify(nopidf)};
+const NOTINUSE = ${JSON.stringify(notinusef)};
 const nota = (c) => fs.appendFileSync(LOG, c + '\\n');
 const leggiPid = () => { try { return Number(fs.readFileSync(HOSTPID, 'utf8').trim()) || 0; } catch (_) { return 0; } };
 const esiste = (p) => { try { process.kill(p, 0); return true; } catch (_) { return false; } };
@@ -81,17 +83,39 @@ if (argv[0] === '--version') { process.stdout.write('vl 0.4.0\\n'); process.exit
 if (argv[0] === 'host' && argv[1] === 'status') {
   nota('status');
   const p = leggiPid();
+  const iRoot = argv.lastIndexOf('--server-root');
+  const radice = iRoot >= 0 ? String(argv[iRoot + 1] || '') : '';
+  // Schema REALE di \`vl host status --json\` (VL 0.4; catturato dall'E2E2:
+  // schema_version, state, declared_pid, pid_number_in_use, since, server_root,
+  // explicit_root, profile, profile_source, residual_lock, error). NON esiste
+  // un campo \`pid\`: chi ne legge uno legge uno schema inventato.
+  const comune = {
+    schema_version: 1, explicit_root: true, profile: 'e2emock',
+    profile_source: 'config', residual_lock: null, error: null, server_root: radice,
+  };
   if (p > 0 && esiste(p)) {
-    process.stdout.write(JSON.stringify({ state: 'live', pid: p, capabilities: ['host_stop_v1'] }) + '\\n');
+    process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: p,
+      pid_number_in_use: true, since: { source: 'declared', unix: 1 } }) + '\\n');
   } else if (fs.existsSync(NOPID)) {
-    process.stdout.write(JSON.stringify({ state: 'live', capabilities: ['host_stop_v1'] }) + '\\n');
+    process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: null,
+      pid_number_in_use: null, since: { source: 'declared', unix: 1 } }) + '\\n');
+  } else if (fs.existsSync(NOTINUSE)) {
+    process.stdout.write(JSON.stringify({ ...comune, state: 'live',
+      declared_pid: p > 0 ? p : 4194242, pid_number_in_use: false,
+      since: { source: 'declared', unix: 1 } }) + '\\n');
   } else {
-    process.stdout.write(JSON.stringify({ state: 'none' }) + '\\n');
+    process.stdout.write(JSON.stringify({ ...comune, state: 'none', declared_pid: null,
+      pid_number_in_use: null, since: null }) + '\\n');
   }
   process.exit(0);
 }
-if (argv[0] === 'internal' && argv[1] === 'host-stop') {
-  nota('host-stop');
+if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown') {
+  // Lo schema reale non dichiara capabilities: il runtime sceglie il comando
+  // VECCHIO (\`vl shutdown\`), che e' quello che esiste in VL 0.4
+  // (main.rs:316, HOST_ACTIONS = ["status"]; il comando vero e' verificato dal
+  // test di contratto). Il ramo \`internal\` resta coperto da
+  // fleet-vl-host-stop-internal.test.js per il binario che lo dichiarera'.
+  nota('stop:' + (argv[0] === 'shutdown' ? 'legacy' : 'internal'));
   const mode = fs.existsSync(MODE) ? fs.readFileSync(MODE, 'utf8').trim() : '';
   if (mode === 'hang') { attesa(30000); process.exit(9); }
   if (mode === 'reject') {
@@ -106,7 +130,6 @@ if (argv[0] === 'internal' && argv[1] === 'host-stop') {
   process.stdout.write('{"ok":true,"reason":"shutdown_ack"}\\n');
   process.exit(0);
 }
-if (argv[0] === 'shutdown') { nota('legacy-shutdown'); process.stdout.write('{"ok":true}\\n'); process.exit(0); }
 process.exit(0);
 `, { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
@@ -227,7 +250,7 @@ process.exit(0);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const mondoCfg = cfgBase;
   return {
-    root, home, filesRoot, hostpid, modef, nopidf, vllog, muori, statoPath, mondoCfg,
+    root, home, filesRoot, hostpid, modef, nopidf, notinusef, vllog, muori, statoPath, mondoCfg,
     async fleet() {
       const f = await createBuiltinFleet(mondoCfg);
       t.after(() => f.close().catch(() => {}));
@@ -237,6 +260,10 @@ process.exit(0);
 }
 
 const conta = (file, cosa) => fs.readFileSync(file, 'utf8').split('\n').filter((r) => r === cosa).length;
+// Un comando di stop e' stato emesso, su quale dei due rami. Lo schema reale
+// (senza capabilities) sceglie il vecchio `vl shutdown`: e' il comando che
+// esiste in VL 0.4.
+const stops = (w) => conta(w.vllog, 'stop:internal') + conta(w.vllog, 'stop:legacy');
 const sessioniVive = (w) => fs.readFileSync(w.statoPath, 'utf8').split('\n').filter(Boolean);
 
 // 1. Il ciclo promesso dal recupero D-558: host vivo e ISOLATO (kernel vero,
@@ -258,7 +285,8 @@ test('F1: host vivo isolato → down pulito, host uscito, up riammesso', async (
   // L'host vero e' uscito per lo stop del runtime (non per il teardown della sessione).
   for (let i = 0; i < 80 && vivo(host.pid); i += 1) await dormi(25);
   assert.equal(vivo(host.pid), false, "l'host isolato e' stato fermato");
-  assert.equal(conta(w.vllog, 'host-stop'), 1, 'esattamente uno stop host');
+  assert.equal(stops(w), 1, 'esattamente uno stop host');
+  assert.equal(conta(w.vllog, 'stop:legacy'), 1, 'il comando che VL 0.4 ha davvero');
 
   // Identita' registrata nel contesto v2 al primo sguardo del lancio.
   const ctx = JSON.parse(fs.readFileSync(path.join(vlCellBaseDir(w.home, OWNER, 'CellaIso'), 'host-context.json'), 'utf8'));
@@ -288,7 +316,7 @@ test('F1: host nel gruppo del coordinatore → HOST_IN_GROUP, host non toccato',
   await fleet.up('CellaIso');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.status === 409 && e.fleetCode === 'HOST_IN_GROUP');
   assert.equal(vivo(host.pid), true, "l'host nel gruppo non e' stato toccato");
-  assert.equal(conta(w.vllog, 'host-stop'), 0, 'nessun comando di stop host');
+  assert.equal(stops(w), 0, 'nessun comando di stop host');
   assert.equal(sessioniVive(w).length, 1, 'la sessione resta');
 });
 
@@ -306,7 +334,7 @@ test('F1: identita mutata → IDENTITY_UNKNOWN con motivo, nessuno stop', async 
   // Primo down: rifiuto dell'host (shutdown_rejected). L'identita' resta
   // registrata nel contesto perche' la qualifica l'ha gia' scritta.
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
-  assert.equal(conta(w.vllog, 'host-stop'), 1);
+  assert.equal(stops(w), 1);
 
   // Sostituzione: un ALTRO processo occupa la root e dichiara il suo pid.
   try { host1.kill('SIGKILL'); } catch (_) {}
@@ -319,7 +347,7 @@ test('F1: identita mutata → IDENTITY_UNKNOWN con motivo, nessuno stop', async 
 
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED'
     && e.data && e.data.motivoIsolamento === 'ignoto');
-  assert.equal(conta(w.vllog, 'host-stop'), 1, 'nessun nuovo comando di stop host');
+  assert.equal(stops(w), 1, 'nessun nuovo comando di stop host');
   assert.equal(vivo(host2.pid), true, "il sostituto non e' stato fermato");
   assert.equal(sessioniVive(w).length, 1, 'la sessione resta viva');
 });
@@ -337,7 +365,7 @@ test('F1: status live senza pid → IDENTITY_UNKNOWN (pid-assente), nessuno stop
   await fleet.up('CellaIso');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED'
     && e.data && e.data.motivoIsolamento === 'pid-assente');
-  assert.equal(conta(w.vllog, 'host-stop'), 0, 'nessun comando di stop host');
+  assert.equal(stops(w), 0, 'nessun comando di stop host');
   assert.equal(vivo(host.pid), true);
   assert.equal(sessioniVive(w).length, 1, 'nessun teardown');
 });
@@ -354,7 +382,7 @@ test('F1: rifiuto dello stop da parte dell\'host → HOST_STOP_FAILED, host vivo
   fs.writeFileSync(w.modef, 'reject\n');
   await fleet.up('CellaIso');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
-  assert.equal(conta(w.vllog, 'host-stop'), 1, 'il rifiuto e arrivato dall\'host');
+  assert.equal(stops(w), 1, 'il comando di stop e stato emesso e l host non e caduto');
   assert.equal(vivo(host.pid), true);
   assert.equal(sessioniVive(w).length, 1);
   const record = path.join(w.filesRoot, launchTarget.DIR, `${SESSIONE}.json`);
@@ -374,7 +402,7 @@ test('F1: timeout dello stop host → HOST_STOP_FAILED, host vivo, nessun kill',
   fs.writeFileSync(w.modef, 'hang\n');
   await fleet.up('CellaIso');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
-  assert.equal(conta(w.vllog, 'host-stop'), 1);
+  assert.equal(stops(w), 1);
   assert.equal(vivo(host.pid), true, 'il timeout uccide solo il CLI di controllo');
   assert.equal(sessioniVive(w).length, 1, 'nessun teardown');
 });
@@ -396,4 +424,42 @@ test('F1: canale di controllo perso → IDENTITY_UNVERIFIED, host mai consultato
   assert.equal(fs.readFileSync(w.vllog, 'utf8').trim(), '', 'nessun comando vl dopo la perdita del canale');
   assert.equal(vivo(host.pid), true);
   assert.equal(sessioniVive(w).length, 1);
+});
+
+// 7. F1-bis (E2E2, 2026-10-30) — il pid viene dal campo VERO dello status,
+//    `declared_pid`. Su d6f93531 questo test e' ROSSO: il runtime leggeva
+//    `stato.pid`, che `vl host status --json` non emette mai (lo schema reale
+//    sta in crates/vivling/src/host_status.rs:35). Il finto `vl` qui sopra
+//    emette lo schema reale proprio per questo.
+test('F1-bis: declared_pid e il pid che conta → down pulito', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  const host = avviaHostHelper();
+  t.after(() => { try { host.kill('SIGKILL'); } catch (_) {} });
+  await attendiVivo(host);
+  fs.writeFileSync(w.hostpid, `${host.pid}\n`);
+
+  await fleet.up('CellaIso');
+  const down = await fleet.down('CellaIso');
+  assert.equal(down.ok, true, JSON.stringify(down));
+  for (let i = 0; i < 80 && vivo(host.pid); i += 1) await dormi(25);
+  assert.equal(vivo(host.pid), false, "l'host dichiarato da declared_pid e' stato fermato");
+  assert.equal(stops(w), 1, 'un solo comando di stop');
+  const ctx = JSON.parse(fs.readFileSync(path.join(vlCellBaseDir(w.home, OWNER, 'CellaIso'), 'host-context.json'), 'utf8'));
+  assert.equal(ctx.hostIdentity.state, 'live');
+  assert.equal(ctx.hostIdentity.pid, host.pid, 'la tuple kernel porta il pid dichiarato');
+});
+
+// 8. declared_pid presente ma `pid_number_in_use === false`: il numero non
+//    nomina nessun processo, quindi non c'e' peer da osservare. Fail-closed
+//    (pid-assente), zero stop, nessun teardown della sessione.
+test('F1-bis: declared_pid non in uso → pid-assente, nessuno stop', async (t) => {
+  const w = mondo(t);
+  const fleet = await w.fleet();
+  await fleet.up('CellaIso');
+  fs.writeFileSync(w.notinusef, '1\n');
+  await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED'
+    && e.data && e.data.motivoIsolamento === 'pid-assente');
+  assert.equal(stops(w), 0, 'nessun comando di stop');
+  assert.equal(sessioniVive(w).length, 1, 'nessun teardown');
 });
