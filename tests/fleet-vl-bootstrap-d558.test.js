@@ -88,73 +88,202 @@ test('vlPaneReadiness riconosce idle e degrada a timeout senza attendere per sem
   assert.ok(calls >= 1);
 });
 
-// ---------------------------------------------------------------- (b) claim
+// ---------------------------------------------------------------- (a/R4) candidata corrente
+
+test('R4: riga corrente non riconosciuta — la ready PRECEDENTE non vince (controprova audit 1)', () => {
+  // 'ask' non e' parola di faccia ('asking' troncata): la superficie corrente
+  // non e' interpretabile -> unknown, MAI la ready vecchia del transcript.
+  assert.equal(pd.vlCurrentFace('VL (•‿•) ready\nrisposta\nVL [?_?] ask\n'), 'unknown');
+  assert.equal(pd.classifyPane('VL (•‿•) ready\nrisposta\nVL [?_?] ask\n', 'vl'), 'unknown');
+});
+
+test('R4: candidata 0.4 presente ma non riconosciuta — MAI fallback legacy 0.3 (controprova audit 2)', () => {
+  const text = 'vivling [o] e12 ↑3 esc quit · ^y yield\nVL [?_?] ask\n';
+  assert.equal(pd.classifyPane(text, 'vl'), 'unknown', 'nessun ready via legacy con candidata 0.4 sopra');
+  assert.equal(pd.vlPaneIdle(text), false);
+  // la candidata si trova PRIMA, poi si interpreta: e' l'ultima riga dichiarata
+  assert.equal(pd.vlCandidateLine(text), 'VL [?_?] ask');
+});
+
+test('R4: cattura stretta — parola o glifo troncati valgono unknown, anche con ready nota sopra', () => {
+  assert.equal(pd.classifyPane('VL (•‿•) ready\nVL (•‿•) rea\n', 'vl'), 'unknown', 'parola troncata');
+  assert.equal(pd.classifyPane('VL (•‿•) ready\nVL (•‿•)\n', 'vl'), 'unknown', 'solo glifo, senza parola');
+  assert.equal(pd.classifyPane('VL (•‿•) ready\nVL [o_o]\n', 'vl'), 'unknown', 'glifo ascii senza parola');
+  assert.equal(pd.vlCurrentFace('VL (•‿•) rea\n'), 'unknown');
+});
+
+test('R4: legacy 0.3 vale SOLO senza alcuna riga candidata 0.4; le coppie note restano riconosciute', () => {
+  assert.equal(pd.classifyPane('vivling [o] e12 ↑3 esc quit · ^y yield\n', 'vl'), 'ready', 'solo legacy: resta valido');
+  // candidata 0.4 sopra al marcatore legacy: la candidata e' quella corrente
+  assert.equal(pd.classifyPane('VL [?_?] asking\nvivling [o] e12 ↑3 esc quit · ^y yield\n', 'vl'), 'busy');
+  // nessuna candidata, nessun legacy: unknown
+  assert.equal(pd.vlCurrentFace('testo qualunque\n'), null);
+  assert.equal(pd.vlCandidateLine('testo qualunque\n'), null);
+});
+
+// ---------------------------------------------------------------- (b) claim per avvio
+
+const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 
 function hostRootOf(home) {
-  return path.join(home, 'vlhost', 'state', 'vl', 'host-v1');
+  // root canonica dell'host VL della cella (vl-roots radiceServer)
+  return path.join(vlCellBaseDir(home, 'local', 'C'), 'state', 'vl', 'host-v1');
 }
 
-test('claim: host NUOVO — fresh-host idoneo, record durabile senza prompt ne segreti', () => {
+// Crea la catena privata NC pre-esistente con i permessi GIUSTI (0700): una
+// catena 0755 sarebbe rifiutata da safePrivateDir — è il contratto, non un
+// dettaglio del test. Si chmoddano solo i componenti DENTRO home.
+function mkPrivateChain(home, dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  let acc = home;
+  const parts = path.relative(home, dir).split(path.sep);
+  for (const part of parts) {
+    acc = path.join(acc, part);
+    if (fs.existsSync(acc)) fs.chmodSync(acc, 0o700);
+  }
+}
+
+test('claim per avvio: OGNI avvio e\' idoneo — host NUOVO e host GIA\' ESISTENTE (requisito DAG 30/10)', () => {
+  // host nuovo: la root non esiste
   const home = tmpHome();
   const d1 = decideVlBootstrap({
-    home, ownerInstanceId: 'local', cellId: 'Research', hostRoot: hostRootOf(home), launchId: 'aabbccdd11223344',
+    home, ownerInstanceId: 'local', cellId: 'Research', launchId: 'aabbccdd11223344',
   });
   assert.equal(d1.eligible, true);
-  assert.equal(d1.reason, 'fresh-host');
-  assert.ok(d1.claimPath.endsWith('bootstrap-host.json'));
+  assert.equal(d1.reason, 'launch');
+  assert.ok(d1.claimPath.endsWith('bootstrap-aabbccdd11223344.json'), 'claim chiave = launchId dell\'avvio');
   assert.ok(d1.claimPath.includes(path.join('.nexuscrew', 'vl-cells')), 'claim accanto alla root, sotto il tree NC');
   assert.ok(!d1.claimPath.includes(path.join('state', 'vl', 'host-v1')), 'mai dentro i file di VL');
-  const rec = readVlBootstrapClaim({ home, ownerInstanceId: 'local', cellId: 'Research' });
-  assert.equal(rec.proof, 'fresh-host');
+  const rec = readVlBootstrapClaim({ home, ownerInstanceId: 'local', cellId: 'Research', launchId: 'aabbccdd11223344' });
+  assert.equal(rec.launchId, 'aabbccdd11223344');
   assert.equal(rec.state, 'pending');
   const raw = fs.readFileSync(d1.claimPath, 'utf8');
   assert.ok(!raw.includes('Leggi CLAUDE'), 'nessun testo del prompt nel record');
   assert.equal((fs.statSync(d1.claimPath).mode & 0o777), 0o600);
-});
 
-test('claim: concorrenza — il secondo lancio sulla stessa incarnazione non ottiene una seconda claim', () => {
-  const home = tmpHome();
-  const args = { home, ownerInstanceId: 'local', cellId: 'C', hostRoot: hostRootOf(home), launchId: 'l1' };
-  assert.equal(decideVlBootstrap(args).eligible, true);
-  const d2 = decideVlBootstrap({ ...args, launchId: 'l2' });
-  assert.equal(d2.eligible, false);
-  assert.equal(d2.reason, 'claim-taken');
-});
-
-test('claim: host ESISTENTE senza ricevuta (host pre-fix) — skip esplicito, mai verginita dedotta', () => {
-  const home = tmpHome();
-  fs.mkdirSync(hostRootOf(home), { recursive: true });
-  const d = decideVlBootstrap({
-    home, ownerInstanceId: 'local', cellId: 'Research', hostRoot: hostRootOf(home), launchId: 'x',
+  // host GIA\' ESISTENTE (cella con storia, pre-fix compresa): STESSA idoneita\'
+  const home2 = tmpHome();
+  mkPrivateChain(home2, path.dirname(hostRootOf(home2)));
+  fs.mkdirSync(path.join(hostRootOf(home2), 'sessions'), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(hostRootOf(home2), 'sessions', 'default'), '');
+  const d2 = decideVlBootstrap({
+    home: home2, ownerInstanceId: 'local', cellId: 'C', launchId: 'aabbccdd11223345',
   });
-  assert.equal(d.eligible, false);
-  assert.equal(d.reason, 'host-pre-existing');
+  assert.equal(d2.eligible, true, 'host esistente: il prompt si consegna comunque, un paste per avvio');
+  assert.equal(d2.reason, 'launch');
 });
 
-test('claim: sessione NUOVA ruotata — idonea per incarnazione; chiave diversa = claim diversa', () => {
+test('claim per avvio: stesso launchId (respawn che ripercorre il preflight) -> claim-taken; avvio nuovo -> nuova claim', () => {
   const home = tmpHome();
-  fs.mkdirSync(hostRootOf(home), { recursive: true }); // host gia' popolato
-  const base = { home, ownerInstanceId: 'local', cellId: 'C', hostRoot: hostRootOf(home) };
-  const r1 = decideVlBootstrap({ ...base, rotation: { applied: true, key: 'rot:1:1' }, launchId: 'l1' });
-  assert.equal(r1.eligible, true);
-  assert.equal(r1.reason, 'rotated-session');
-  // respawn sullo stesso lancio/rotazione: claim gia' presa
-  const again = decideVlBootstrap({ ...base, rotation: { applied: true, key: 'rot:1:1' }, launchId: 'l2' });
+  const base = { home, ownerInstanceId: 'local', cellId: 'C' };
+  const d1 = decideVlBootstrap({ ...base, launchId: '1111111111111111' });
+  assert.equal(d1.eligible, true);
+  // lo STESSO avvio non ottiene una seconda claim: al piu\' UN paste per avvio
+  const again = decideVlBootstrap({ ...base, launchId: '1111111111111111' });
+  assert.equal(again.eligible, false);
   assert.equal(again.reason, 'claim-taken');
-  // rotazione SUCCESSIVA: nuova incarnazione di sessione, nuova claim
-  const r2 = decideVlBootstrap({ ...base, rotation: { applied: true, key: 'rot:2:2' }, launchId: 'l3' });
-  assert.equal(r2.eligible, true);
-  assert.notEqual(r2.claimPath, r1.claimPath);
+  assert.equal(again.claimPath, d1.claimPath);
+  // avvio NUOVO (nuovo up: nuovo supervisore generation 0): nuova claim idonea
+  const d2 = decideVlBootstrap({ ...base, launchId: '2222222222222222' });
+  assert.equal(d2.eligible, true);
+  assert.notEqual(d2.claimPath, d1.claimPath);
 });
 
-test('claim: root irraggiungibile in lettura — claim-unavailable, fail-closed', () => {
+test('claim: id non sicuri rifiutati prima di toccare il disco', () => {
   const home = tmpHome();
-  // hostRoot = file regolare: lstat risolve, non e' ENOENT -> host-pre-existing
-  fs.mkdirSync(path.dirname(hostRootOf(home)), { recursive: true });
-  fs.writeFileSync(hostRootOf(home), 'x');
-  assert.equal(decideVlBootstrap({
-    home, ownerInstanceId: 'local', cellId: 'C', hostRoot: hostRootOf(home), launchId: 'x',
-  }).reason, 'host-pre-existing');
+  for (const bad of ['x', '', 'AABBCCDD11223344', '1111111111111111.json', 'gggggggggggggggg']) {
+    assert.throws(() => decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: bad }),
+      /unsafe vl launch id/, `launchId ${bad} rifiutato`);
+  }
+  assert.throws(() => decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: '../..', launchId: '1111111111111111' }),
+    /unsafe vl cell id/);
+  assert.ok(!fs.existsSync(path.join(home, '.nexuscrew')), 'nessuna directory creata');
+});
+
+test('claim: catena NC non materializzabile — claim-unavailable, fail-closed, nessun claimPath', () => {
+  const home = tmpHome();
+  fs.writeFileSync(path.join(home, '.nexuscrew'), 'x'); // file al posto della directory
+  const d = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(d.eligible, false);
+  assert.equal(d.reason, 'claim-unavailable');
+  assert.equal(d.claimPath, undefined);
+});
+
+// ------------------------------------------------------- (b/R2) durabilita' della claim
+
+// Inietta EIO selettivo sui fsync: `colpa(path)` decide quali path falliscono.
+// I descriptor restano tracciati all'open, cosi' il fault colpisce file,
+// directory o parent in modo mirato (controprova R2 dell'audit).
+function injectFsyncFailure(t, colpa) {
+  const realOpen = fs.openSync;
+  const realFsync = fs.fsyncSync;
+  const fdPath = new Map();
+  fs.openSync = function patched(...argv) {
+    const fd = realOpen.apply(fs, argv);
+    try { fdPath.set(fd, String(argv[0])); } catch (_) { /* fd non tracciato: passa */ }
+    return fd;
+  };
+  fs.fsyncSync = function patched(fd) {
+    const p = fdPath.get(fd) || '';
+    if (colpa(p)) {
+      const e = new Error('injected EIO');
+      e.code = 'EIO';
+      throw e;
+    }
+    return realFsync.call(fs, fd);
+  };
+  t.after(() => { fs.openSync = realOpen; fs.fsyncSync = realFsync; });
+}
+
+test('R2: EIO sul fsync del FILE della claim — fail-closed claim-unavailable, claim NON cancellata, avvio nuovo non avvelenato', (t) => {
+  const home = tmpHome();
+  injectFsyncFailure(t, (p) => p.endsWith('bootstrap-1111111111111111.json'));
+  const d = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(d.eligible, false, 'esito del trasporto incerto: nessun paste');
+  assert.equal(d.reason, 'claim-unavailable');
+  // la claim forse gia\' pubblicata NON si cancella: resta visibile sul disco
+  const nc = path.join(vlCellBaseDir(home, 'local', 'C'), 'nc');
+  assert.ok(fs.existsSync(path.join(nc, 'bootstrap-1111111111111111.json')), 'claim non cancellata');
+  // un AVVIO NUOVO non e\' avvelenato dal fallimento del precedente
+  const d2 = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '2222222222222222' });
+  assert.equal(d2.eligible, true);
+  assert.equal(d2.reason, 'launch');
+});
+
+test('R2: EIO sul fsync della DIRECTORY che contiene la claim — fail-closed, nessun paste, claim NON cancellata', (t) => {
+  const home = tmpHome();
+  const base = { home, ownerInstanceId: 'local', cellId: 'C' };
+  // la catena esiste GIA\' (materializzata da un avvio precedente): l'unica
+  // directory sincronizzata dopo la creazione del file e' quella della claim
+  assert.equal(decideVlBootstrap({ ...base, launchId: '0000000000000000' }).eligible, true);
+  injectFsyncFailure(t, (p) => p.endsWith(`${path.sep}nc`));
+  const d = decideVlBootstrap({ ...base, launchId: '1111111111111111' });
+  assert.equal(d.eligible, false, 'entry della claim non nota durevole: nessun paste');
+  assert.equal(d.reason, 'claim-unavailable');
+  const nc = path.join(vlCellBaseDir(home, 'local', 'C'), 'nc');
+  assert.ok(fs.existsSync(path.join(nc, 'bootstrap-1111111111111111.json')), 'claim non cancellata');
+});
+
+test('R2: EIO sul fsync del PARENT della catena appena creata — fail-closed claim-unavailable', (t) => {
+  const home = tmpHome();
+  // home e\' il parent di .nexuscrew: la entry della nuova directory non e'
+  // durevole se quel fsync fallisce (contratto FSYNC_DIR di vl-claim-section)
+  injectFsyncFailure(t, (p) => p === home);
+  const d = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(d.eligible, false);
+  assert.equal(d.reason, 'claim-unavailable');
+});
+
+test('R2: percorso verde — file, directory e parent sincronizzati; riapertura e claim-taken al ripasso', () => {
+  const home = tmpHome();
+  const d = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(d.eligible, true);
+  const rec = readVlBootstrapClaim({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(rec.cell, 'C');
+  // la entry e' visibile a un secondo passaggio sullo STESSO avvio: EEXIST
+  const again = decideVlBootstrap({ home, ownerInstanceId: 'local', cellId: 'C', launchId: '1111111111111111' });
+  assert.equal(again.reason, 'claim-taken');
+  assert.equal((fs.statSync(path.join(home, '.nexuscrew')).mode & 0o777), 0o700, 'catena NC privata 0700');
 });
 
 // ---------------------------------------------------------------- (b) supervisore
@@ -193,10 +322,10 @@ function vlConfig(extra) {
   };
 }
 
-test('supervisore vl: host nuovo gen0 — UNA consegna, client vl, testo identico a cell.prompt', async () => {
+test('supervisore vl: avvio gen0 (anche su host esistente) — UNA consegna, client vl, testo identico a cell.prompt', async () => {
   const { calls, seams } = supervisorSeams();
   const ctl = cellExec.startGenerationPrompt(vlConfig({
-    vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/tmp/claim.json' },
+    vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/tmp/claim.json' },
   }), 0, { exited: false }, seams);
   const settled = await ctl.settled;
   assert.equal(settled, null); // submitted: nessuna incertezza
@@ -207,20 +336,20 @@ test('supervisore vl: host nuovo gen0 — UNA consegna, client vl, testo identic
   assert.ok(calls.options.includes('submitted'));
 });
 
-test('supervisore vl: host pre-fix (claim non idonea) — NESSUN paste, skip esplicito subito', async () => {
+test('supervisore vl: claim non idonea (claim-taken/unavailable) — NESSUN paste, skip esplicito subito', async () => {
   const { calls, seams } = supervisorSeams();
   const ctl = cellExec.startGenerationPrompt(vlConfig({
-    vlBootstrap: { eligible: false, reason: 'host-pre-existing' },
+    vlBootstrap: { eligible: false, reason: 'claim-taken' },
   }), 0, { exited: false }, seams);
   await ctl.settled;
   assert.equal(calls.deliver.length, 0);
-  assert.ok(calls.options.includes('skipped-vl-bootstrap:host-pre-existing'));
+  assert.ok(calls.options.includes('skipped-vl-bootstrap:claim-taken'));
 });
 
 test('supervisore vl: generation > 0 (respawn/riattacco) — skip esplicito, zero reinvii', async () => {
   const { calls, seams } = supervisorSeams();
   const ctl = cellExec.startGenerationPrompt(vlConfig({
-    vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/tmp/claim.json' },
+    vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/tmp/claim.json' },
   }), 1, { exited: false }, seams);
   await ctl.settled;
   assert.equal(calls.deliver.length, 0);
@@ -250,29 +379,36 @@ test('supervisore: regressioni kimi/claude single-owner e reprompt ai restart', 
 
 test('validRestartPrompt: vl ammesso con vlBootstrap bounded; rifiuti per kimi/valori aperti', () => {
   assert.equal(cellExec.validRestartPrompt(vlConfig({
-    vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/tmp/c.json' },
+    vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/tmp/c.json' },
   })), true);
   assert.equal(cellExec.validRestartPrompt(vlConfig({
-    vlBootstrap: { eligible: false, reason: 'host-pre-existing' },
+    vlBootstrap: { eligible: false, reason: 'claim-taken' },
   })), true);
   assert.equal(cellExec.validRestartPrompt(vlConfig({
-    vlBootstrap: { eligible: true, reason: 'fresh-host' },
+    vlBootstrap: { eligible: true, reason: 'launch' },
   })), false, 'eligible senza claimPath rifiutato');
   assert.equal(cellExec.validRestartPrompt(vlConfig({
-    client: 'kimi', vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/c' },
+    client: 'kimi', vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/c' },
   })), false, 'vlBootstrap solo per vl');
   assert.equal(cellExec.validRestartPrompt(vlConfig({
     vlBootstrap: { eligible: false, reason: 'motivo-inventato' },
   })), false, 'motivo fuori enum rifiutato');
+  // i motivi del vocabolario pre-fix non sono piu\' bounded (per avvio, DAG 30/10)
+  assert.equal(cellExec.validRestartPrompt(vlConfig({
+    vlBootstrap: { eligible: false, reason: 'host-pre-existing' },
+  })), false, 'host-pre-existing fuori enum');
+  assert.equal(cellExec.validRestartPrompt(vlConfig({
+    vlBootstrap: { eligible: false, reason: 'fresh-host' },
+  })), false, 'fresh-host fuori enum');
 });
 
 test('waitDeliveryReport: skip vl bounded attraversa il report, reason non bounded viene droppato', async () => {
   const exec = async (bin, args) => (args.some((a) => a === '#{@nc_delivery}')
-    ? { err: null, stdout: 'skipped-vl-bootstrap:host-pre-existing\n', stderr: '' }
+    ? { err: null, stdout: 'skipped-vl-bootstrap:claim-taken\n', stderr: '' }
     : { err: null, stdout: '', stderr: '' });
   const r = await pd.waitDeliveryReport('/usr/bin/tmux', '%1', { exec, timeoutMs: 100, pollMs: 1 });
   assert.equal(r.state, 'skipped-vl-bootstrap');
-  assert.equal(r.notReady, 'host-pre-existing');
+  assert.equal(r.notReady, 'claim-taken');
   assert.equal(r.delivered, false);
   // Un motivo fuori enum NON viene mai promosso a notReady (droppato, stato
   // bounded resta): nessuna iniezione di testo libero dal pane.
@@ -293,7 +429,7 @@ test('(c) writeVlCellPrompt resta com\': cell.prompt + companion nel system appe
   // config.prompt, che nel payload e' cell.prompt (testato sopra: testo identico).
   const { calls, seams } = supervisorSeams();
   const ctl = cellExec.startGenerationPrompt(vlConfig({
-    vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/tmp/c.json' },
+    vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/tmp/c.json' },
   }), 0, { exited: false }, seams);
   await ctl.settled;
   assert.equal(calls.deliver[0].prompt, 'Leggi CLAUDE.md e parti');
@@ -302,7 +438,7 @@ test('(c) writeVlCellPrompt resta com\': cell.prompt + companion nel system appe
 test('prompt assente: nessuna delivery — il payload restartPrompt non esiste senza cell.prompt', async () => {
   // runtime.js costruisce restartPrompt solo con cell.prompt; il supervisore
   // senza restartPrompt non avvia mai una consegna. Prova del contratto:
-  const cfg = vlConfig({ vlBootstrap: { eligible: true, reason: 'fresh-host', claimPath: '/c' } });
+  const cfg = vlConfig({ vlBootstrap: { eligible: true, reason: 'launch', claimPath: '/c' } });
   delete cfg.prompt;
   assert.equal(cellExec.validRestartPrompt(cfg), false, 'payload senza prompt non valido');
 });
