@@ -133,7 +133,7 @@ exit 0
 `;
 }
 
-function mondo(t, { caps } = {}) {
+function mondo(t, { caps, owner } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558pf-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaPre');
@@ -256,8 +256,9 @@ process.exit(0);
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
     now: () => 0, monotonicNow: () => Date.now(),
     // Owner hex32 della tuple attestata: con `local` la tuple non e' valida
-    // e l'up e' rifiutato per contratto.
-    identityOwnerInstanceId: OWNER_INSTANCE_ID,
+    // e l'up e' rifiutato per contratto. I test di identita' del nodo
+    // (audit finale F1-01) lo sostituiscono con null / 'local' / funzione.
+    identityOwnerInstanceId: owner === undefined ? OWNER_INSTANCE_ID : owner,
   };
   const base = () => vlCellBaseDir(home, OWNER_INSTANCE_ID, 'CellaPre');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -320,4 +321,74 @@ test('runtime reale: binario qualificato fin da subito — up ok al primo colpo'
   assert.equal(res.ok, true);
   assert.equal(w.tickets.length, 1);
   assert.ok(fs.existsSync(path.join(w.base(), 'host-context.json')));
+});
+
+// --- Identita' owner del nodo PRIMA dello spawn (audit finale F1-01) --------
+// Owner assente o di forma non valida: il rifiuto e' un PREFLIGHT visibile,
+// prima di riserva/contesto/broker/new-session — zero effetti. Prima del fix
+// il fallback `local` portava il lancio fino a sessione creata e ticket
+// emesso, rifiutato poi come VL_PEER_UNATTESTED in readiness.
+
+function nessunContesto(home) {
+  // Cerca host-context.json ovunque sotto la home: con l'owner assente la
+  // base non e' prevedibile (era `local`), quindi si nega per enumerazione.
+  const pila = [home];
+  while (pila.length) {
+    const d = pila.pop();
+    let nomi = [];
+    try { nomi = fs.readdirSync(d); } catch (_) { continue; }
+    for (const n of nomi) {
+      const p = path.join(d, n);
+      if (n === 'host-context.json') return p;
+      try { if (fs.statSync(p).isDirectory()) pila.push(p); } catch (_) {}
+    }
+  }
+  return null;
+}
+
+test('runtime reale: owner ASSENTE — up RIFIUTATO in preflight, zero effetti', async (t) => {
+  const w = mondo(t, { caps: true, owner: null });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'NODE_IDENTITY_UNAVAILABLE', 'cause enum stabile');
+    assert.equal(e.fleetPhase, 'preflight', 'prima di broker e new-session');
+    assert.equal(e.status, 500);
+    assert.equal(e.data && e.data.motivo, 'assente', 'motivo bounded');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0, 'zero payload broker: nessuno spawn deliberato');
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '', 'zero new-session');
+  assert.equal(nessunContesto(w.home), null, 'nessun contesto scritto');
+  assert.ok(!fs.existsSync(path.join(w.home, '.nexuscrew', 'vl-cells')),
+    'nessuna riserva/lease della root per un lancio non iniziato');
+});
+
+test('runtime reale: owner con forma NON valida ("local") — stesso rifiuto preflight', async (t) => {
+  const w = mondo(t, { caps: true, owner: 'local' });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'NODE_IDENTITY_UNAVAILABLE');
+    assert.equal(e.fleetPhase, 'preflight');
+    assert.equal(e.data && e.data.motivo, 'forma', 'non hex32');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0, 'zero payload broker');
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '', 'zero new-session');
+  assert.equal(nessunContesto(w.home), null, 'nessun contesto scritto');
+  assert.ok(!fs.existsSync(path.join(w.home, '.nexuscrew', 'vl-cells')),
+    'nessuna riserva/lease della root');
+});
+
+test('runtime reale: owner risolto da FUNZIONE — up ok e UN solo valore ovunque', async (t) => {
+  const w = mondo(t, { caps: true, owner: () => OWNER_INSTANCE_ID });
+  const fleet = await w.fleet();
+  const res = await fleet.up('CellaPre');
+  assert.equal(res.ok, true, "la forma funzione dell'owner si risolve una volta");
+  assert.equal(w.tickets.length, 1);
+  // Il valore qualificato nel preflight e' quello che indirizza root, pin e
+  // registrazione: il contesto sta nella base DERIVATA da quell'owner.
+  const ctx = JSON.parse(fs.readFileSync(
+    path.join(vlCellBaseDir(w.home, OWNER_INSTANCE_ID, 'CellaPre'), 'host-context.json'), 'utf8'));
+  assert.equal(ctx.version, 2);
+  assert.deepEqual(ctx.hostIdentity, IDENTITA_ATTESTATA, 'la tuple attestata e del peer host, non di un nodeId');
 });
