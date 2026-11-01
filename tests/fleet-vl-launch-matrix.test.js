@@ -54,9 +54,11 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
   fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
 
   // Il binario vl nel PATH: serve a findBinary (il gate di `configured`), ma
-  // il binario REALE che gira e' quello dichiarato in vlBinary.
+  // il binario REALE che gira e' quello dichiarato in vlBinary. Risponde anche
+  // a 'host status': il preflight di capacita' dell'up chiede al binario
+  // pinnato le tre capacita' peer/stop (host assente: sono fatti del binario).
   const pathBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(pathBin, 0o755);
 
   const statoPath = path.join(root, 'sessions.txt');
@@ -187,7 +189,9 @@ function binarioConSpazi(home, version = 'vl 0.5.0') {
   const dir = path.join(home, 'vl tools', 'bin 0.5');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'vl Runner');
-  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nexit 0\n`, { mode: 0o755 });
+  // 'host status' dichiara le capacita' peer/stop che il preflight dell'up
+  // richiede al binario pinnato: stesso contratto del binario nel PATH.
+  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(file, 0o755);
   return file;
 }
