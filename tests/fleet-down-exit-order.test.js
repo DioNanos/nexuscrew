@@ -11,6 +11,7 @@ const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const launchTarget = require('../lib/fleet/launch-target.js');
+const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaOrd';
 
@@ -25,23 +26,18 @@ function mondo(t) {
   const muoriSuKill = path.join(root, 'MUORI_SU_KILL');
   fs.writeFileSync(logPath, '');
   fs.writeFileSync(killPath, '');
+  // Binario finto QUALIFICATO peer/stop con host VERO: all'up la tuple del
+  // peer viene letta da /proc del pid vivo nel pidfile e registrata nel
+  // contesto (hook --respawn nel new-session del tmux finto). «Host non
+  // fermo» al down, ora, è un processo REALE che non e' piu' quello
+  // registrato: i test sostituiscono l'host dopo l'up e la tuple osservata
+  // non coincide — isolamento «ignoto», la barriera rifiuta senza toccare
+  // nessun pid.
+  const hostScript = preparaHostFinto(root);
+  const hostpid = path.join(root, 'hostpid');
+  fs.writeFileSync(hostpid, '0\n');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  // Primo e secondo 'host status': host fermo — il primo è il preflight di
-  // capacità dell'up (binario qualificato: le tre capacità dichiarate), il
-  // secondo è la prima verifica del down. Dal terzo in poi: host vivo senza
-  // attestazione (la chiusura post-uscita non deve dichiarare successo).
-  fs.writeFileSync(vlBin, `#!/bin/sh
-if [ "$1" = "--version" ]; then printf 'vl 0.3.1\\n'; exit 0; fi
-printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
-if [ "$1" = "host" ]; then
-  N=$(cat ${JSON.stringify(path.join(root, 'host-n'))} 2>/dev/null || echo 0)
-  N=$((N+1)); echo "$N" > ${JSON.stringify(path.join(root, 'host-n'))}
-  if [ "$N" -le 2 ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi
-  printf '%s\\n' '{"state":"live","pid":4242,"capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0
-fi
-if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
-exit 0
-`, { mode: 0o755 });
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ hostpid, vllog: logPath }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   const catalogo = path.join(home, '.config', 'vl');
   fs.mkdirSync(catalogo, { recursive: true });
@@ -56,6 +52,8 @@ exit 0
 const fs = require('node:fs');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
+const HOSTSCRIPT = ${JSON.stringify(hostScript)};
+const HOSTPID = ${JSON.stringify(hostpid)};
 const STATO = ${JSON.stringify(stato)};
 const KILL = ${JSON.stringify(killPath)};
 const MUORI_SU_KILL = ${JSON.stringify(muoriSuKill)};
@@ -85,7 +83,15 @@ if (args[0] === '-C') {
         fs.appendFileSync(KILL, 'kill\\n');
         fs.writeFileSync(STATO, '0\\n');
         process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
-        if (fs.existsSync(MUORI_SU_KILL)) process.exit(0);
+        if (fs.existsSync(MUORI_SU_KILL)) {
+          // La morte del canale porta con se' un host NUOVO sulla root (qui
+          // lo fa nascere il tmux finto, come farebbe un altro lancio): la
+          // chiusura che segue il kill dovra' rigiudicarlo, e la tuple in
+          // /proc non sara' quella registrata.
+          { const { spawnSync: riavviaHost } = require('node:child_process');
+            riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
+          process.exit(0);
+        }
         continue;
       }
       if (riga.startsWith('has-session') && !viva()) {
@@ -98,7 +104,14 @@ if (args[0] === '-C') {
   process.stdin.on('end', () => process.exit(0));
   return;
 }
-if (args[0] === 'new-session') { process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0); }
+if (args[0] === 'new-session') {
+  // La nascita dell'host accompagna la sessione: l'host nuovo nasce a ogni
+  // new-session (il vecchio pid, se vivo, viene spento per pid esatto),
+  // cosi' all'up la tuple registrata e' osservabile in /proc.
+  { const { spawnSync: riavviaHost } = require('node:child_process');
+    riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
+  process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0);
+}
 if (args[0] === 'display-message') process.stdout.write('0\\t0\\t%3\\n');
 if (args[0] === 'kill-session') { fs.appendFileSync(KILL, 'fresh\\n'); process.exit(0); }
 if (args[0] === 'has-session') process.exit(viva() ? 0 : 1);
@@ -118,6 +131,7 @@ process.exit(0);
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
     home, defsPath, tmuxBin, readonly: () => false,
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'f'.repeat(64) }),
       revoke: async () => {},
@@ -126,19 +140,28 @@ process.exit(0);
     boot: loadDefinitions(defsPath),
   });
   const record = () => path.join(filesRoot, launchTarget.DIR, `${SESSIONE}.json`);
-  t.after(() => { try { runtime.shutdown(); } catch (_) {} fs.rmSync(root, { recursive: true, force: true }); });
-  return { runtime, record, stato, killPath, logPath, muoriSuKill };
+  t.after(() => {
+    // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
+    try {
+      const p = Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0;
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) {}
+    try { runtime.shutdown(); } catch (_) {} fs.rmSync(root, { recursive: true, force: true });
+  });
+  return { runtime, record, stato, killPath, logPath, muoriSuKill, hostScript, hostpid };
 }
 
 test('sessione gia assente con host non fermo: record e canale restano', async (t) => {
   const w = mondo(t);
   await w.runtime.up('CellaOrd');
-  // La sessione finisce fuori banda; il record del lancio resta. L'host resta
-  // VIVO senza attestazione gia' alla prima verifica del down (contatore
-  // pre-seedato oltre il consumo dell'up, che col preflight di capacita' ha
-  // gia' fatto un 'host status'): in questo ramo la barriera host e' l'unica
-  // che gira.
-  fs.writeFileSync(path.join(path.dirname(w.stato), 'host-n'), '2\n');
+  // La sessione finisce fuori banda; il record del lancio resta. Fra la
+  // registrazione all'up e il down l'host viene SOSTITUITO (helper
+  // --respawn: il vecchio pid muore per pid esatto, il pidfile nomina un
+  // processo vivo nato DOPO): la tuple osservata in /proc non e' piu'
+  // quella registrata, l'isolamento resta «ignoto» e la barriera host
+  // rifiuta senza toccare nessun pid — in questo ramo e' l'unica che gira.
+  const { spawnSync } = require('node:child_process');
+  spawnSync(process.execPath, [w.hostScript, '--respawn', w.hostpid]);
   fs.writeFileSync(w.stato, '0\n');
   await assert.rejects(() => w.runtime.down('CellaOrd'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
   assert.ok(fs.existsSync(w.record()), 'il record del lancio NON e\' stato rimosso prima della barriera host');
@@ -151,7 +174,11 @@ test('kill accettato e canale morto: la chiusura host precede la rimozione', asy
   const w = mondo(t);
   await w.runtime.up('CellaOrd');
   // Il canale muore RICEVUTO il kill-session: la morte del client attaccato
-  // e' la conferma osservata della fine della sessione.
+  // e' la conferma osservata della fine della sessione. La prima barriera
+  // (pre-kill) passa perche' l'host registrato viene fermato pulito; ma con
+  // la morte del canale nasce un host NUOVO sulla root, la tuple in /proc
+  // non e' piu' quella registrata e la chiusura post-kill rifiuta: il
+  // record del lancio NON viene rimosso.
   fs.writeFileSync(w.muoriSuKill, '1\n');
   await assert.rejects(() => w.runtime.down('CellaOrd'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
   assert.equal(fs.readFileSync(w.killPath, 'utf8'), 'kill\n', 'il kill accettato e\' avvenuto');

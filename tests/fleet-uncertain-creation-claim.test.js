@@ -16,6 +16,7 @@ const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const radici = require('../lib/fleet/vl-roots.js');
+const { scriptVlFintoConHost } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaIncerta';
 
@@ -36,8 +37,15 @@ function mondo(t, { materializza }) {
   const cwd = path.join(home, 'CellaIncerta');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  // Binario finto QUALIFICATO peer/stop: il preflight dell'up interroga le
+  // capacita' prima dello spawn. L'host NON nasce mai (la risposta della
+  // creazione si perde prima che il client parta), quindi la registrazione
+  // dell'identita' non arriva: quel che resta e' la lease incerta, che e'
+  // esattamente cio' che il test prova.
+  const hostpid = path.join(root, 'hostpid');
+  fs.writeFileSync(hostpid, '0\n');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf \'vl 0.3.1\\n\'; exit 0; fi\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ hostpid }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   const catalogo = path.join(home, '.config', 'vl');
   fs.mkdirSync(catalogo, { recursive: true });

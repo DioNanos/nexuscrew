@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaCtx';
 
@@ -24,14 +25,15 @@ function mondo(t) {
   const tmuxLog = path.join(root, 'tmux.log');
   fs.writeFileSync(vlLog, '');
   fs.writeFileSync(tmuxLog, '');
+  // Binario finto QUALIFICATO peer/stop con host VERO: l'up registra la
+  // tuple del peer letta da /proc del pid vivo nel pidfile, quindi la
+  // sessione creata dal tmux finto deve far nascere un host reale (hook
+  // --respawn nel new-session dello script qui sotto).
+  const hostScript = preparaHostFinto(root);
+  const hostpid = path.join(root, 'hostpid');
+  fs.writeFileSync(hostpid, '0\n');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh
-if [ "$1" = "--version" ]; then printf 'vl 0.3.1\\n'; exit 0; fi
-printf '%s\\n' "$*" >> ${JSON.stringify(vlLog)}
-if [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi
-if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
-exit 0
-`, { mode: 0o755 });
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ hostpid, vllog: vlLog }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   // Catalogo del TEST, non dell'ambiente: env {} esclude l'XDG dell'operatore.
   const catalogo = path.join(home, '.config', 'vl');
@@ -43,6 +45,8 @@ exit 0
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
+const HOSTSCRIPT = ${JSON.stringify(hostScript)};
+const HOSTPID = ${JSON.stringify(hostpid)};
 const log = (riga) => fs.appendFileSync(${JSON.stringify(tmuxLog)}, riga + '\\n');
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
@@ -81,7 +85,14 @@ if (args[0] === '-C') {
   process.stdin.on('end', () => process.exit(0));
   return;
 }
-if (args[0] === 'new-session') { process.stdout.write('$8\\t@8\\t%8\\n'); process.exit(0); }
+if (args[0] === 'new-session') {
+  // La nascita dell'host accompagna la sessione: ogni new-session fa nascere
+  // un host nuovo (il vecchio pid, se ancora vivo, viene spento per pid
+  // esatto dall'helper), cosi' all'up la tuple registrata e' osservabile.
+  { const { spawnSync: riavviaHost } = require('node:child_process');
+    riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
+  process.stdout.write('$8\\t@8\\t%8\\n'); process.exit(0);
+}
 if (args[0] === 'display-message') process.stdout.write('0\\t0\\t%8\\n');
 process.exit(0);
 `;
@@ -100,6 +111,7 @@ process.exit(0);
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
     home, defsPath, tmuxBin, readonly: () => false,
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'd'.repeat(64) }),
       revoke: async () => {},
@@ -121,7 +133,14 @@ process.exit(0);
     return trovati[0] || null;
   };
   const recordLancio = () => path.join(filesRoot, 'launch-targets', `${SESSIONE}.json`);
-  t.after(() => { try { runtime.shutdown(); } catch (_) {} fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => {
+    // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
+    try {
+      const p = Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0;
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) {}
+    try { runtime.shutdown(); } catch (_) {} fs.rmSync(root, { recursive: true, force: true });
+  });
   return { runtime, defsPath, cella, vlLog, tmuxLog, contesto, recordLancio };
 }
 

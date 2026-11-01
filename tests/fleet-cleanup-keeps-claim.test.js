@@ -9,6 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+const { scriptVlFintoConHost } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaLease';
 
@@ -29,8 +30,15 @@ function mondo(t) {
   const cwd = path.join(home, 'CellaLease');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
+  // Binario finto QUALIFICATO peer/stop: il preflight dell'up interroga le
+  // capacita' PRIMA dello spawn, quindi anche un lancio destinato a fallire
+  // al respawn parte da un binario che sa attestare. L'host qui NON nasce
+  // (il client non parte mai: il respawn perde la risposta), la
+  // registrazione dell'identita' non arriva mai e la lease resta.
+  const hostpid = path.join(root, 'hostpid');
+  fs.writeFileSync(hostpid, '0\n');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf \'vl 0.3.1\\n\'; exit 0; fi\nexit 0\n', { mode: 0o755 });
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ hostpid }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   // Catalogo del TEST, non dell'ambiente: la sorgente "dell'operatore" per
   // vl.native risolve XDG_CONFIG_HOME da cfg.env (o da process.env). Il test
