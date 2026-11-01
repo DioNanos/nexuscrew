@@ -23,10 +23,12 @@
 #   NEXUSCREW_TEST_CONCURRENCY suite concurrency (default 2, measured on the
 #                              reference machine; higher is not more truth)
 #
-# Exit codes: 0 candidate viable · 2 missing variable · 3 bad binary path ·
-# 4 hash mismatch or undeclared · 5 missing profile-selector capability ·
-# 6 suite run failed · 7 mandatory test missing/skipped/failed ·
-# 8 unexpected skip · 9 leftover processes after the run.
+# Exit codes: 0 candidate viable · 2 missing variable · 3 bad binary path or
+# unusable/wrong node interpreter · 4 hash mismatch or undeclared ·
+# 5 missing profile-selector capability · 6 suite run failed ·
+# 7 mandatory test missing/skipped/failed · 8 unexpected skip (or a tolerated
+# name skipped for a reason that does not carry its marker) ·
+# 9 leftover processes after the run.
 
 set -uo pipefail
 IFS=$'\n\t'
@@ -50,6 +52,27 @@ CLIENT_BIN=$NEXUSCREW_VL_REAL_BIN
 
 command -v sha256sum >/dev/null 2>&1 || die 'environment' 'sha256sum is required' 3
 command -v systemd-run >/dev/null 2>&1 || die 'environment' 'systemd-run --user is required to enforce the memory/tasks cap' 3
+
+# The interpreter that runs the suite is part of the qualification. It may be
+# pinned with NEXUSCREW_GATE_NODE; whatever its source it must be a real,
+# executable file, and at least major 22: measured on the reference machine,
+# the default interpreter (24.10.0) silently refused the vl root claim on ~96
+# tests that are green under the qualified 24.21.0 — same tree, same env. A
+# wrong interpreter turns the gate into a wall of environmental reds, so it is
+# refused here, before anything is started.
+GATE_NODE=${NEXUSCREW_GATE_NODE:-$(command -v node)}
+[ -n "$GATE_NODE" ] || die 'node-interpreter' 'no node interpreter on PATH and NEXUSCREW_GATE_NODE is not set' 3
+if [ -n "${NEXUSCREW_GATE_NODE:-}" ]; then
+  [ -f "$GATE_NODE" ] || die 'node-interpreter' "NEXUSCREW_GATE_NODE is not a regular file: $GATE_NODE" 3
+  [ -x "$GATE_NODE" ] || die 'node-interpreter' "NEXUSCREW_GATE_NODE is not executable: $GATE_NODE" 3
+fi
+NODE_VERSION=$("$GATE_NODE" --version 2>/dev/null) || die 'node-interpreter' "cannot execute $GATE_NODE --version" 3
+NODE_MAJOR=${NODE_VERSION#v}
+NODE_MAJOR=${NODE_MAJOR%%[!0-9]*}
+case "$NODE_MAJOR" in
+  ''|*[!0-9]*) die 'node-version' "unparseable version reported by $GATE_NODE: ${NODE_VERSION:-<empty>}" 3 ;;
+esac
+[ "$NODE_MAJOR" -ge 22 ] || die 'node-version' "node major $NODE_MAJOR is below the gate floor of 22: $GATE_NODE ($NODE_VERSION)" 3
 
 sha_of() { sha256sum "$1" | awk '{print $1}'; }
 
@@ -111,15 +134,9 @@ TMUXD=""
 cleanup_root() { [ -n "$ROOT" ] && rm -rf "$ROOT"; [ -n "$TMPD" ] && rm -rf "$TMPD"; [ -n "$TMUXD" ] && rm -rf "$TMUXD"; return 0; }
 trap cleanup_root EXIT
 
-# The Node that runs the suite is part of the qualification: set
-# NEXUSCREW_GATE_NODE to pin it. Measured on the reference machine, the
-# default interpreter (24.10.0) refuses the vl root claim on ~96 tests that
-# are green under the qualified 24.21.0 — same tree, same env. The gate
-# records the version in the manifest either way, so a wrong-node run is at
-# least diagnosable; pinning is on the caller who wants a pass to mean
-# something.
-GATE_NODE=${NEXUSCREW_GATE_NODE:-$(command -v node)}
-NODE_VERSION=$($GATE_NODE --version)
+# GATE_NODE and NODE_VERSION were validated in section 1 (regular executable
+# file, major >= 22) before anything started; the manifest records them so a
+# run is always attributable to its interpreter.
 NC_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 NC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 NC_DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
@@ -167,12 +184,15 @@ real effort gate: il verdetto segue la versione REALE del binario
 real same-binary: probe e spawn puntano lo stesso realpath (nessun ripiego PATH)
 due celle, stesso engine e stessa HOME: due host reali distinti, preferenze distinte, transcript che riprende, nuova sessione che non tocca B
 EOF
-# The only skips this gate tolerates, each with why it is not a hole. A skip
-# outside this list fails the gate, whatever its reason says.
+# The only skips this gate tolerates: a name AND the marker its reason must
+# carry. A skipped test is tolerated only when both match: a tolerated name
+# skipped for any other reason (a broken environment, a changed message) is an
+# unexpected skip and fails the gate. The third column is the human rationale
+# for the manifest.
 cat > "$ALLOWED_SKIP" <<'EOF'
-D10: ogni modello usato da una cella o da un default engine e' dichiarato per il suo engine	live configuration check: the gate runs against an empty private home and deliberately imports no real fleet configuration
-il profilo generato e accettato dal client codex-vl vero (errore atteso: auth, non parse)	local codex-vl client binary is not a fact of the product: the node has none under the gate home, and the gate must not install one to turn a skip green
-D2 end-to-end: Pi custom — Pi VERO carica l'estensione e il modello supera il consumo reale (read.js)	local Pi client is not a fact of the product: the test itself declares this skip legitimate and motivated when Pi is not installed, and a missing local client is never a red of the candidate
+D10: ogni modello usato da una cella o da un default engine e' dichiarato per il suo engine	nessuna configurazione live	live configuration check: the gate runs against an empty private home and deliberately imports no real fleet configuration
+il profilo generato e accettato dal client codex-vl vero (errore atteso: auth, non parse)	binario codex-vl non presente sul nodo	local codex-vl client binary is not a fact of the product: the node has none under the gate home, and the gate must not install one to turn a skip green
+D2 end-to-end: Pi custom — Pi VERO carica l'estensione e il modello supera il consumo reale (read.js)	Pi (@earendil-works/pi-coding-agent) non installato	local Pi client is not a fact of the product: the test itself declares this skip legitimate and motivated when Pi is not installed, and a missing local client is never a red of the candidate
 EOF
 
 shopt -s nullglob
@@ -301,12 +321,17 @@ while IFS= read -r want; do
 done < "$MANDATORY"
 
 UNEXPECTED=0
-cut -f1,2 "$LOG/results.tsv" | awk -F'\t' '$1 == "skip" { print $2 }' | while IFS= read -r skipped; do
+awk -F'\t' '$1 == "skip" { print $2 "\t" $3 }' "$LOG/results.tsv" | while IFS=$'\t' read -r skipped reason; do
   [ -n "$skipped" ] || continue
-  if ! awk -F'\t' -v n="$skipped" '$1 == n { found = 1; exit } END { exit !found }' "$ALLOWED_SKIP"; then
-    printf 'release-gate: UNEXPECTED skip: %s\n' "$skipped" >&2
-    touch "$LOG/unexpected-skip.flag"
+  if awk -F'\t' -v n="$skipped" -v r="$reason" '$1 == n && index(r, $2) > 0 { found = 1; exit } END { exit !found }' "$ALLOWED_SKIP"; then
+    continue
   fi
+  if awk -F'\t' -v n="$skipped" '$1 == n { found = 1; exit } END { exit !found }' "$ALLOWED_SKIP"; then
+    printf 'release-gate: UNEXPECTED skip reason: %s\n  tolerated name, but the reason does not carry its marker: %s\n' "$skipped" "${reason:-<none>}" >&2
+  else
+    printf 'release-gate: UNEXPECTED skip: %s\n' "$skipped" >&2
+  fi
+  touch "$LOG/unexpected-skip.flag"
 done
 [ -e "$LOG/unexpected-skip.flag" ] && UNEXPECTED=1
 
@@ -314,11 +339,22 @@ TOTAL=$(wc -l < "$LOG/results.tsv" | tr -d ' ')
 PASS_N=$(awk -F'\t' '$1 == "pass"' "$LOG/results.tsv" | wc -l | tr -d ' ')
 FAIL_N=$(awk -F'\t' '$1 == "fail"' "$LOG/results.tsv" | wc -l | tr -d ' ')
 SKIP_N=$(awk -F'\t' '$1 == "skip"' "$LOG/results.tsv" | wc -l | tr -d ' ')
+
+# The manifest is written BEFORE the fatal exits on purpose (a red run must
+# still leave its evidence), but the mandatory-list line reports the verdict
+# it has actually computed — never a static "all passed" label on a red run.
+MANDATORY_N=$(grep -c . "$MANDATORY" | tr -d ' ')
+MANDATORY_OK=1
+[ "$FAILED" -eq 0 ] && [ "$SKIPPED" -eq 0 ] && [ "$MISSING" -eq 0 ] || MANDATORY_OK=0
 {
   printf 'suite results: %s total, %s pass, %s fail, %s skip\n' "$TOTAL" "$PASS_N" "$FAIL_N" "$SKIP_N"
-  printf 'mandatory list: %s names, all executed and passed\n' "$(grep -c . "$MANDATORY" | tr -d ' ')"
-  printf 'tolerated skips (by name, with reason):\n'
-  awk -F'\t' '{ printf "  - %s\n    %s\n", $1, $2 }' "$ALLOWED_SKIP"
+  if [ "$MANDATORY_OK" = 1 ]; then
+    printf 'mandatory list: %s names, all executed and passed\n' "$MANDATORY_N"
+  else
+    printf 'mandatory list: %s names, NOT all executed and passed (failed=%s skipped=%s missing=%s)\n' "$MANDATORY_N" "$FAILED" "$SKIPPED" "$MISSING"
+  fi
+  printf 'tolerated skips (by name, with the reason marker each must carry):\n'
+  awk -F'\t' '{ printf "  - %s\n    marker: %s\n    %s\n", $1, $2, $3 }' "$ALLOWED_SKIP"
   printf 'gate finished: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 } >> "$LOG/manifest.txt"
 
