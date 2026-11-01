@@ -376,6 +376,121 @@ test('unit: fsync della DIRECTORY che fallisce (EIO) — l\'errore sale, nessuna
   assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO');
 });
 
+// --- La catena si RIQUALIFICA a ogni scrittura (audit finale F1-02) --------
+// L'esistenza di una directory non attesta un fsync riuscito: una catena
+// superstite a un EIO (o creata a meta' da un'istanza precedente) si
+// ri-sincronizza per intero, dal confine `.nexuscrew` al stateDir, e il
+// fallimento sale fino al rifiuto dell'up. Un file leggibile dopo il rename
+// non e' una prova di persistenza.
+
+// fs reale + iniezione EIO per PATH sui fsync, con registro delle chiamate:
+// registra ogni fsync come percorso (file temporaneo compreso), cosi' si
+// prova non solo che un fsync e fallito, ma quali anelli sono stati davvero
+// sincronizzati.
+function implFsyncSuPath(guasti) {
+  const fdPath = new Map();
+  const registra = [];
+  const eio = () => { const e = new Error('eio'); e.code = 'EIO'; return e; };
+  const impl = {
+    ...fs,
+    openSync: (p, flags, mode) => {
+      const fd = fs.openSync(p, flags, mode);
+      if (typeof p === 'string') fdPath.set(fd, p);
+      return fd;
+    },
+    fsyncSync: (fd) => {
+      const p = fdPath.get(fd);
+      if (p != null) {
+        registra.push(p);
+        if (guasti.has(p)) throw eio();
+      }
+      return fs.fsyncSync(fd);
+    },
+    closeSync: (fd) => { fdPath.delete(fd); return fs.closeSync(fd); },
+  };
+  return { impl, registra };
+}
+
+function catenaNc(root) {
+  const home = path.join(root, 'home');
+  const nexus = path.join(home, '.nexuscrew');
+  const cells = path.join(nexus, 'vl-cells');
+  const stateDir = path.join(cells, 'ab'.repeat(16) + '-CellaPre');
+  return { home, nexus, cells, stateDir };
+}
+
+test('unit: catena NC esistente con EIO persistente sul parent — il retry NON riesce', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { stateDir, cells } = catenaNc(root);
+  fs.mkdirSync(stateDir, { recursive: true }); // catena superstite a un errore
+  const { impl, registra } = implFsyncSuPath(new Set([cells]));
+  assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO',
+    'il parent ancora guasto si ri-tenta subito');
+  assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO',
+    'il retry sulla stessa catena esistente non riusce per esistenza');
+  assert.ok(registra.filter((p) => p === cells).length >= 2, 'il fsync del parent guasto e stato ri-tentato');
+  assert.equal(fs.existsSync(path.join(stateDir, 'host-context.json')), false, 'nessuna persistenza dichiarata');
+});
+
+test('unit: catena NC esistente sana — OGNI anello si qualifica a ogni scrittura', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { home, nexus, cells, stateDir } = catenaNc(root);
+  fs.mkdirSync(stateDir, { recursive: true });
+  const { impl, registra } = implFsyncSuPath(new Set());
+  host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl);
+  const fsyncati = new Set(registra);
+  for (const anello of [nexus, cells, stateDir]) {
+    assert.ok(fsyncati.has(anello), `fsync dell'anello ${path.basename(anello)}`);
+    assert.ok(fsyncati.has(path.dirname(anello)), `entry nel parent di ${path.basename(anello)}`);
+  }
+  assert.ok(fsyncati.has(home), 'il confine .nexuscrew si sincronizza anche nel proprio parent');
+  assert.equal(host.leggiContesto(stateDir).hostIdentity.state, 'pending');
+});
+
+test('unit: EIO transitorio sul parent NC — la riuscita arriva SOLO dopo il fsync effettivo', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { cells, stateDir } = catenaNc(root);
+  fs.mkdirSync(stateDir, { recursive: true });
+  const guasti = new Set([cells]);
+  const { impl, registra } = implFsyncSuPath(guasti);
+  assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO');
+  guasti.delete(cells); // il guasto passa
+  host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl);
+  const primo = registra.indexOf(cells);
+  const secondo = registra.indexOf(cells, primo + 1);
+  assert.ok(primo >= 0 && secondo > primo, 'il parent e stato fsync-ato DAVVERO nella corsa riuscita');
+  assert.equal(host.leggiContesto(stateDir).hostIdentity.state, 'pending');
+});
+
+test('unit: albero NC creato a meta\' — la nuova istanza qualifica TUTTA la catena, anelli preesistenti compresi', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const { nexus, cells, stateDir } = catenaNc(root);
+  fs.mkdirSync(cells, { recursive: true }); // manca solo l'ultimo anello
+  const { impl, registra } = implFsyncSuPath(new Set());
+  host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl);
+  const fsyncati = new Set(registra);
+  assert.ok(fsyncati.has(stateDir) && fsyncati.has(cells), 'l\'anello nuovo e il suo parent');
+  assert.ok(fsyncati.has(nexus), 'anche l\'anello PREESISTENTE si riqualifica: la sua esistenza non attesta il fsync');
+  assert.ok(fsyncati.has(path.dirname(nexus)), 'entry del confine nel parent');
+});
+
+test('unit: catena arbitraria fuori dal confine NC — il parent guasto si ri-tenta al retry', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const b = path.join(root, 'x', 'a', 'b');
+  const stateDir = path.join(b, 'c');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const { impl } = implFsyncSuPath(new Set([b]));
+  assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO',
+    'il primo tentativo fallisce sul parent');
+  assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO',
+    'il retry non riusce senza ri-tentare il parent guasto');
+});
+
 // --- causes: il nuovo esito sta nell'enum chiuso ---------------------------
 
 test('unit: VL_PEER_UNATTESTED e un codice bounded delle cause up', () => {
