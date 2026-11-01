@@ -119,7 +119,10 @@ test('ogni reason della lista chiusa ha il suo esito, e nessuna cade sul vecchio
       assert.deepEqual(comandi(chiamate), ['status', 'internal', 'status']);
     } else {
       assert.equal(esito.outcome, 'host-stop-failed', reason);
-      assert.equal(esito.code, 'STOP_FAILED', reason);
+      // I rifiuti protetti dello stop expected hanno un CODICE LORO; gli
+      // altri rifiuti dichiarati restano STOP_FAILED con la loro parola.
+      const atteso = host.ESITI_STOP_ATTESO[reason] || 'STOP_FAILED';
+      assert.equal(esito.code, atteso, reason);
       assert.equal(esito.reason, reason);
       assert.deepEqual(comandi(chiamate), ['status', 'internal'], `${reason}: nessun secondo probe`);
     }
