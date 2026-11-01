@@ -16,6 +16,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
 const { main, validPayload } = require('../lib/fleet/cell-exec.js');
 const {
   requestVlNewSession, consumeVlNewSession, vlNewSessionStatus, vlLegacyInventory,
@@ -36,7 +37,7 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
@@ -162,6 +163,8 @@ process.exit(0);
     launchReadyMs: 0,
     now: clock.now,
     monotonicNow: clock.mono,
+    // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     ...(cooldownMs !== undefined ? { vlLaunchCooldownMs: cooldownMs } : {}),
   };
   const markerDir = path.join(home, '.nexuscrew', 'vl-new-session');

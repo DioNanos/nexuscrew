@@ -16,6 +16,7 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
+const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
 const {
   settleVlBootstrapClaim, vlClaimOutcomeFor, CLAIM_STATES,
 } = require('../lib/fleet/vl-bootstrap-claim.js');
@@ -31,7 +32,7 @@ function mondo(t) {
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
@@ -150,6 +151,8 @@ process.exit(0);
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'linux', env: {},
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
     now: clock.now, monotonicNow: clock.now,
+    // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
   };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return {

@@ -21,6 +21,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
 
 // Come un valore sembra un segreto: stessi casi del logger di produzione.
 const REDACT_RE = /^(sk-|secret|token|bearer |key-|ghp_)/i;
@@ -56,9 +57,11 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
   // Il binario vl nel PATH: serve a findBinary (il gate di `configured`), ma
   // il binario REALE che gira e' quello dichiarato in vlBinary. Risponde anche
   // a 'host status': il preflight di capacita' dell'up chiede al binario
-  // pinnato le tre capacita' peer/stop (host assente: sono fatti del binario).
+  // pinnato le tre capacita' peer/stop, e la registrazione all'up vuole lo
+  // stesso status con host LIVE e peer_identity verified (contratto del
+  // binario attestato, condiviso con gli altri test runtime del fleet).
   const pathBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(pathBin, 0o755);
 
   const statoPath = path.join(root, 'sessions.txt');
@@ -153,6 +156,9 @@ process.exit(0);
         launchReadyMs: 0,
         now: clock.now,
         vlLaunchCooldownMs: 0,
+        // L'owner della tuple attestata: hex32, non `local`, o la
+        // registrazione rifiuta l'up per contratto.
+        identityOwnerInstanceId: OWNER_INSTANCE_ID,
         launchBroker: {
           issue: async (payload) => {
             tickets.push({
@@ -190,8 +196,9 @@ function binarioConSpazi(home, version = 'vl 0.5.0') {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'vl Runner');
   // 'host status' dichiara le capacita' peer/stop che il preflight dell'up
-  // richiede al binario pinnato: stesso contratto del binario nel PATH.
-  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; fi\nexit 0\n`, { mode: 0o755 });
+  // richiede al binario pinnato, e l'host attestato che la registrazione
+  // all'up esige dallo stesso status: stesso contratto del binario nel PATH.
+  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(file, 0o755);
   return file;
 }

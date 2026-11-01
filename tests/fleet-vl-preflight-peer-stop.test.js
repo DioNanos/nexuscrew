@@ -21,6 +21,9 @@ const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const host = require('../lib/fleet/vl-host-stop.js');
+const {
+  OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO, IDENTITA_ATTESTATA,
+} = require('./helpers/vl-attestato.js');
 
 const STATO_CAPS = '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}';
 
@@ -139,7 +142,10 @@ function mondo(t, { caps } = {}) {
   const vlBin = path.join(home, '.local', 'bin', 'vl');
   const vlLog = path.join(root, 'vl.log');
   fs.writeFileSync(vlLog, '');
-  const rispostaHost = caps ? STATO_CAPS : '{"state":"none"}';
+  // Il binario qualificato non dichiara solo le capacita': risponde con l'host
+  // LIVE e `peer_identity` verified che la registrazione all'up esige DOPO lo
+  // spawn. Un `none` fisso fallirebbe l'up con VL_PEER_UNATTESTED.
+  const rispostaHost = caps ? STATO_HOST_ATTESTATO : '{"state":"none"}';
   fs.writeFileSync(vlBin, vlCorpo(rispostaHost, vlLog), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
@@ -249,13 +255,16 @@ process.exit(0);
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'linux', env: {},
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
     now: () => 0, monotonicNow: () => Date.now(),
+    // Owner hex32 della tuple attestata: con `local` la tuple non e' valida
+    // e l'up e' rifiutato per contratto.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
   };
-  const base = () => vlCellBaseDir(home, 'local', 'CellaPre');
+  const base = () => vlCellBaseDir(home, OWNER_INSTANCE_ID, 'CellaPre');
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return {
     root, home, tickets, cfgBase, base, vlLog, statoPath,
-    mettiVl(conCaps) {
-      fs.writeFileSync(vlBin, vlCorpo(conCaps ? STATO_CAPS : '{"state":"none"}', vlLog), { mode: 0o755 });
+    mettiVl(qualificato) {
+      fs.writeFileSync(vlBin, vlCorpo(qualificato ? STATO_HOST_ATTESTATO : '{"state":"none"}', vlLog), { mode: 0o755 });
       fs.chmodSync(vlBin, 0o755);
     },
     async fleet() {
@@ -292,7 +301,10 @@ test('runtime reale: binario corretto dopo il rifiuto — up ok, claim rilasciat
   assert.equal(w.tickets.length, 1, 'un solo spawn, dopo la qualifica');
   const ctx = JSON.parse(fs.readFileSync(path.join(w.base(), 'host-context.json'), 'utf8'));
   assert.equal(ctx.version, 2);
-  assert.deepEqual(ctx.hostIdentity, { state: 'pending' }, 'nodeId/owner restano distinti: il contesto resta un record di lancio');
+  // La registratione all'up persiste la tuple kernel ATTESTATA nel contesto
+  // del launchId: l'instanceId e' l'owner del nodo, distinto dai fatti del
+  // processo host (che restano i sette campi kernel, non un nodeId).
+  assert.deepEqual(ctx.hostIdentity, IDENTITA_ATTESTATA, 'la tuple attestata all\'up vive nel contesto del lancio');
   assert.match(ctx.vlBinSha256, /^[a-f0-9]{64}$/);
   const righe = fs.readFileSync(w.vlLog, 'utf8').split('\n')
     .filter((r) => r.includes('host status'));
