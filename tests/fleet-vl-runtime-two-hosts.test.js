@@ -114,6 +114,10 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
     TERM: 'xterm-256color',
   };
   fs.mkdirSync(tmuxEnv.TMPDIR, { recursive: true, mode: 0o700 });
+  // The private server exports XDG_RUNTIME_DIR to the panes, and the real
+  // binary refuses to start against a runtime dir that does not exist
+  // (unusable_xdg_runtime_dir): create it, 0700 like every other world dir.
+  fs.mkdirSync(tmuxEnv.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
   // Every tmux invocation of this test goes through here: server and clients
   // share the private socket, so the panes and the cleanup below can never
   // touch a session, or a server, that is not ours.
