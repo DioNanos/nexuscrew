@@ -385,18 +385,18 @@ test('runtime reale: variante peer NULL — stesso rifiuto, sessione fermata', a
   assert.ok(w.recordLease(), 'la claim resta trattenuta');
 });
 
-test('runtime reale: dopo il rifiuto il restart NON agisce — continuità non dimostrabile, barriera intatta', async (t) => {
+test('runtime reale: blocco senza continuità e senza nuova sessione — la barriera del pending resta', async (t) => {
   const w = mondo(t);
   w.modo('unverified');
   const fleet = await w.fleet();
   const err = await fleet.up('CellaProva').then(() => null, (e) => e);
   assert.equal(err && err.fleetCode, 'VL_PEER_UNATTESTED');
-  // L'host diventa attestabile, ma il cleanup del lancio rifiutato ha chiuso
-  // il canale di controllo mantenendo record e lease: senza continuità
-  // dimostrabile il down del restart NON agisce (nessun client tmux nuovo,
-  // nessuno stop) e la barriera resta. Lo sblocco è la procedura esplicita
-  // fuori banda dell'operatore: un restart che «riuscisse» aggirando la
-  // barriera raggiungerebbe di nuovo l'host non attestabile.
+  // Il file della modalità diventa «verified», ma qui NON nasce nessun host
+  // attestato: il pid resta 0 e il cleanup del lancio rifiutato ha chiuso il
+  // canale di controllo mantenendo record e lease. Questo prova il BLOCCO
+  // senza continuità e senza nuova sessione (nessun client tmux nuovo,
+  // nessuno stop); NON prova un host vivo attestato dopo il rifiuto — quello
+  // richiede la procedura esplicita fuori banda dell'operatore.
   w.modo('verified');
   const errR = await fleet.restart('CellaProva').then(() => null, (e) => e);
   assert.ok(errR, 'restart rifiutato');

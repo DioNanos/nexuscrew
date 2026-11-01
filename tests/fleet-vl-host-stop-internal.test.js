@@ -99,7 +99,7 @@ const comandi = (chiamate) => chiamate.map((a) => (a[0] === 'host' ? 'status' : 
 // ── ogni `reason` della lista chiusa ───────────────────────────────────────
 
 test('ogni reason della lista chiusa ha il suo esito, e nessuna cade sul vecchio comando', async () => {
-  assert.equal(host.STOP_REASONS.length, 16);
+  assert.equal(host.STOP_REASONS.length, 19);
   for (const reason of host.STOP_REASONS) {
     const ok = reason === 'shutdown_ack';
     const stop = { out: riga(ok, reason), code: ok ? 0 : 1 };
