@@ -106,10 +106,19 @@ if [ -z "$LOG" ]; then LOG=$(mktemp -d /tmp/ncgate-XXXXXX); KEEP_LOG_DIR=0; else
 # The run root lives only as long as the suite does; a refusal path must not
 # leave one behind (the log dir, instead, is evidence and stays).
 ROOT=""
-cleanup_root() { [ -n "$ROOT" ] && rm -rf "$ROOT"; return 0; }
+TMPD=""
+TMUXD=""
+cleanup_root() { [ -n "$ROOT" ] && rm -rf "$ROOT"; [ -n "$TMPD" ] && rm -rf "$TMPD"; [ -n "$TMUXD" ] && rm -rf "$TMUXD"; return 0; }
 trap cleanup_root EXIT
 
-GATE_NODE=$(command -v node)
+# The Node that runs the suite is part of the qualification: set
+# NEXUSCREW_GATE_NODE to pin it. Measured on the reference machine, the
+# default interpreter (24.10.0) refuses the vl root claim on ~96 tests that
+# are green under the qualified 24.21.0 — same tree, same env. The gate
+# records the version in the manifest either way, so a wrong-node run is at
+# least diagnosable; pinning is on the caller who wants a pass to mean
+# something.
+GATE_NODE=${NEXUSCREW_GATE_NODE:-$(command -v node)}
 NODE_VERSION=$($GATE_NODE --version)
 NC_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 NC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
@@ -161,8 +170,9 @@ EOF
 # The only skips this gate tolerates, each with why it is not a hole. A skip
 # outside this list fails the gate, whatever its reason says.
 cat > "$ALLOWED_SKIP" <<'EOF'
-D10: ogni modello usato da una cella o un default engine e' dichiarato per il suo engine	live configuration check: the gate runs against an empty private home and deliberately imports no real fleet configuration
+D10: ogni modello usato da una cella o da un default engine e' dichiarato per il suo engine	live configuration check: the gate runs against an empty private home and deliberately imports no real fleet configuration
 il profilo generato e accettato dal client codex-vl vero (errore atteso: auth, non parse)	local codex-vl client binary is not a fact of the product: the node has none under the gate home, and the gate must not install one to turn a skip green
+D2 end-to-end: Pi custom — Pi VERO carica l'estensione e il modello supera il consumo reale (read.js)	local Pi client is not a fact of the product: the test itself declares this skip legitimate and motivated when Pi is not installed, and a missing local client is never a red of the candidate
 EOF
 
 shopt -s nullglob
@@ -183,12 +193,20 @@ if [ -n "$VERIFY_TAP" ]; then
 else
 RUN_RC_LABEL=recorded-below
 ROOT=$(mktemp -d /tmp/ncgate-run-XXXXXX)
-mkdir -p "$ROOT/home/.config" "$ROOT/home/.state" "$ROOT/home/.data" "$ROOT/home/.run" "$ROOT/tmp" "$ROOT/tmux"
+mkdir -p "$ROOT/home/.config" "$ROOT/home/.state" "$ROOT/home/.data" "$ROOT/home/.run"
+# TMPDIR and TMUX_TMPDIR stay private but SHORT and top-level: many suite
+# worlds mkdtemp under os.tmpdir() and end in a unix socket path, where the
+# kernel caps the whole pathname at SUN_PATH_MAX. Nesting the private TMPDIR
+# under the run root added enough characters to refuse vl roots for a hundred
+# tests that are green with a flat /tmp base. A short top-level directory
+# keeps the isolation without inheriting the depth.
+TMPD=$(mktemp -d /tmp/ncg-t-XXXXXX)
+TMUXD=$(mktemp -d /tmp/ncg-m-XXXXXX)
 NODE_CMD=$(printf '%q ' systemd-run --user --scope -q -p MemoryMax=2G -p MemorySwapMax=0 -p TasksMax=300 \
   env -i PATH=/usr/bin:/bin HOME="$ROOT/home" \
   XDG_CONFIG_HOME="$ROOT/home/.config" XDG_STATE_HOME="$ROOT/home/.state" \
   XDG_DATA_HOME="$ROOT/home/.data" XDG_RUNTIME_DIR="$ROOT/home/.run" \
-  TMPDIR="$ROOT/tmp" TMUX_TMPDIR="$ROOT/tmux" NEXUSCREW_AUTO_UPDATE=0 \
+  TMPDIR="$TMPD" TMUX_TMPDIR="$TMUXD" NEXUSCREW_AUTO_UPDATE=0 \
   NC_VL_REAL_BIN="$NEW_BIN" NC_VL_REAL_BIN_SHA256="$NEW_SHA" NC_VL_OLD_REAL_BIN="$OLD_BIN" \
   NC_VL_STATUS_BIN="$STATUS_BIN" NEXUSCREW_VL_REAL_BIN="$CLIENT_BIN" \
   "$GATE_NODE" --test "--test-concurrency=$CONCURRENCY" \
@@ -205,7 +223,7 @@ XDG_RUNTIME_DIR="/run/user/$(id -u)" systemd-run --user --scope -q \
   env -i PATH=/usr/bin:/bin HOME="$ROOT/home" \
   XDG_CONFIG_HOME="$ROOT/home/.config" XDG_STATE_HOME="$ROOT/home/.state" \
   XDG_DATA_HOME="$ROOT/home/.data" XDG_RUNTIME_DIR="$ROOT/home/.run" \
-  TMPDIR="$ROOT/tmp" TMUX_TMPDIR="$ROOT/tmux" NEXUSCREW_AUTO_UPDATE=0 \
+  TMPDIR="$TMPD" TMUX_TMPDIR="$TMUXD" NEXUSCREW_AUTO_UPDATE=0 \
   NC_VL_REAL_BIN="$NEW_BIN" NC_VL_REAL_BIN_SHA256="$NEW_SHA" NC_VL_OLD_REAL_BIN="$OLD_BIN" \
   NC_VL_STATUS_BIN="$STATUS_BIN" NEXUSCREW_VL_REAL_BIN="$CLIENT_BIN" \
   "$GATE_NODE" --test "--test-concurrency=$CONCURRENCY" \
@@ -223,11 +241,11 @@ for proc in /proc/[0-9]*; do
   [ "$pid" != "$$" ] || continue
   cwd=$(readlink "$proc/cwd" 2>/dev/null || true)
   case "$cwd" in
-    "$ROOT"|"$ROOT"/*) printf '%s cwd %s\n' "$pid" "$cwd" >> "$LEFTOVER"; continue ;;
+    "$ROOT"|"$ROOT"/*|"$TMPD"|"$TMPD"/*|"$TMUXD"|"$TMUXD"/*) printf '%s cwd %s\n' "$pid" "$cwd" >> "$LEFTOVER"; continue ;;
   esac
-  env_match=$(tr '\0' '\n' < "$proc/environ" 2>/dev/null | grep -E "^(HOME|TMUX_TMPDIR|XDG_RUNTIME_DIR)=$ROOT" | head -n 1 || true)
-  [ -z "$env_match" ] || printf '%s environ %s\n' "$pid" "$env_match" >> "$LEFTOVER"
-done
+  { env_match=$(tr '\0' '\n' < "$proc/environ" 2>/dev/null | grep -E "^(HOME|TMUX_TMPDIR|XDG_RUNTIME_DIR)=($ROOT|$TMPD|$TMUXD)" | head -n 1); } 2>/dev/null
+  [ -z "${env_match:-}" ] || printf '%s environ %s\n' "$pid" "$env_match" >> "$LEFTOVER"
+done 2>/dev/null
 if [ -s "$LEFTOVER" ]; then
   note "processes from this gate run are still alive; terminating by exact pid:"
   while IFS=' ' read -r pid kind what; do
