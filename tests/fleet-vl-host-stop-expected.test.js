@@ -57,8 +57,11 @@ function mondo(t, extraCfg = {}) {
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const hostpid = path.join(root, 'hostpid');
   fs.writeFileSync(hostpid, '0\n');
-  // Modalita' del comando di stop: '' (ack normale), 'mismatch', 'unknown',
-  // 'exinvalid' (i rifiuti protetti: nessun segnale, solo la riga di esito).
+  // Modalita' del comando di stop: '' (ack normale) oppure la REASON del
+  // rifiuto protetto ('peer_mismatch', 'peer_unknown', 'expected_invalid'):
+  // nessun segnale all'host, solo la riga di esito e exit 1. I valori sono le
+  // reason del contratto VL, cosi' il test scrive nel file la stessa parola
+  // che aspetta di leggere nell'esito.
   const modef = path.join(root, 'stopmode');
   const vllog = path.join(root, 'vl.log');
   fs.writeFileSync(vllog, '');
@@ -127,9 +130,9 @@ if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown
     process.stdout.write(JSON.stringify({ ok: false, reason }) + '\\n');
     process.exit(1);
   };
-  if (mode === 'mismatch') rifiuta('peer_mismatch');
-  if (mode === 'unknown') rifiuta('peer_unknown');
-  if (mode === 'exinvalid') rifiuta('expected_invalid');
+  if (mode === 'peer_mismatch') rifiuta('peer_mismatch');
+  if (mode === 'peer_unknown') rifiuta('peer_unknown');
+  if (mode === 'expected_invalid') rifiuta('expected_invalid');
   const p = leggiPid();
   if (p > 0) {
     try { process.kill(p, 'SIGTERM'); } catch {}
@@ -319,13 +322,7 @@ const RIFIUTI = [
   ['expected_invalid', 'HOST_EXPECTED_INVALID'],
 ];
 for (const [modo, codice] of RIFIUTI) {
-  // SKIP (P3): anomalia fixture non risolta nel turno — il fake rifiuta
-  // (modeletto letto, riga ok:false, exit 1, verificato anche eseguendolo a
-  // mano) ma nel test il down risolve pulito con host morto e pidfile a 0,
-  // come se l'ack fosse passato. Da indagare in un turno dedicato; il caso
-  // positivo e il pending qui sotto sono verificati.
-  test(`rifiuto protetto ${modo}: ${codice}, zero stop, nessun ripiego, record trattenuto`,
-    { skip: 'fixture: il down risolve invece di rifiutare, vedi referto P3' }, async (t) => {
+  test(`rifiuto protetto ${modo}: ${codice}, zero stop, nessun ripiego, record trattenuto`, async (t) => {
     const w = mondo(t);
     const fleet = await w.fleet();
     const host = avviaHostHelper();
