@@ -18,8 +18,31 @@ const { describeManaged, resolveManagedEngine } = require('../lib/fleet/managed.
 const REAL_BIN = process.env.NEXUSCREW_VL_REAL_BIN || '';
 const have = Boolean(REAL_BIN) && fs.existsSync(REAL_BIN) && fs.statSync(REAL_BIN).isFile();
 const declaresSelector = have && (() => {
-  const r = spawnSync(REAL_BIN, ['status'], { encoding: 'utf8', timeout: 5000, env: { PATH: '/usr/bin:/bin' } });
-  try { return JSON.parse(r.stdout).capabilities.model_selector === 'profile'; } catch (_) { return false; }
+  // This probe runs the real binary BEFORE any test world exists: without an
+  // explicit HOME/XDG the binary would resolve (or worse, create) its state
+  // under the operator's real home. A throwaway world keeps the probe
+  // read-only with respect to everything outside this scratch directory.
+  const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlprobe-'));
+  let stdout = '';
+  try {
+    const env = {
+      PATH: '/usr/bin:/bin',
+      HOME: probe,
+      XDG_CONFIG_HOME: path.join(probe, '.config'),
+      XDG_STATE_HOME: path.join(probe, '.state'),
+      XDG_DATA_HOME: path.join(probe, '.data'),
+      XDG_RUNTIME_DIR: path.join(probe, '.run'),
+      TMPDIR: path.join(probe, 'tmp'),
+    };
+    for (const dir of [env.XDG_CONFIG_HOME, env.XDG_STATE_HOME, env.XDG_DATA_HOME, env.XDG_RUNTIME_DIR, env.TMPDIR]) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    }
+    const r = spawnSync(REAL_BIN, ['status'], { encoding: 'utf8', timeout: 5000, env });
+    stdout = r.stdout || '';
+  } finally {
+    try { fs.rmSync(probe, { recursive: true, force: true }); } catch (_) { /* best effort */ }
+  }
+  try { return JSON.parse(stdout).capabilities.model_selector === 'profile'; } catch (_) { return false; }
 })();
 const SKIP = !have
   ? 'NEXUSCREW_VL_REAL_BIN not declared or absent: real-binary tests skipped'

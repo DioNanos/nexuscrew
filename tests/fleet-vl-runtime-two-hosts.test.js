@@ -88,6 +88,33 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   const started = [];
   const sessions = [];
 
+  // A tmux server of our own, reached ONLY through an explicit `-S` socket
+  // inside this scratch root, with a HOME/XDG of its own. The default server
+  // (the operator's, i.e. the live fleet one) must stay unreachable even when
+  // this file runs outside the isolated suite runner: no inherited TMUX
+  // variable, no TMUX_TMPDIR reliance, no shared socket by accident. The
+  // socket path stays short: it lives beside the per-cell roots and must
+  // fit in SUN_PATH_MAX like they do.
+  const tmuxSock = path.join(root, 'tmux.sock');
+  const tmuxHome = path.join(root, 'tmux-home');
+  fs.mkdirSync(tmuxHome, { recursive: true, mode: 0o700 });
+  const tmuxEnv = {
+    PATH: '/usr/bin:/bin',
+    HOME: tmuxHome,
+    XDG_CONFIG_HOME: path.join(tmuxHome, '.config'),
+    XDG_STATE_HOME: path.join(tmuxHome, '.state'),
+    XDG_DATA_HOME: path.join(tmuxHome, '.data'),
+    XDG_RUNTIME_DIR: path.join(tmuxHome, '.run'),
+    TMPDIR: path.join(root, 'tmux-tmp'),
+    TMUX_TMPDIR: path.join(root, 'tmux-tmp'),
+    TERM: 'xterm-256color',
+  };
+  fs.mkdirSync(tmuxEnv.TMPDIR, { recursive: true, mode: 0o700 });
+  // Every tmux invocation of this test goes through here: server and clients
+  // share the private socket, so the panes and the cleanup below can never
+  // touch a session, or a server, that is not ours.
+  const tmux = (args) => sh(TMUX, ['-S', tmuxSock, ...args], tmuxEnv);
+
   // The mock provider: it records every request (with the model it carries)
   // and answers with a distinguishable text. Nothing leaves the loopback.
   const requests = [];
@@ -153,16 +180,19 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
     const name = `nc-vl-${label}-${process.pid}-${started.length}`;
     sessions.push(name);
     const args = extraArgs || [];
-    sh(TMUX, ['new-session', '-d', '-s', name, '-x', '160', '-y', '50',
+    tmux(['new-session', '-d', '-s', name, '-x', '160', '-y', '50',
       `sh -c '${envLine(dirs)} ${REAL_BIN} ${args.join(' ')}; sleep 120'`]);
     started.push(name);
     return name;
   };
-  const pane = (name) => sh(TMUX, ['capture-pane', '-p', '-t', name]);
-  const send = (name, text) => sh(TMUX, ['send-keys', '-t', name, text, 'Enter']);
+  const pane = (name) => tmux(['capture-pane', '-p', '-t', name]);
+  const send = (name, text) => tmux(['send-keys', '-t', name, text, 'Enter']);
 
   t.after(() => {
-    for (const name of sessions) { try { sh(TMUX, ['kill-session', '-t', name]); } catch (_) { /* gone */ } }
+    for (const name of sessions) { try { tmux(['kill-session', '-t', name]); } catch (_) { /* gone */ } }
+    // The private server dies with the test: nobody else can be attached to
+    // this socket, it was created by this run alone.
+    try { tmux(['kill-server']); } catch (_) { /* already gone */ }
     for (const dirs of [A, B]) {
       try { sh(REAL_BIN, ['shutdown', '--server-root', rootOf(dirs)], { ...process.env, HOME: home }); } catch (_) { /* already stopped */ }
     }
@@ -215,7 +245,7 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   assert.ok(sizeAfterTurn > 0, 'il transcript di A non e\' vuoto');
 
   // --- restart: the transcript is resumed -----------------------------------
-  sh(TMUX, ['kill-session', '-t', tuiA]);
+  tmux(['kill-session', '-t', tuiA]);
   sessions.splice(sessions.indexOf(tuiA), 1);
   const tuiA2 = startTui('a2', A);
   const afterRestart = await until(() => {
@@ -235,7 +265,7 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   // The rotation is the supervisor's move: the previous TUI goes away, the
   // host is stopped cleanly, and only then the new one starts with --new. A
   // live host (or a TUI still attached) makes the rotation refuse itself.
-  sh(TMUX, ['kill-session', '-t', tuiA2]);
+  tmux(['kill-session', '-t', tuiA2]);
   sessions.splice(sessions.indexOf(tuiA2), 1);
   sh(REAL_BIN, ['shutdown', '--server-root', rootOf(A)], { ...process.env, HOME: home });
   await until(() => !live(A), 20000);
