@@ -11,6 +11,15 @@
 //     la stessa root, l'up qualifica B (tuple di B, non di A) e il down
 //     ferma B.
 //
+// Pezzo 4, seconda parte (P4b), stesso file e stesso isolamento:
+//  4. sostituzione FRA osservazione e stop: la qualifica vede A vivo, poi B
+//     prende la root; lo stop protetto col CLI VERO rifiuta peer_mismatch
+//     (zero stop su B) e il down NC è fail-closed con record e lease trattenuti;
+//  5. PID riusato / nascita diversa: tuple registrata manomessa (stesso pid,
+//     starttime diverso) — down rifiutato e CLI VERO che risponde peer_mismatch;
+//  6. positivo up/down/up: una consegna del prompt per up, respawn zero, e al
+//     secondo up si registra la tuple del NUOVO host.
+//
 // L'host VL vero nasce nel test: `vl server --foreground` con HOME, XDG_* e
 // TMPDIR tutti sotto la cartella del test in /tmp, --server-root esplicito
 // (niente discovery XDG/HOME) e profilo uguale a quello del catalogo. Il
@@ -34,6 +43,7 @@ const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const { radiceServer } = require('../lib/fleet/vl-roots.js');
+const { tuplaAttesaDaRecord, qualificaIsolamentoHost, fermaHost } = require('../lib/fleet/vl-host-stop.js');
 const { OWNER_INSTANCE_ID } = require('./helpers/vl-attestato.js');
 
 const REALE = process.env.NC_VL_REAL_BIN || '';
@@ -79,6 +89,11 @@ function mondo(t, { binario } = {}) {
 
   const statoPath = path.join(root, 'sessions.txt');
   fs.writeFileSync(statoPath, '');
+  // Contatore di respawn: quante volte il fake tmux ha davvero creato la
+  // sessione. Un respawn del runtime (kill + nuova sessione + nuova consegna)
+  // si vede qui come una riga in più.
+  const nsLog = path.join(root, 'new-sessions.log');
+  fs.writeFileSync(nsLog, '');
   const tmuxBin = path.join(root, 'fake-tmux.cjs');
   const script = `#!${process.execPath}
 'use strict';
@@ -118,12 +133,14 @@ if (args[0] === '-C') {
   return;
 }
 const STATO = ${JSON.stringify(statoPath)};
+const NSLOG = ${JSON.stringify(nsLog)};
 const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
 if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write(n + '\\t1\\n'); process.exit(0); }
 if (cmd === 'new-session') {
   if (vive().includes(${JSON.stringify(SESSIONE)})) { process.stderr.write('duplicate session: ' + ${JSON.stringify(SESSIONE)} + '\\n'); process.exit(1); }
   fs.writeFileSync(STATO, vive().concat([${JSON.stringify(SESSIONE)}]).join('\\n') + '\\n');
+  try { fs.appendFileSync(NSLOG, '1\\n'); } catch (_) {}
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'display-message') {
@@ -185,7 +202,7 @@ process.exit(0);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const hostRoot = radiceServer(home, OWNER_INSTANCE_ID, 'CellaPre');
   return {
-    root, home, tickets, cfgBase, statoPath, hostRoot, vlBin,
+    root, home, tickets, cfgBase, statoPath, hostRoot, vlBin, nsLog,
     async fleet() {
       const f = await createBuiltinFleet(cfgBase);
       t.after(() => f.close().catch(() => {}));
@@ -281,6 +298,40 @@ function spawnaDecoy(w, t) {
   return figlio;
 }
 
+// Il PERCORSO del contesto del lancio (host-context.json): serve al test per
+// manometterlo in place (leggiContesto restituisce solo il contenuto).
+function percorsoContesto(w) {
+  const base = vlCellBaseDir(w.home, OWNER_INSTANCE_ID, 'CellaPre');
+  const pila = [base];
+  while (pila.length) {
+    const dir = pila.pop();
+    let nomi;
+    try { nomi = fs.readdirSync(dir); } catch (_) { continue; }
+    for (const nome of nomi) {
+      const p = path.join(dir, nome);
+      let st = null;
+      try { st = fs.statSync(p); } catch (_) { continue; }
+      if (st.isDirectory()) pila.push(p);
+      else if (nome === 'host-context.json') return p;
+    }
+  }
+  return null;
+}
+
+// Quante volte il fake tmux ha creato davvero la sessione (respawn incluso).
+function conteggioNewSession(w) {
+  try { return fs.readFileSync(w.nsLog, 'utf8').split('\n').filter(Boolean).length; } catch (_) { return 0; }
+}
+
+// Il CLI VERO dello stop protetto, invocato direttamente con una tuple data:
+// quello che NC spedirebbe se la sua qualifica fosse passata.
+function stopAttesoDiretto(w, tupla) {
+  const { spawnSync } = require('node:child_process');
+  return spawnSync(w.vlBin,
+    ['internal', 'host-stop', '--server-root', w.hostRoot, '--json', '--expected', tupla],
+    { env: envHost(w), encoding: 'utf8', timeout: 25000 });
+}
+
 test('VL vero: il binario è quello dichiarato e dichiara le capacità peer/stop', { skip: SALTA }, () => {
   if (SHA_ATTESO) {
     const { spawnSync } = require('node:child_process');
@@ -368,4 +419,154 @@ test('VL vero: host SOSTITUITO prima della prima qualifica — si registra B, no
   const uscita = await Promise.race([b.uscito, new Promise((r) => setTimeout(() => r(null), 10000))]);
   assert.ok(uscita, 'B è uscito');
   assert.equal(statoVero(w).state, 'none', 'lo status vero dice none');
+});
+
+// Pezzo 4, seconda parte (P4b): la corsa «fra osservazione e stop» e il giro
+// positivo completo, sempre col binario VL VERO. La sostituzione si colloca
+// DOPO la qualifica d'isolamento (l'osservazione del runtime) e PRIMA del
+// comando di stop: è la finestra che --expected esiste per chiudere. Il test
+// congela esattamente quello stato — qualifica fatta su A vivo, stop lanciato
+// contro B — usando le funzioni VERE del runtime (qualificaIsolamentoHost e
+// fermaHost, quelle che il down chiama nello stesso ordine).
+
+test('VL vero: host SOSTITUITO fra osservazione e stop — il CLI rifiuta peer_mismatch, zero stop su B', { skip: SALTA }, async (t) => {
+  const w = mondo(t, {});
+  const a = await avviaHostReale(w, t);
+  const fleet = await w.fleet();
+  const up = await fleet.up('CellaPre');
+  assert.equal(up.ok, true, `up riuscito: ${JSON.stringify(up)}`);
+  const ctx = leggiContesto(w);
+  assert.ok(ctx && ctx.hostIdentity, 'contesto con hostIdentity');
+  assert.equal(ctx.hostIdentity.pid, a.figlio.pid, 'la tuple registrata all\'up è quella di A');
+
+  // L'OSSERVAZIONE: la qualifica che il runtime fa prima dello stop, con A
+  // vivo. Deve dare «isolato»: stesso processo, stessa nascita, stesso gruppo.
+  const quali = await qualificaIsolamentoHost({
+    stateDir: w.root, record: ctx, bin: w.vlBin,
+    instanceId: OWNER_INSTANCE_ID, budgetMs: 30000, monoNow: () => Date.now(),
+  });
+  assert.equal(quali.isolamento, 'isolato', `A vivo e isolato prima della sostituzione (motivo ${quali.motivo})`);
+
+  // La SOSTITUZIONE: A muore per PID esatto, B prende la stessa root.
+  a.figlio.kill('SIGTERM');
+  await a.uscito;
+  assert.equal(vivo(a.figlio.pid), false, 'A è davvero uscito');
+  const b = await avviaHostReale(w, t);
+  assert.notEqual(b.figlio.pid, a.figlio.pid);
+  const sB = statoVero(w);
+  assert.equal(sB.state, 'live', 'la root ora è di B');
+  assert.equal(sB.peer_identity.pid, b.figlio.pid, 'il peer provato dalla root è B');
+
+  // Lo STOP arriva DOPO: la tuple attesa è ancora quella di A (registrata
+  // all'up). fermaHost è la funzione VERA del down, con la qualifica fatta su
+  // A e il probe di A: il CLI VERO prova il peer sulla connessione (B), lo
+  // confronta con --expected (A) e rifiuta peer_mismatch. Nessun Shutdown,
+  // nessun ripiego, codice dedicato.
+  const esito = await fermaHost({
+    record: ctx, bin: w.vlBin, budgetMs: 30000, monoNow: () => Date.now(),
+    isolamento: quali.isolamento, probeIniziale: quali.probe,
+  });
+  assert.equal(esito.outcome, 'host-stop-failed', `outcome: ${JSON.stringify(esito)}`);
+  assert.equal(esito.code, 'HOST_PEER_MISMATCH', `codice dedicato: ${JSON.stringify(esito)}`);
+  assert.equal(esito.reason, 'peer_mismatch');
+  assert.equal(esito.via, 'internal', 'nessun ripiego sul vecchio comando');
+  assert.equal(vivo(b.figlio.pid), true, 'B VIVO: zero stop su di lui');
+  assert.equal(statoVero(w).state, 'live', 'B serve ancora: nessuno Shutdown è partito');
+
+  // E il runtime intero resta fail-closed: il down NC osserva B, non coincide
+  // con la tuple registrata (A) e rifiuta senza nemmeno un comando di stop;
+  // record e lease restano trattenuti (nessun riavvio automatico).
+  await assert.rejects(() => fleet.down('CellaPre'), (e) => e.status === 500
+    && e.fleetCode === 'HOST_STOP_FAILED'
+    && e.data && e.data.outcome === 'host-stop-failed'
+    && e.data.motivoIsolamento === 'ignoto',
+  'il down rifiuta fail-closed: la tuple osservata (B) non è quella registrata (A)');
+  assert.equal(vivo(b.figlio.pid), true, 'B ancora vivo dopo il down rifiutato');
+  await assert.rejects(() => fleet.up('CellaPre'), (e) => e.fleetCode === 'STOP_UNKNOWN',
+    'record e lease trattenuti: il lancio bloccato non si riapre da solo');
+  assert.equal(vivo(b.figlio.pid), true, 'B sempre vivo');
+});
+
+test('VL vero: PID riusato o nascita diversa — expected con starttime diverso, il CLI rifiuta e l\'host vive', { skip: SALTA }, async (t) => {
+  const w = mondo(t, {});
+  const host = await avviaHostReale(w, t);
+  const fleet = await w.fleet();
+  const up = await fleet.up('CellaPre');
+  assert.equal(up.ok, true, `up riuscito: ${JSON.stringify(up)}`);
+  const ctx = leggiContesto(w);
+  assert.ok(ctx && ctx.hostIdentity, 'contesto con hostIdentity');
+  assert.equal(ctx.hostIdentity.pid, host.figlio.pid, 'la tuple registrata è quella dell\'host vivo');
+
+  // Manometto la tuple REGISTRATA nel contesto del test: stesso pid, nascita
+  // (starttime) diversa. È la firma di un pid riusato: il numero coincide, il
+  // processo non è quello fermato all'up.
+  const manipolato = JSON.parse(JSON.stringify(ctx));
+  manipolato.hostIdentity.startTicks = String(Number(manipolato.hostIdentity.startTicks) + 1);
+  const fileContesto = percorsoContesto(w);
+  assert.ok(fileContesto, 'file del contesto trovato');
+  fs.writeFileSync(fileContesto, JSON.stringify(manipolato));
+  const tupla = tuplaAttesaDaRecord(manipolato);
+  assert.ok(tupla, 'la tuple manomessa è ancora ben formata: stesso pid, starttime diverso');
+
+  // Il runtime è fail-closed PRIMA: il confronto kernel vs tuple registrata
+  // dà «ignoto» e il down rifiuta senza inviare alcuno stop.
+  await assert.rejects(() => fleet.down('CellaPre'), (e) => e.status === 500
+    && e.fleetCode === 'HOST_STOP_FAILED'
+    && e.data && e.data.outcome === 'host-stop-failed'
+    && e.data.motivoIsolamento === 'ignoto',
+  'il down rifiuta: la nascita osservata non è quella registrata');
+  assert.equal(vivo(host.figlio.pid), true, 'host VIVO: zero stop');
+
+  // E anche dove il runtime non guarda, il CLI VERO confronta l'intera tuple
+  // col peer provato sulla connessione: starttime diverso è peer_mismatch.
+  const r = stopAttesoDiretto(w, tupla);
+  assert.notEqual(r.status, 0, `rifiuto con exit ${r.status}`);
+  const esito = JSON.parse(r.stdout.trim());
+  assert.equal(esito.ok, false, `esito CLI: ${r.stdout.trim()}`);
+  assert.equal(esito.reason, 'peer_mismatch', `reason dal CLI vero: ${r.stdout.trim()}`);
+  assert.equal(vivo(host.figlio.pid), true, 'host ancora VIVO dopo il rifiuto');
+  assert.equal(statoVero(w).state, 'live', 'l\'host serve ancora: nessuno Shutdown');
+});
+
+test('VL vero: positivo up/down/up — una consegna del prompt per up, respawn zero, seconda tuple registrata', { skip: SALTA }, async (t) => {
+  const w = mondo(t, {});
+  const fleet = await w.fleet();
+
+  // Primo giro: host vero, up che lo registra, down protetto pulito.
+  const h1 = await avviaHostReale(w, t);
+  const up1 = await fleet.up('CellaPre');
+  assert.equal(up1.ok, true, `primo up: ${JSON.stringify(up1)}`);
+  const ctx1 = leggiContesto(w);
+  assert.ok(ctx1 && ctx1.hostIdentity, 'contesto con hostIdentity');
+  assert.equal(ctx1.hostIdentity.pid, h1.figlio.pid, 'prima tuple: l\'host del primo up');
+  assert.equal(w.tickets.length, 1, 'UNA consegna del prompt per il primo up');
+  assert.equal(conteggioNewSession(w), 1, 'UNA new-session: nessun respawn');
+
+  const down1 = await fleet.down('CellaPre');
+  assert.equal(down1.ok, true, `primo down pulito: ${JSON.stringify(down1)}`);
+  const uscita1 = await Promise.race([h1.uscito, new Promise((r) => setTimeout(() => r(null), 10000))]);
+  assert.ok(uscita1, 'il primo host è uscito');
+  assert.equal(statoVero(w).state, 'none', 'status none dopo il primo down');
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '', 'sessione chiusa dal down');
+  assert.equal(conteggioNewSession(w), 1, 'nessun respawn dopo il down');
+
+  // Secondo giro: un host NUOVO sulla stessa root. Il secondo up registra la
+  // SUA tuple (nascita diversa), con una sola consegna del prompt in più.
+  const h2 = await avviaHostReale(w, t);
+  assert.notEqual(h2.figlio.pid, h1.figlio.pid);
+  const up2 = await fleet.up('CellaPre');
+  assert.equal(up2.ok, true, `secondo up: ${JSON.stringify(up2)}`);
+  const ctx2 = leggiContesto(w);
+  assert.ok(ctx2 && ctx2.hostIdentity, 'contesto con hostIdentity');
+  assert.equal(ctx2.hostIdentity.pid, h2.figlio.pid, 'secondo up: si registra la tuple del NUOVO host');
+  assert.notEqual(ctx2.hostIdentity.startTicks, ctx1.hostIdentity.startTicks, 'nascita del nuovo host diversa');
+  assert.equal(w.tickets.length, 2, 'una consegna per il secondo up: DUE in tutto');
+  assert.equal(conteggioNewSession(w), 2, 'DUE new-session in tutto: respawn zero');
+
+  const down2 = await fleet.down('CellaPre');
+  assert.equal(down2.ok, true, `secondo down pulito: ${JSON.stringify(down2)}`);
+  const uscita2 = await Promise.race([h2.uscito, new Promise((r) => setTimeout(() => r(null), 10000))]);
+  assert.ok(uscita2, 'il secondo host è uscito');
+  assert.equal(statoVero(w).state, 'none', 'status none alla fine');
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '', 'sessione chiusa alla fine');
 });
