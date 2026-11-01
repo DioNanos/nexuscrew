@@ -78,6 +78,29 @@ const nota = (c) => fs.appendFileSync(LOG, c + '\\n');
 const leggiPid = () => { try { return Number(fs.readFileSync(HOSTPID, 'utf8').trim()) || 0; } catch (_) { return 0; } };
 const esiste = (p) => { try { process.kill(p, 0); return true; } catch (_) { return false; } };
 const attesa = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// La tuple kernel del peer, letta da /proc col parsing di osservaPeerKernel:
+// la tuple dichiarata in peer_identity coincide con quella che il runtime
+// osservera' al down (identita' registrata all'up = identita' osservata).
+const identitaKernel = (p) => {
+  let stat;
+  try { stat = fs.readFileSync('/proc/' + p + '/stat', 'utf8'); } catch (_) { return null; }
+  const fine = stat.lastIndexOf(')');
+  if (fine < 0) return null;
+  const campi = stat.slice(fine + 2).trim().split(/\\s+/);
+  let uid = null;
+  try {
+    const riga = fs.readFileSync('/proc/' + p + '/status', 'utf8')
+      .split('\\n').find((r) => r.startsWith('Uid:'));
+    uid = Number(riga.trim().split(/\\s+/)[2]);
+  } catch (_) { return null; }
+  let ino = null;
+  try { ino = fs.statSync('/proc/' + p + '/ns/pid').ino; } catch (_) { return null; }
+  let boot = null;
+  try { boot = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim(); } catch (_) { return null; }
+  return { schema_version: 1, state: 'verified', pid: p, uid,
+    starttime: Number(campi[19]), boot_id: boot, pidns: ino,
+    pgid: Number(campi[2]), sid: Number(campi[3]) };
+};
 const argv = process.argv.slice(2);
 if (argv[0] === '--version') { process.stdout.write('vl 0.4.0\\n'); process.exit(0); }
 if (argv[0] === 'host' && argv[1] === 'status') {
@@ -100,7 +123,8 @@ if (argv[0] === 'host' && argv[1] === 'status') {
   };
   if (p > 0 && esiste(p)) {
     process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: p,
-      pid_number_in_use: true, since: { source: 'declared', unix: 1 } }) + '\\n');
+      pid_number_in_use: true, since: { source: 'declared', unix: 1 },
+      peer_identity: identitaKernel(p) }) + '\\n');
   } else if (fs.existsSync(NOPID)) {
     process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: null,
       pid_number_in_use: null, since: { source: 'declared', unix: 1 } }) + '\\n');
@@ -299,6 +323,14 @@ test('F1: host vivo isolato → down pulito, host uscito, up riammesso', async (
   assert.equal(ctx.hostIdentity.source, 'kernel-peer-v1');
   assert.equal(ctx.hostIdentity.pid, host.pid);
 
+  // Nuovo lancio, nuovo host: come la TUI vera, che l'host lo fa nascere
+  // all'avvio, il secondo up trova un peer DA ATTESTARE (il vecchio e' uscito
+  // per lo stop): senza un host vivo la registrazione rifiuterebbe l'up.
+  const host2 = avviaHostHelper();
+  t.after(() => { try { host2.kill('SIGKILL'); } catch (_) {} });
+  await attendiVivo(host2);
+  fs.writeFileSync(w.hostpid, `${host2.pid}\n`);
+
   const up2 = await fleet.up('CellaIso');
   assert.equal(up2.ok, true, 'nuovo up ammesso dopo il down pulito');
 });
@@ -357,16 +389,20 @@ test('F1: identita mutata → IDENTITY_UNKNOWN con motivo, nessuno stop', async 
 });
 
 // 3b. Host dichiarato vivo SENZA attestazione del peer (status live, nessun
-//     pid): rifiuto con motivo bounded, zero stop, zero teardown. Il file
-//     hostpid resta a 0: e' la modalita' NOPID del fake a dichiarare l'host.
+//     pid): rifiuto con motivo bounded, zero stop, zero teardown. L'up parte
+//     con un peer ATTESTATO (pezzo 2: senza verified l'up e' rifiutato), poi
+//     la modalita' NOPID del fake dichiara un host vivo senza pid e il
+//     pidfile torna a 0: e' quello che il down trova al probe.
 test('F1: status live senza pid → IDENTITY_UNKNOWN (pid-assente), nessuno stop', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
   const host = avviaHostHelper();
   t.after(() => { try { host.kill('SIGKILL'); } catch (_) {} });
   await attendiVivo(host);
-  fs.writeFileSync(w.nopidf, '1\n');
+  fs.writeFileSync(w.hostpid, `${host.pid}\n`);
   await fleet.up('CellaIso');
+  fs.writeFileSync(w.hostpid, '0\n');
+  fs.writeFileSync(w.nopidf, '1\n');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED'
     && e.data && e.data.motivoIsolamento === 'pid-assente');
   assert.equal(stops(w), 0, 'nessun comando di stop host');
@@ -463,7 +499,14 @@ test('F1-bis: declared_pid e il pid che conta → down pulito', async (t) => {
 test('F1-bis: declared_pid non in uso → pid-assente, nessuno stop', async (t) => {
   const w = mondo(t);
   const fleet = await w.fleet();
+  const host = avviaHostHelper();
+  t.after(() => { try { host.kill('SIGKILL'); } catch (_) {} });
+  await attendiVivo(host);
+  fs.writeFileSync(w.hostpid, `${host.pid}\n`);
   await fleet.up('CellaIso');
+  // Dopo l'up attestato il pidfile torna a 0 e la modalita' NOTINUSE dichiara
+  // un numero che non nomina nessun processo: e' quello che il down trova.
+  fs.writeFileSync(w.hostpid, '0\n');
   fs.writeFileSync(w.notinusef, '1\n');
   await assert.rejects(() => fleet.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED'
     && e.data && e.data.motivoIsolamento === 'pid-assente');

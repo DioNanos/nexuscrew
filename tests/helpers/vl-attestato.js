@@ -125,7 +125,7 @@ const comune = {
 };
 if (argv[0] === '--version') { process.stdout.write(${JSON.stringify(version)} + '\\n'); process.exit(0); }
 if (argv[0] === 'host' && argv[1] === 'status') {
-  nota('status');
+  nota('status ' + argv.join(' '));
   const iRoot = argv.lastIndexOf('--server-root');
   const radice = iRoot >= 0 ? String(argv[iRoot + 1] || '') : '';
   const base = { ...comune, server_root: radice };

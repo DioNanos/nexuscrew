@@ -12,6 +12,8 @@ const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const host = require('../lib/fleet/vl-host-stop.js');
 const { creaCoordinatore } = require('../lib/fleet/group-stop.js');
 const launchTarget = require('../lib/fleet/launch-target.js');
+const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
+const { spawnSync } = require('node:child_process');
 
 const BOOT = '11111111-1111-1111-1111-111111111111';
 
@@ -150,13 +152,14 @@ function mondoLive(t) {
   const killPath = path.join(root, 'kill.log');
   fs.writeFileSync(killPath, '');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh
-if [ "$1" = "--version" ]; then printf 'vl 0.3.1\\n'; exit 0; fi
-printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
-if [ "$1" = "host" ]; then printf '%s\\n' '{"state":"live","pid":4242}'; exit 0; fi
-if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
-exit 0
-`, { mode: 0o755 });
+  // Binario finto QUALIFICATO peer/stop con host VERO: la tuple dichiarata in
+  // `host status` viene letta da /proc del pid vivo nel pidfile. L'up attesta
+  // il peer; il test poi sostituisce l'host (respawn) prima del down, così la
+  // tuple osservata non e' più quella registrata: attestazione persa.
+  const hostScript = preparaHostFinto(root);
+  const hostpid = path.join(root, 'hostpid');
+  fs.writeFileSync(hostpid, '0\n');
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ version: 'vl 0.3.1', hostpid, vllog: logPath }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   const catalogo = path.join(home, '.config', 'vl');
   fs.mkdirSync(catalogo, { recursive: true });
@@ -167,6 +170,8 @@ exit 0
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
+const HOSTSCRIPT = ${JSON.stringify(hostScript)};
+const HOSTPID = ${JSON.stringify(hostpid)};
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === 'kill-session') fs.appendFileSync(${JSON.stringify(killPath)}, 'kill\\n');
@@ -198,7 +203,14 @@ if (args[0] === '-C') {
   process.stdin.on('end', () => process.exit(0));
   return;
 }
-if (args[0] === 'new-session') { process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0); }
+if (args[0] === 'new-session') {
+  // Come la TUI vera, che l'host lo fa nascere all'avvio: ogni new-session
+  // fa nascere un host nuovo (il vecchio pid, se vivo, viene spento per pid
+  // esatto dall'helper).
+  { const { spawnSync: riavviaHost } = require('node:child_process');
+    riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
+  process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0);
+}
 if (args[0] === 'display-message') { process.stdout.write('0\\t0\\t%3\\n'); process.exit(0); }
 process.exit(0);
 `;
@@ -216,6 +228,9 @@ process.exit(0);
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
     home, defsPath, tmuxBin, readonly: () => false,
+    // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
+    // Qui e' un'opzione del runtime (in createBuiltinFleet sta dentro cfg).
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'f'.repeat(64) }),
       revoke: async () => {},
@@ -223,17 +238,35 @@ process.exit(0);
     },
     boot: loadDefinitions(defsPath),
   });
-  t.after(() => { try { runtime.shutdown(); } catch (_) {} fs.rmSync(root, { recursive: true, force: true }); });
-  return { runtime, home, filesRoot, logPath, killPath };
+  t.after(() => {
+    // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
+    try {
+      const p = Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0;
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) {}
+    try { runtime.shutdown(); } catch (_) {}
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  return { runtime, home, filesRoot, logPath, killPath, hostScript, hostpid };
 }
 
-test('host vivo senza attestazione: niente segnali, claim conservato, riavvio bloccato', async (t) => {
+// Con il pezzo 2 l'attestazione nasce ALL'UP (peer verified registrato nel
+// contesto del lancio): un binario qualificato senza attestazione rifiuta
+// l'up, non il down. Quello che qui resta da provare è l'altro lato del
+// contratto: l'host REGISTRATO viene SOSTITUITO prima del down — la tuple
+// osservata non è più quella attestata — e il down rifiuta senza segnali,
+// conservando claim e blocco del riavvio.
+test('host sostituito dopo l\'up: attestazione persa — niente segnali, claim conservato, riavvio bloccato', async (t) => {
   const w = mondoLive(t);
   await w.runtime.up('CellaIso');
+  // Sostituzione: l'host attestato esce e il suo posto è preso da un ALTRO
+  // processo (respawn: spegne il vecchio per pid esatto, ne fa nascere uno).
+  spawnSync(process.execPath, [w.hostScript, '--respawn', w.hostpid]);
   await assert.rejects(() => w.runtime.down('CellaIso'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
   const log = fs.readFileSync(w.logPath, 'utf8');
   assert.match(log, /host status/);
   assert.doesNotMatch(log, /shutdown/);
+  assert.doesNotMatch(log, /host-stop/, 'nessun comando di stop emesso');
   assert.equal(fs.readFileSync(w.killPath, 'utf8'), '');
   const lease = fs.readdirSync(path.join(w.home, '.nexuscrew', 'vl-root-claims')).filter((n) => n.endsWith('.lease'));
   assert.ok(lease.length >= 1);
