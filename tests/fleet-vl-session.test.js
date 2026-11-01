@@ -16,7 +16,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
-const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
+const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 const { main, validPayload } = require('../lib/fleet/cell-exec.js');
 const {
   requestVlNewSession, consumeVlNewSession, vlNewSessionStatus, vlLegacyInventory,
@@ -37,7 +37,14 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
+  // Binario finto QUALIFICATO peer/stop con host VERO: la tuple dichiarata in
+  // `host status` viene letta da /proc del pid vivo nel pidfile, così al down
+  // il runtime osserva in /proc la STESSA identità che ha registrato all'up.
+  const hostScript = preparaHostFinto(root);
+  const hostpid = path.join(root, 'hostpid');
+  const vllog = path.join(root, 'vl.log');
+  fs.writeFileSync(hostpid, '0\n');
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ version, hostpid, vllog }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
@@ -56,6 +63,8 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
+const HOSTSCRIPT = ${JSON.stringify(hostScript)};
+const HOSTPID = ${JSON.stringify(hostpid)};
 const argv = process.argv.slice(2);
 const args = argv[0] === '-S' ? argv.slice(2) : argv;
 if (args[0] === '-C') {
@@ -98,6 +107,11 @@ if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write(n + 
 if (cmd === 'new-session') {
   if (vive().includes(${JSON.stringify(SESSIONE)})) { process.stderr.write('duplicate session: ' + ${JSON.stringify(SESSIONE)} + '\\n'); process.exit(1); }
   fs.writeFileSync(STATO, vive().concat([${JSON.stringify(SESSIONE)}]).join('\\n') + '\\n');
+  // La nascita dell'host accompagna la sessione: come la TUI vera, che l'host
+  // lo fa nascere all'avvio, ogni new-session fa nascere un host nuovo (il
+  // vecchio pid, se ancora vivo, viene spento per pid esatto dall'helper).
+  { const { spawnSync: riavviaHost } = require('node:child_process');
+    riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'display-message') {
@@ -168,7 +182,14 @@ process.exit(0);
     ...(cooldownMs !== undefined ? { vlLaunchCooldownMs: cooldownMs } : {}),
   };
   const markerDir = path.join(home, '.nexuscrew', 'vl-new-session');
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
+    try {
+      const p = Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0;
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) {}
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   return {
     root, home, defsPath, tickets, clock, cfgBase, markerDir,
     requestedPath: path.join(markerDir, 'CellaProva.requested'),

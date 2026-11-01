@@ -169,6 +169,43 @@ if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown
 `;
 }
 
+// Helper host finto STANDALONE: un piccolo script che sa fare due cose.
+// - `host-finto.cjs --respawn <pidfile>`: spegne per pid esatto l'host che
+//   il pidfile nomina (se ancora vivo), fa nascere un host nuovo detached
+//   (pid==pgid==sid) e ne scrive il pid. È la nascita dell'host che nella
+//   vita vera accompagna l'avvio della TUI: qui la fa nascere il tmux finto
+//   a ogni new-session, così il pid cambia a ogni lancio come nel vero.
+// - senza argv di servizio: È l'host (vive finché non gli arriva un segnale).
+function preparaHostFinto(dir) {
+  const script = `${dir}/host-finto.cjs`;
+  require('node:fs').writeFileSync(script, `#!${process.execPath}
+'use strict';
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
+const attesa = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const esiste = (p) => { try { process.kill(p, 0); return true; } catch (_) { return false; } };
+if (process.argv[2] === '--respawn') {
+  const pidfile = process.argv[3];
+  let vecchio = 0;
+  try { vecchio = Number(fs.readFileSync(pidfile, 'utf8').trim()) || 0; } catch (_) {}
+  if (vecchio > 0 && esiste(vecchio)) {
+    try { process.kill(vecchio, 'SIGTERM'); } catch (_) {}
+    for (let i = 0; i < 80 && esiste(vecchio); i += 1) attesa(25);
+  }
+  const figlio = spawn(process.execPath, ['-e', ${JSON.stringify(CODICE_HOST_FINTO)}],
+    { detached: true, stdio: 'ignore' });
+  figlio.unref();
+  fs.writeFileSync(pidfile, figlio.pid + '\\n');
+  process.exit(0);
+}
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+setInterval(() => {}, 1 << 30);
+`, { mode: 0o755 });
+  require('node:fs').chmodSync(script, 0o755);
+  return script;
+}
+
 module.exports = {
   OWNER_INSTANCE_ID,
   BOOT_ID,
@@ -176,4 +213,5 @@ module.exports = {
   IDENTITA_ATTESTATA,
   spawnaHostFinto,
   scriptVlFintoConHost,
+  preparaHostFinto,
 };
