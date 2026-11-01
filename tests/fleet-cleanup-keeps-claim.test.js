@@ -9,7 +9,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
-const { scriptVlFintoConHost } = require('./helpers/vl-attestato.js');
+const { scriptVlFintoConHost, OWNER_INSTANCE_ID } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaLease';
 
@@ -104,6 +104,9 @@ process.exit(0);
   });
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} }, // env: {} -> niente XDG_CONFIG_HOME dell'ambiente
+    // Owner hex32 valido: il preflight dell'identita' (F1-01) deve passare,
+    // cosi' il test prova la lease trattenuta e non il rifiuto del preflight.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'b'.repeat(64) }),

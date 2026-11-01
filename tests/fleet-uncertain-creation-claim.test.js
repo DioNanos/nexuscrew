@@ -16,7 +16,7 @@ const path = require('node:path');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const radici = require('../lib/fleet/vl-roots.js');
-const { scriptVlFintoConHost } = require('./helpers/vl-attestato.js');
+const { scriptVlFintoConHost, OWNER_INSTANCE_ID } = require('./helpers/vl-attestato.js');
 
 const SESSIONE = 'cloud-CellaIncerta';
 
@@ -79,6 +79,9 @@ process.exit(0);
   });
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: false, vlLaunchCooldownMs: 0, log: () => {}, env: {} },
+    // Owner hex32 valido: il preflight dell'identita' (F1-01) deve passare,
+    // cosi' il test prova la lease incerta e non il rifiuto del preflight.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'b'.repeat(64) }),
