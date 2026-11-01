@@ -26,17 +26,18 @@ function mondo(t) {
   fs.writeFileSync(logPath, '');
   fs.writeFileSync(killPath, '');
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  // Primo 'host status': host fermo (la barriera del preflight passa).
-  // Dal secondo in poi: host vivo senza attestazione (la chiusura post-uscita
-  // non deve dichiarare successo).
+  // Primo e secondo 'host status': host fermo — il primo è il preflight di
+  // capacità dell'up (binario qualificato: le tre capacità dichiarate), il
+  // secondo è la prima verifica del down. Dal terzo in poi: host vivo senza
+  // attestazione (la chiusura post-uscita non deve dichiarare successo).
   fs.writeFileSync(vlBin, `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'vl 0.3.1\\n'; exit 0; fi
 printf '%s\\n' "$*" >> ${JSON.stringify(logPath)}
 if [ "$1" = "host" ]; then
   N=$(cat ${JSON.stringify(path.join(root, 'host-n'))} 2>/dev/null || echo 0)
   N=$((N+1)); echo "$N" > ${JSON.stringify(path.join(root, 'host-n'))}
-  if [ "$N" -le 1 ]; then printf '%s\\n' '{"state":"none"}'; exit 0; fi
-  printf '%s\\n' '{"state":"live","pid":4242}'; exit 0
+  if [ "$N" -le 2 ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi
+  printf '%s\\n' '{"state":"live","pid":4242,"capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0
 fi
 if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
 exit 0
@@ -133,9 +134,11 @@ test('sessione gia assente con host non fermo: record e canale restano', async (
   const w = mondo(t);
   await w.runtime.up('CellaOrd');
   // La sessione finisce fuori banda; il record del lancio resta. L'host resta
-  // VIVO senza attestazione gia' alla prima verifica (contatore pre-seedato):
-  // in questo ramo la barriera host e' l'unica che gira.
-  fs.writeFileSync(path.join(path.dirname(w.stato), 'host-n'), '1\n');
+  // VIVO senza attestazione gia' alla prima verifica del down (contatore
+  // pre-seedato oltre il consumo dell'up, che col preflight di capacita' ha
+  // gia' fatto un 'host status'): in questo ramo la barriera host e' l'unica
+  // che gira.
+  fs.writeFileSync(path.join(path.dirname(w.stato), 'host-n'), '2\n');
   fs.writeFileSync(w.stato, '0\n');
   await assert.rejects(() => w.runtime.down('CellaOrd'), (e) => e.fleetCode === 'HOST_STOP_FAILED');
   assert.ok(fs.existsSync(w.record()), 'il record del lancio NON e\' stato rimosso prima della barriera host');

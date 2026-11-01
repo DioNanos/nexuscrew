@@ -89,9 +89,14 @@ if (argv[0] === 'host' && argv[1] === 'status') {
   // schema_version, state, declared_pid, pid_number_in_use, since, server_root,
   // explicit_root, profile, profile_source, residual_lock, error). NON esiste
   // un campo \`pid\`: chi ne legge uno legge uno schema inventato.
+  // Il binario qua' dentro e' QUALIFICATO peer/stop: le tre capacita' e il
+  // support dell'osservazione sono fatti del binario, presenti in ogni stato
+  // (contratto SESSION_LIFECYCLE): senza queste l'up e' rifiutato in preflight.
   const comune = {
     schema_version: 1, explicit_root: true, profile: 'e2emock',
     profile_source: 'config', residual_lock: null, error: null, server_root: radice,
+    capabilities: ['host_stop_v1', 'host_peer_identity_v1', 'host_stop_expected_v1'],
+    peer_identity_support: 'supported',
   };
   if (p > 0 && esiste(p)) {
     process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: p,
@@ -110,11 +115,10 @@ if (argv[0] === 'host' && argv[1] === 'status') {
   process.exit(0);
 }
 if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown') {
-  // Lo schema reale non dichiara capabilities: il runtime sceglie il comando
-  // VECCHIO (\`vl shutdown\`), che e' quello che esiste in VL 0.4
-  // (main.rs:316, HOST_ACTIONS = ["status"]; il comando vero e' verificato dal
-  // test di contratto). Il ramo \`internal\` resta coperto da
-  // fleet-vl-host-stop-internal.test.js per il binario che lo dichiarera'.
+  // Il binario dichiara host_stop_v1 (e le capacita' peer/stop): il runtime
+  // sceglie il comando amministrativo \`vl internal host-stop\`. Il ramo
+  // \`shutdown\` resta comunque implementato qui: e' il ripiego di un binario
+  // senza capacita', provato altrove (fleet-vl-host-stop.test.js).
   nota('stop:' + (argv[0] === 'shutdown' ? 'legacy' : 'internal'));
   const mode = fs.existsSync(MODE) ? fs.readFileSync(MODE, 'utf8').trim() : '';
   if (mode === 'hang') { attesa(30000); process.exit(9); }
@@ -260,9 +264,9 @@ process.exit(0);
 }
 
 const conta = (file, cosa) => fs.readFileSync(file, 'utf8').split('\n').filter((r) => r === cosa).length;
-// Un comando di stop e' stato emesso, su quale dei due rami. Lo schema reale
-// (senza capabilities) sceglie il vecchio `vl shutdown`: e' il comando che
-// esiste in VL 0.4.
+// Un comando di stop e' stato emesso, su quale dei due rami. Il binario
+// qualificato dichiara host_stop_v1: il runtime sceglie il comando
+// amministrativo `vl internal host-stop`.
 const stops = (w) => conta(w.vllog, 'stop:internal') + conta(w.vllog, 'stop:legacy');
 const sessioniVive = (w) => fs.readFileSync(w.statoPath, 'utf8').split('\n').filter(Boolean);
 
@@ -286,7 +290,7 @@ test('F1: host vivo isolato → down pulito, host uscito, up riammesso', async (
   for (let i = 0; i < 80 && vivo(host.pid); i += 1) await dormi(25);
   assert.equal(vivo(host.pid), false, "l'host isolato e' stato fermato");
   assert.equal(stops(w), 1, 'esattamente uno stop host');
-  assert.equal(conta(w.vllog, 'stop:legacy'), 1, 'il comando che VL 0.4 ha davvero');
+  assert.equal(conta(w.vllog, 'stop:internal'), 1, 'il comando del binario qualificato');
 
   // Identita' registrata nel contesto v2 al primo sguardo del lancio.
   const ctx = JSON.parse(fs.readFileSync(path.join(vlCellBaseDir(w.home, OWNER, 'CellaIso'), 'host-context.json'), 'utf8'));
@@ -417,11 +421,14 @@ test('F1: canale di controllo perso → IDENTITY_UNVERIFIED, host mai consultato
   await attendiVivo(host);
   fs.writeFileSync(w.hostpid, `${host.pid}\n`);
   await fleet.up('CellaIso');
+  // Il preflight di capacità dell'up ha già interrogato lo status: quel che
+  // conta è che NESSUN NUOVO comando parta dopo la perdita del canale.
+  const logDopoUp = fs.readFileSync(w.vllog, 'utf8');
   fs.writeFileSync(w.muori, '1\n');
   await dormi(150); // il server di controllo sparisce: EOF sul canale
   await assert.rejects(() => fleet.down('CellaIso'),
     (e) => e.status === 409 && e.fleetCode === 'IDENTITY_UNVERIFIED');
-  assert.equal(fs.readFileSync(w.vllog, 'utf8').trim(), '', 'nessun comando vl dopo la perdita del canale');
+  assert.equal(fs.readFileSync(w.vllog, 'utf8'), logDopoUp, 'nessun comando vl dopo la perdita del canale');
   assert.equal(vivo(host.pid), true);
   assert.equal(sessioniVive(w).length, 1);
 });

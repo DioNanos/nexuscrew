@@ -28,7 +28,7 @@ function mondo(t) {
   fs.writeFileSync(vlBin, `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'vl 0.3.1\\n'; exit 0; fi
 printf '%s\\n' "$*" >> ${JSON.stringify(vlLog)}
-if [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none"}'; exit 0; fi
+if [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi
 if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
 exit 0
 `, { mode: 0o755 });

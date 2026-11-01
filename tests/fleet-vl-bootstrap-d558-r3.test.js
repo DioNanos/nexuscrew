@@ -31,7 +31,7 @@ function mondo(t) {
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none"}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '{"state":"none","capabilities":["host_stop_v1","host_peer_identity_v1","host_stop_expected_v1"],"peer_identity_support":"supported"}'; exit 0; fi\nif [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi\nexit 0\n`, { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
