@@ -197,15 +197,17 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
     XDG_CONFIG_HOME: dirs.env.XDG_CONFIG_HOME,
   });
 
-  // The host refuses a server root it would have to create itself, and one
-  // whose chain is not private (unsafe_root): the real runtime prepares the
-  // chain 0700 before the launch, and so must this harness now that it runs
-  // the real binary. One step at a time, because a recursive mkdir would
-  // leave the intermediate level with the default mode.
+  // The chain down to <state>/vl must exist and be private (unsafe_root
+  // otherwise): the real runtime prepares it 0700 before the launch, and so
+  // must this harness now that it runs the real binary. One step at a time,
+  // because a recursive mkdir would leave the intermediate level with the
+  // default mode. The server root itself (host-v1) must NOT be created here:
+  // an existing root is only opened when its tree is already complete, so an
+  // empty directory kills the host during startup, while an absent root is
+  // built by the host itself, complete and 0700.
   const preparaHostRoot = (dirs) => {
-    for (const dir of [path.join(dirs.env.XDG_STATE_HOME, 'vl'), rootOf(dirs)]) {
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: false, mode: 0o700 });
-    }
+    const dir = path.join(dirs.env.XDG_STATE_HOME, 'vl');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: false, mode: 0o700 });
   };
 
   const rootOf = (dirs) => path.join(dirs.env.XDG_STATE_HOME, 'vl', 'host-v1');
