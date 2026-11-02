@@ -2,13 +2,23 @@
 # fake-tmux — logga le chiamate e simula gli esiti che servono ai test route.
 LOG="${FAKE_TMUX_LOG:-${XDG_STATE_HOME:+$XDG_STATE_HOME/tmux.log}}"
 echo "$*" >> "${LOG:-/dev/null}"
+# Stato del finto server (marker «killed» della sessione). NON puo' stare
+# nella directory del socket: col server condiviso quella directory e' di
+# tmux — fuori harness e' quella del server VIVO della flotta — e un rm -rf
+# lì dentro cancellerebbe il socket reale. Lo stato vive nella HOME privata
+# del test, che l'env minimale garantisce identica al processo del canale e
+# ai comandi rieseguiti: stessa vista senza env extra. HOME assente (env
+# ridotto all'osso): fallback per-pid, mai la directory del socket.
+if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+  state="$HOME/.nc-fake-tmux-state"
+else
+  state="${TMPDIR:-/tmp}/nc-fake-tmux-state.$$"
+fi
+mkdir -p "$state" 2>/dev/null || true
 # Canale di controllo: tmux -S <socket> -C. Le righe su stdin sono comandi,
-# le risposte sono incorniciate. Lo stato (sessione gia' fermata) sta nella
-# directory del socket, cosi' il processo del canale e i comandi rieseguiti
-# vedono la stessa sessione senza env extra.
+# le risposte sono incorniciate.
 if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
   sock="$2"
-  state=$(dirname "$sock")
   if [ "$4" = "new-session" ]; then
     # Creazione posseduta: il PRIMO frame è l'esito del comando stesso, con
     # gli id richiesti da -P -F. Nessun token di apertura: la creazione e il
@@ -34,9 +44,7 @@ if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
   rm -rf "$state"
   exit 0
 fi
-state=""
 if [ "$1" = "-S" ]; then
-  state=$(dirname "$2")
   shift 2
 fi
 case "$1" in

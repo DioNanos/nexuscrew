@@ -15,9 +15,9 @@ const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-
 // La precondizione di questi test e' una cella REALMENTE viva: tmux vero,
 // broker di lancio vero (con listener) e un comando engine longevo. Con il
 // broker ascoltante il supervisore cell-exec ritira il payload e tiene il pane
-// in vita, quindi la sessione, il server tmux per-lancio e il canale di
-// controllo posseduto sopravvivono fino alla seconda up(). La fixture con un
-// broker senza listener faceva uscire cell-exec subito: spento il
+// in vita, quindi la sessione, il canale di controllo posseduto e il server
+// condiviso che la ospita sopravvivono fino alla seconda up(). La fixture con
+// un broker senza listener faceva uscire cell-exec subito: spento il
 // remain-on-exit diagnostico, tmux chiudeva la sessione prima del secondo up()
 // e il 409 dipendeva dall'istante in cui il canale registrava la morte del
 // proprio server (referto DevAuditor 2026-10-27: 3-4 fail su 15,
@@ -30,6 +30,19 @@ function createHarness(options = {}) {
   // (ensureRuntimeDir e' fail-closed sulla modalita' della directory).
   fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(home, '.nexuscrew', 'run'), { mode: 0o700 });
+
+  // Il lancio vive sul server tmux CONDIVISO: il runtime ne risolve il
+  // socket di default tramite TMUX_TMPDIR, quindi la harness gliene dà uno
+  // privato (tmux-<uid>/default dentro una mkdtemp propria). La sessione
+  // nasce su un server condiviso VERO ma di test — mai su quello della
+  // flotta, nemmeno quando questo file gira fuori dal runner isolato — e
+  // ogni test del file ha il suo: il 409 del secondo up non puo' arrivare
+  // per contaminazione fra harness.
+  const tmuxd = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dup-m-'));
+  const sharedSocket = path.join(tmuxd, `tmux-${process.getuid()}`, 'default');
+  const prevTmuxTmpdir = process.env.TMUX_TMPDIR;
+  process.env.TMUX_TMPDIR = tmuxd;
+  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, PATH: '/usr/bin:/bin', HOME: home });
 
   const defs = {
     engines: [{ id: 'e', command: '/bin/sleep', args: ['600'] }],
@@ -64,49 +77,58 @@ function createHarness(options = {}) {
     } catch (_) {}
     try { await broker.close(); } catch (_) { /* best-effort: socket gia' chiusa */ }
 
-    const runDir = path.join(home, '.nexuscrew', 'run');
-    if (fs.existsSync(runDir)) {
-      let socks = [];
-      try {
-        socks = fs.readdirSync(runDir)
-          .filter((f) => f.endsWith('.sock'))
-          .map((f) => path.join(runDir, f));
-      } catch (_) {}
+    // Il server condiviso della harness si chiude per socket ESATTO: e' il
+    // solo server che questo test ha il diritto di fermare (la run dir
+    // ospita solo i socket del broker di lancio, che broker.close() chiude).
+    // Il pid si legge PRIMA del kill-server; l'uscita si verifica DOPO.
+    let serverPid = null;
+    try {
+      const pidOut = spawnSync('/bin/tmux', ['-S', sharedSocket, 'display-message', '-p', '#{pid}'],
+        { encoding: 'utf8', timeout: 2000, env: tmuxEnv() });
+      const n = Number(String(pidOut.stdout || '').trim());
+      if (Number.isInteger(n) && n > 0) serverPid = n;
+    } catch (_) {}
 
-      for (const sock of socks) {
-        let serverPid = null;
+    if (prevTmuxTmpdir === undefined) delete process.env.TMUX_TMPDIR;
+    else process.env.TMUX_TMPDIR = prevTmuxTmpdir;
+
+    try {
+      spawnSync('/bin/tmux', ['-S', sharedSocket, 'kill-server'], { timeout: 5000, env: tmuxEnv() });
+    } catch (_) {}
+
+    if (serverPid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
         try {
-          const pidOut = spawnSync('/bin/tmux', ['-S', sock, 'display-message', '-p', '#{pid}'], { encoding: 'utf8', timeout: 2000 });
-          const n = Number(String(pidOut.stdout || '').trim());
-          if (Number.isInteger(n) && n > 0) serverPid = n;
-        } catch (_) {}
-
-        try {
-          spawnSync('/bin/tmux', ['-S', sock, 'kill-server'], { timeout: 5000 });
-        } catch (_) {}
-
-        if (serverPid) {
-          const deadline = Date.now() + 5000;
-          while (Date.now() < deadline) {
-            try {
-              process.kill(serverPid, 0);
-            } catch (e) {
-              if (e && e.code === 'ESRCH') break;
-            }
-            spawnSync('sleep', ['0.05']);
-          }
-          try {
-            process.kill(serverPid, 'SIGKILL');
-          } catch (_) {}
-          // Verifica obbligatoria di terminazione, FUORI da ogni catch: un
-          // server superstite — o una ps senza verdetto — fa fallire il test.
-          verificaUscitaServer(spawnSync, serverPid);
+          process.kill(serverPid, 0);
+        } catch (e) {
+          if (e && e.code === 'ESRCH') break;
         }
+        spawnSync('sleep', ['0.05']);
       }
+      try {
+        process.kill(serverPid, 'SIGKILL');
+      } catch (_) {}
+      // Verifica obbligatoria di terminazione, FUORI da ogni catch: un
+      // server superstite — o una ps senza verdetto — fa fallire il test.
+      verificaUscitaServer(spawnSync, serverPid);
+    }
+
+    // tmux 3.4 non rimuove il file del socket dopo kill-server: un file
+    // superstite non e' un server superstite. La prova che non resta NESSUN
+    // server e' il client: sul socket esatto deve rispondere «no server
+    // running» (fallire), non collegarsi. Fuori da ogni catch.
+    const inerzia = spawnSync('/bin/tmux', ['-S', sharedSocket, 'display-message', '-p', '#{pid}'],
+      { encoding: 'utf8', timeout: 3000, env: tmuxEnv() });
+    if (inerzia.status === 0 || /^[0-9]+$/.test(String(inerzia.stdout || '').trim())) {
+      throw new Error(`server superstite sul socket condiviso di test: ${sharedSocket}`);
     }
 
     try {
       fs.rmSync(home, { recursive: true, force: true });
+    } catch (_) {}
+    try {
+      fs.rmSync(tmuxd, { recursive: true, force: true });
     } catch (_) {}
   };
 
