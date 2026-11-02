@@ -22,6 +22,7 @@ const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const { ensureVlCellDirs, writeVlCellCatalog } = require('../lib/fleet/managed.js');
+const { classifyPane } = require('../lib/fleet/prompt-delivery.js');
 
 const REAL_BIN = (process.env.NEXUSCREW_VL_REAL_BIN || '').trim();
 const TMUX = (process.env.NEXUSCREW_TMUX_BIN || '/usr/bin/tmux').trim();
@@ -285,9 +286,10 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   tmux(['kill-session', '-t', tuiA]);
   sessions.splice(sessions.indexOf(tuiA), 1);
   const tuiA2 = startTui('a2', A);
+  // Readiness is production's classifier: the real TUI renders "VL [o_o] ready", not the legacy "vivling" line.
   const afterRestart = await until(() => {
     const p = pane(tuiA2);
-    return p && p.includes('vivling') ? p : null;
+    return p && classifyPane(p, 'vl') === 'ready' ? p : null;
   }, 30000);
   assert.ok(afterRestart, 'la TUI riaggancia l\'host vivo');
   send(tuiA2, 'turno-dopo-il-restart');
@@ -316,7 +318,7 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   assert.ok(sameTree(treeBBefore, treeHashes(rootOf(B))), 'B e\' rimasto intatto: nessun file cambiato');
   const readyNew = await until(() => {
     const p = pane(tuiANew);
-    return p && p.includes('vivling') ? p : null;
+    return p && classifyPane(p, 'vl') === 'ready' ? p : null;
   }, 30000);
   assert.ok(readyNew, `la TUI dopo il --new non e\' pronta:\n${pane(tuiANew)}`);
   send(tuiANew, 'turno-dopo-il-new');
