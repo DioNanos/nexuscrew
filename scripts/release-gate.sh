@@ -53,19 +53,32 @@ CLIENT_BIN=$NEXUSCREW_VL_REAL_BIN
 command -v sha256sum >/dev/null 2>&1 || die 'environment' 'sha256sum is required' 3
 command -v systemd-run >/dev/null 2>&1 || die 'environment' 'systemd-run --user is required to enforce the memory/tasks cap' 3
 
+sha_of() { sha256sum "$1" | awk '{print $1}'; }
+
 # The interpreter that runs the suite is part of the qualification. It may be
 # pinned with NEXUSCREW_GATE_NODE; whatever its source it must be a real,
 # executable file, and at least major 22: measured on the reference machine,
 # the default interpreter (24.10.0) silently refused the vl root claim on ~96
 # tests that are green under the qualified 24.21.0 — same tree, same env. A
 # wrong interpreter turns the gate into a wall of environmental reds, so it is
-# refused here, before anything is started.
+# refused here, before anything is started. The version floor alone does not
+# identify a build, so the interpreter is also bound by full SHA256 to the
+# node pinned in lib/fleet/vl-claim-pin-manifest.json — the same pin the fleet
+# runtime enforces when it claims a vl root — and the comparison happens
+# before the interpreter is executed at all: the refusal names both hashes so
+# the operator can see which side moved.
 GATE_NODE=${NEXUSCREW_GATE_NODE:-$(command -v node)}
 [ -n "$GATE_NODE" ] || die 'node-interpreter' 'no node interpreter on PATH and NEXUSCREW_GATE_NODE is not set' 3
 if [ -n "${NEXUSCREW_GATE_NODE:-}" ]; then
   [ -f "$GATE_NODE" ] || die 'node-interpreter' "NEXUSCREW_GATE_NODE is not a regular file: $GATE_NODE" 3
   [ -x "$GATE_NODE" ] || die 'node-interpreter' "NEXUSCREW_GATE_NODE is not executable: $GATE_NODE" 3
 fi
+PIN_MANIFEST=lib/fleet/vl-claim-pin-manifest.json
+[ -f "$PIN_MANIFEST" ] || die 'node-interpreter' "claim pin manifest not found: $PIN_MANIFEST (the interpreter cannot be qualified)" 3
+PIN_NODE_SHA=$(awk '/"node"[[:space:]]*:/ { in_node = 1; next } in_node && /"sha256"[[:space:]]*:/ { sub(/.*"sha256"[[:space:]]*:[[:space:]]*"/, ""); sub(/"[[:space:]]*,?[[:space:]]*$/, ""); print; exit }' "$PIN_MANIFEST" | tr 'A-F' 'a-f')
+printf '%s' "$PIN_NODE_SHA" | grep -Eq '^[0-9a-f]{64}$' || die 'node-interpreter' "the pin manifest does not carry a full 64-hex node sha256: $PIN_MANIFEST" 3
+GATE_NODE_SHA=$(sha_of "$GATE_NODE")
+[ "$GATE_NODE_SHA" = "$PIN_NODE_SHA" ] || die 'node-interpreter' "node interpreter hash mismatch: pinned $PIN_NODE_SHA ($PIN_MANIFEST), actual $GATE_NODE_SHA ($GATE_NODE): a node that is not the pinned build silently refuses vl root claims and turns the gate into environmental reds" 3
 NODE_VERSION=$("$GATE_NODE" --version 2>/dev/null) || die 'node-interpreter' "cannot execute $GATE_NODE --version" 3
 NODE_MAJOR=${NODE_VERSION#v}
 NODE_MAJOR=${NODE_MAJOR%%[!0-9]*}
@@ -73,8 +86,6 @@ case "$NODE_MAJOR" in
   ''|*[!0-9]*) die 'node-version' "unparseable version reported by $GATE_NODE: ${NODE_VERSION:-<empty>}" 3 ;;
 esac
 [ "$NODE_MAJOR" -ge 22 ] || die 'node-version' "node major $NODE_MAJOR is below the gate floor of 22: $GATE_NODE ($NODE_VERSION)" 3
-
-sha_of() { sha256sum "$1" | awk '{print $1}'; }
 
 # Regular, executable files. A directory or a dangling symlink must stop the
 # gate here, not inside a test.
@@ -135,8 +146,9 @@ cleanup_root() { [ -n "$ROOT" ] && rm -rf "$ROOT"; [ -n "$TMPD" ] && rm -rf "$TM
 trap cleanup_root EXIT
 
 # GATE_NODE and NODE_VERSION were validated in section 1 (regular executable
-# file, major >= 22) before anything started; the manifest records them so a
-# run is always attributable to its interpreter.
+# file, major >= 22, SHA256 bound to the claim pin manifest) before anything
+# started; the manifest records them so a run is always attributable to its
+# interpreter.
 NC_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 NC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 NC_DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
@@ -148,7 +160,7 @@ bin_version() { probe_dir=$(mktemp -d /tmp/ncgate-ver-XXXX); mkdir -p "$probe_di
   printf 'gate command line: %s\n' "$0 $*"
   printf 'client capability document:\n%s\n' "$CLIENT_STATUS"
   printf 'nexuscrew commit: %s (%s, %s uncommitted path(s))\n' "$NC_COMMIT" "$NC_BRANCH" "$NC_DIRTY"
-  printf 'node: %s (%s)\n' "$GATE_NODE" "$NODE_VERSION"
+  printf 'node: %s (%s)\n  sha256: %s\n  pinned sha256: %s (%s)\n' "$GATE_NODE" "$NODE_VERSION" "$GATE_NODE_SHA" "$PIN_NODE_SHA" "$PIN_MANIFEST"
   printf 'cap: systemd-run --user --scope MemoryMax=2G MemorySwapMax=0 TasksMax=300\n'
   for pair in "new:$NEW_BIN:$NEW_SHA" "old:$OLD_BIN:$OLD_SHA" "status:$STATUS_BIN:$STATUS_SHA" "client:$CLIENT_BIN:$CLIENT_SHA"; do
     role=${pair%%:*}; rest=${pair#*:}; p=${rest%%:*}; s=${rest#*:}
