@@ -378,7 +378,15 @@ MANDATORY_OK=1
 [ -z "${VERIFY_TAP:-}" ] || die 'verify-only' 'verify-only replays the name verdict and never certifies a gate run' 6
 
 rm -f "$MANDATORY" "$ALLOWED_SKIP" "$LEFTOVER"
+# The pass path used to drop the EXIT trap with the run's private roots
+# still on disk (ROOT spared, TMPD/TMUXD forgotten): the isolated home and
+# tmp roots of a green gate are garbage like any other run's — the failure
+# paths already delete them via the trap, and the evidence lives in $LOG,
+# which is never under ROOT. Exact run paths, never a pattern.
+rm -rf "$ROOT" "$TMPD" "$TMUXD"
 ROOT=""
+TMPD=""
+TMUXD=""
 trap - EXIT
 [ "$KEEP_LOG_DIR" = "1" ] || note "artifacts kept in $LOG"
 printf 'release-gate: PASS — %s tests, %s pass, mandatory list complete, tolerated skips only (%s)\n' "$TOTAL" "$PASS_N" "$SKIP_N"
