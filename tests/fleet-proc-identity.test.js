@@ -64,15 +64,36 @@ test('identita: stat malformato non e\' una prova -> indeterminata', () => {
     leggiIdentitaProc(4242, { leggiStat: () => 'guasto senza campi' }).esito,
     'indeterminata',
   );
-  // starttime non numerico
+  // 28 zeri separati da spazio, nessuna parentesi: non e' nascita 0
+  const zeri = Array(28).fill('0').join(' ');
+  const daZeri = leggiIdentitaProc(4242, { leggiStat: () => zeri });
+  assert.equal(daZeri.esito, 'indeterminata');
+  assert.equal(daZeri.nascita, null);
+  // stat reale con il solo token starttime svuotato: Number('') non e' 0
+  const svuotato = '4242 (nome con spazio) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0  0 0\n';
+  const daVuoto = leggiIdentitaProc(4242, { leggiStat: () => svuotato });
+  assert.equal(daVuoto.esito, 'indeterminata');
+  assert.equal(daVuoto.nascita, null);
+  // starttime non numerico, decimale, esponente, segno, arrotondato
   const nonNumerico = '4242 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 non-un-numero 0 0\n';
   assert.equal(
     leggiIdentitaProc(4242, { leggiStat: () => nonNumerico }).esito,
     'indeterminata',
   );
+  for (const token of ['1.5', '1e2', '+10', '-1', '9007199254740993']) {
+    const riga = `4242 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 ${token} 0 0\n`;
+    const id = leggiIdentitaProc(4242, { leggiStat: () => riga });
+    assert.equal(id.esito, 'indeterminata', token);
+    assert.equal(id.nascita, null, token);
+  }
   // un valore non-stringa non e' uno stat
   assert.equal(
     leggiIdentitaProc(4242, { leggiStat: () => Buffer.from('x') }).esito,
     'indeterminata',
   );
+  // lo zero vero, come token, resta una nascita valida: e' il vuoto a essere rifiutato
+  const zeroVero = '4242 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n';
+  const daZero = leggiIdentitaProc(4242, { leggiStat: () => zeroVero });
+  assert.equal(daZero.esito, 'presente');
+  assert.equal(daZero.nascita, 0);
 });

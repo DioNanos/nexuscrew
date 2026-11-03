@@ -376,6 +376,38 @@ test('down senza canale con stat malformato del supervisore: indeterminata non e
   t, () => 'stat rotto senza parentesi ne\' campi', 'stat malformato',
 ));
 
+// I due payload del referto, sul processo ANCORA VIVO: uno stat di 28 zeri
+// senza parentesi, e uno stat reale col token starttime svuotato. Nessuno dei
+// due e' morte. Il record e la guardia restano, il processo resta quello
+// stesso, il lease non si revoca.
+const statVivoNonProva = async (t, faultStat, motivo) => {
+  const w = creaMondo(t, { faultStatSupervisore: faultStat });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  const pid = w.paneChild.pid;
+  const nascita = leggiStarttimeProc(pid);
+  assert.ok(Number.isFinite(nascita), motivo);
+  seminaRecord(w, { pid, nascita });
+  let revoke = 0;
+  const revoca = w.mgr.revokeControl.bind(w.mgr);
+  w.mgr.revokeControl = (id) => { revoke += 1; return revoca(id); };
+  await assert.rejects(() => w.runtime.down(CELLA), rifiutaIdentita);
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente', motivo);
+  assert.equal(letto.record.incerto, true, motivo);
+  assert.equal(revoke, 0, motivo);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session')).length, 0, motivo);
+  assert.doesNotThrow(() => { process.kill(pid, 0); }, motivo);
+  assert.equal(leggiStarttimeProc(pid), nascita, motivo);
+};
+
+test('down senza canale con 28 zeri senza parentesi: processo vivo, record e guardia restano, nessun revoke', (t) => statVivoNonProva(
+  t, () => Array(28).fill('0').join(' '), '28 zeri',
+));
+
+test('down senza canale con starttime svuotato: processo vivo, record e guardia restano, nessun revoke', (t) => statVivoNonProva(
+  t, () => '4242 (nome con spazio) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0  0 0\n', 'starttime vuoto',
+));
+
 // --- (10) positivo: pid riusato con nascita valida divergente ---------------
 
 test('down senza canale con pid riusato (nascita valida divergente): morte provata, resolved-dead', async (t) => {
