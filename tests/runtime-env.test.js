@@ -105,6 +105,26 @@ test('runtime env: tmuxClientEnv removes only TMUX and leaves the rest intact', 
   assert.equal(source.TMUX, '/tmp/other.sock,7,1', 'la sorgente non viene mutata');
 });
 
+test('runtime env: tmuxClientEnv drops a relative or empty TMUX_TMPDIR and keeps an absolute one', () => {
+  const { tmuxClientEnv, sharedTmuxSocketPath } = require('../lib/runtime/env.js');
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const base = { HOME: '/home/test', PATH: '/usr/bin', TMUX: '/tmp/trap.sock,9,0' };
+  const relativo = tmuxClientEnv({ ...base, TMUX_TMPDIR: 'run' });
+  assert.equal(relativo.TMUX, undefined);
+  assert.equal(relativo.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: 'run' }), `/tmp/tmux-${uid}/default`);
+  const vuoto = tmuxClientEnv({ ...base, TMUX_TMPDIR: '' });
+  assert.equal(vuoto.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: '' }), `/tmp/tmux-${uid}/default`);
+  const assente = tmuxClientEnv({ ...base });
+  assert.equal(assente.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base }), `/tmp/tmux-${uid}/default`);
+  const assoluto = tmuxClientEnv({ ...base, TMUX_TMPDIR: '/var/run/tmux' });
+  assert.equal(assoluto.TMUX_TMPDIR, '/var/run/tmux');
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: '/var/run/tmux' }), `/var/run/tmux/tmux-${uid}/default`);
+  assert.equal(base.TMUX, '/tmp/trap.sock,9,0', 'la sorgente non viene mutata');
+});
+
 // --- Tranche A: Termux LD_PRELOAD fail-closed filter ---
 
 test('basename allowlist accepts libtermux-exec.so and the ld-preload variant', () => {

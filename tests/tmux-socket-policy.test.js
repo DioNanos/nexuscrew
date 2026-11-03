@@ -149,3 +149,64 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
     assert.equal(mine, false, `server residuo sul root di prova: ${pid}`);
   }
 });
+
+test('socket policy: relative, empty, absent and absolute TMUX_TMPDIR use the resolver base', async () => {
+  assert.equal(fs.existsSync(TMUX_BIN), true);
+  const before = serverPids();
+  const root = fs.mkdtempSync(path.join('/tmp', 'nc-s6f-sock-'));
+  const home = path.join(root, 'home');
+  const abs = path.join(root, 'abs');
+  fs.mkdirSync(home, { mode: 0o700 });
+  fs.mkdirSync(abs, { mode: 0o700 });
+  const trap = path.join(root, 'trap.sock');
+  const label = `nc-s6f-${process.pid}`;
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const cases = [
+    { name: 'relative', extra: { TMUX_TMPDIR: 'run' }, base: '/tmp', kept: undefined },
+    { name: 'empty', extra: { TMUX_TMPDIR: '' }, base: '/tmp', kept: undefined },
+    { name: 'absent', extra: {}, base: '/tmp', kept: undefined },
+    { name: 'absolute', extra: { TMUX_TMPDIR: abs }, base: abs, kept: abs },
+  ];
+  const extras = [];
+  try {
+    for (const c of cases) {
+      const source = {
+        PATH: '/usr/bin:/bin',
+        HOME: home,
+        LC_ALL: 'C',
+        TMUX: `${trap},99999,0`,
+        ...c.extra,
+      };
+      const resolved = sharedTmuxSocketPath(source);
+      assert.equal(path.dirname(resolved), path.join(c.base, `tmux-${uid}`), c.name);
+      const clientEnv = tmuxClientEnv(source);
+      assert.equal(clientEnv.TMUX, undefined, c.name);
+      assert.equal(clientEnv.TMUX_TMPDIR, c.kept, c.name);
+      assert.equal(source.TMUX, `${trap},99999,0`, c.name);
+      const launched = await tmuxExec(TMUX_BIN, ['-L', label, 'has-session', '-t', '=nc-s6f-absent'], {
+        env: source, timeoutMs: 5000,
+      });
+      const attempted = path.join(c.base, `tmux-${uid}`, label);
+      assert.ok(
+        launched.stderr.includes(`error connecting to ${attempted}`),
+        `${c.name}: ${launched.stderr}`,
+      );
+      assert.equal(launched.stderr.includes(trap), false, c.name);
+      assert.equal(fs.existsSync(attempted), false, c.name);
+    }
+    assert.equal(fs.existsSync(trap), false);
+  } finally {
+    const mid = serverPids();
+    for (const pid of mid) {
+      if (before.includes(pid)) continue;
+      let mine = false;
+      try { mine = fs.readFileSync(`/proc/${pid}/environ`).includes(root); } catch (_) { mine = false; }
+      if (!mine) continue;
+      extras.push(pid);
+      try { process.kill(Number(pid), 'SIGTERM'); } catch (_) { /* gia' uscito */ }
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+  assert.deepEqual(extras, []);
+  assert.deepEqual(serverPids(), before);
+});
