@@ -565,7 +565,7 @@ test('down con has-session in timeout dopo l uscita provata e sessione ancora vi
 
 // --- (c) negativi del recupero NELLA STESSA down: una prova che manca ------
 
-test('recupero nella stessa down con /proc EACCES sul supervisore: indeterminata non e\' una prova, resta STOP_UNKNOWN e il record resta', async (t) => {
+test('recupero nella stessa down con /proc EACCES sul supervisore: indeterminata non e\' una prova, resta un esito non pulito e il record resta', async (t) => {
   const errEaces = () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; };
   const w = creaMondo(t, { faultIdentita: errEaces });
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
@@ -576,16 +576,45 @@ test('recupero nella stessa down con /proc EACCES sul supervisore: indeterminata
   // il supervisore esce provato e la sessione muore con lui, ma la lettura
   // dell'identita' e' guastata in EACCES: la prova (2) del recupero NON si
   // completa (indeterminata), l'esito resta non pulito e il record resta.
+  // Il censimento puo' vedere 0 o 1 residui: solo questi due esiti.
   await assert.rejects(
     () => w.runtime.down('CellaAtt'),
-    (e) => e.fleetCode === 'STOP_UNKNOWN' && /stop del gruppo stop-unknown/.test(e.message),
+    (e) => (e.fleetCode === 'STOP_UNKNOWN' || e.fleetCode === 'STOP_INCOMPLETE')
+      && /stop del gruppo stop-(unknown|incomplete)/.test(e.message),
   );
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
   assert.equal(sup.conta.stop, 1, 'il comando stop era partito una volta sola: nessun doppio stop');
+  await assert.rejects(() => w.runtime.up('CellaAtt'), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
 });
+
+// Censimento forzato, stessa lettura EACCES: 0 residui e' STOP_UNKNOWN, 1 e'
+// STOP_INCOMPLETE. Nient'altro e' ammesso, e in entrambi il record resta.
+const eaccesConCensimento = async (t, inGruppo, codice) => {
+  const errEaces = () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; };
+  const w = creaMondo(t, { faultIdentita: errEaces });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  w.mgr.osservaGruppo = () => ({ inGruppo, fuoriGruppo: 0, qualita: 'almeno' });
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === codice && new RegExp(`stop del gruppo ${codice === 'STOP_INCOMPLETE' ? 'stop-incomplete' : 'stop-unknown'}`).test(e.message),
+  );
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente');
+  assert.equal(letto.record.incerto, true);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  assert.equal(sup.conta.stop, 1);
+  await assert.rejects(() => w.runtime.up('CellaAtt'), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+};
+
+test('recupero EACCES con censimento 0: esattamente STOP_UNKNOWN, record incerto, up rifiutato', (t) => eaccesConCensimento(t, 0, 'STOP_UNKNOWN'));
+
+test('recupero EACCES con censimento 1: esattamente STOP_INCOMPLETE, record incerto, up rifiutato', (t) => eaccesConCensimento(t, 1, 'STOP_INCOMPLETE'));
 
 test('recupero nella stessa down con has-session CLI in timeout: il timeout non e\' una prova, resta STOP_UNKNOWN; il down successivo senza canale chiude resolved-dead', async (t) => {
   const w = creaMondo(t);
