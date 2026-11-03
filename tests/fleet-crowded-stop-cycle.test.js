@@ -307,9 +307,9 @@ test('stop con /proc affollato e nessuna prova di uscita: stop-unknown, record i
     'nessun comando di teardown senza esito dichiarabile');
 });
 
-// --- positivo: /proc affollato + attestazione -> chiuso, up successivo ok ---
+// --- positivo: /proc affollato, recupero a tre prove -> chiuso, up ok -------
 
-test('stop attestato con /proc affollato: down pulito, record rimosso, up successivo riesce', async (t) => {
+test('stop con /proc affollato: senza verdetto sul canale nessuna attestazione, il recupero a tre prove chiude e l up dopo riesce', async (t) => {
   const procRoot = montaProcAffollato(t);
   const pgrpHolder = { v: null };
   const w = creaMondo(t, {
@@ -321,9 +321,27 @@ test('stop attestato con /proc affollato: down pulito, record rimosso, up succes
   await w.runtime.up(CELLA);
   const sup = await attaccaSupervisore(t, w);
   assert.ok(sup);
-  const esito = await w.runtime.down(CELLA);
-  assert.equal(esito.ok, true);
-  assert.equal(esito.outcome, 'attested-exit');
+  // Primo down: il supervisore esce provato e la sessione muore con lui, ma
+  // il client muore con la sessione e la sua morte da sola NON attesta
+  // l'assenza (EOF, timeout e sostituzione sono indistinguibili); col
+  // censimento affollato non dichiarabile l'esito resta STOP_UNKNOWN.
+  await assert.rejects(
+    () => w.runtime.down(CELLA),
+    (e) => e.fleetCode === 'STOP_UNKNOWN',
+  );
+  const dopoRifiuto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(dopoRifiuto.stato, 'presente');
+  assert.equal(dopoRifiuto.record.incerto, true);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0,
+    'nessun comando di teardown senza esito dichiarabile');
+  // Recupero onesto: il down ripetuto, senza canale, chiude sulle TRE prove
+  // in lettura (sessione assente dal verdetto CLI, supervisore morto
+  // accertato in /proc reale, lease non live): il censimento affollato del
+  // nodo non serve.
+  sup.spegni();
+  const recupero = await w.runtime.down(CELLA);
+  assert.equal(recupero.ok, true);
+  assert.equal(recupero.outcome, 'resolved-dead');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
   // il lancio successivo non e' bloccato: nessun incerto residuo. Il marker
   // della morte programmata va tolto: il client -C del NUOVO lancio uscirebbe

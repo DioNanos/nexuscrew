@@ -3,10 +3,12 @@
 // canale di controllo e' assente (NC riavviato, canale perso): la chiusura
 // del record e' concessa SOLO alla congiunzione di tre prove in lettura —
 // sessione assente per nome sul server condiviso, supervisore morto E
-// provato (/proc assente oppure nascita divergente da quella REGISTRATA nel
-// record), lease non live. Manca una prova qualsiasi: il 409 di oggi resta,
-// record intatto, zero azioni. Nessun kill in nessun caso: la verifica e'
-// tutta in lettura.
+// provato con la lettura TERNARIA dell'identita' (assenza ACCERTATA via
+// ENOENT, oppure pid riusato con nascita valida divergente da quella
+// REGISTRATA nel record; EACCES/EIO/stat malformato sono «indeterminata» e
+// NON sono prove), lease non live. Manca una prova qualsiasi: il 409 di
+// oggi resta, record intatto, zero azioni. Nessun kill in nessun caso: la
+// verifica e' tutta in lettura.
 // Il «supervisore» e' un processo vero staccato del test (ucciso SOLO per
 // PID esatto); tmux e' finto e scriptato con has-session per NOME; il lease
 // e' reale dove serve e stubbato solo per la prova «lease live».
@@ -18,7 +20,7 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
-const { atomicWrite, loadDefinitions, leggiStarttimeProc } = require('../lib/fleet/definitions.js');
+const { atomicWrite, loadDefinitions, leggiStarttimeProc, leggiIdentitaProc } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const launchTarget = require('../lib/fleet/launch-target.js');
@@ -80,7 +82,7 @@ test('record: paneStarttime round-trip, assente nei record vecchi, preservato da
 
 // --- mondo: runtime + tmux finto per nome + supervisore vero ---------------
 
-function creaMondo(t, { leaseManager = null, omonima = false } = {}) {
+function creaMondo(t, { leaseManager = null, omonima = false, faultStatSupervisore = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-s3-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -188,6 +190,14 @@ process.exit(0);
     cells: [{ id: CELLA, tmuxSession: NOME, cwd, engine: 'eg', boot: false }],
   });
   const mgr = leaseManager || createLeaseManager({ home });
+  // faultStatSupervisore: seam che guasta la lettura dello stat SOLO per il
+  // pid del supervisore (EACCES, EIO, stat malformato) — gli altri pid si
+  // leggono per davvero. E' la controprova dell'audit: senza lettura ternaria
+  // un qualunque errore di lettura veniva promosso a morte provata.
+  const leggiIdentitaSeam = typeof faultStatSupervisore === 'function'
+    ? (pid) => leggiIdentitaProc(pid, pid === paneChild.pid
+      ? { leggiStat: faultStatSupervisore } : undefined)
+    : undefined;
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 4000 },
     home, defsPath, tmuxBin, readonly: () => false,
@@ -197,6 +207,7 @@ process.exit(0);
     },
     leaseManager: mgr,
     boot: loadDefinitions(defsPath),
+    ...(leggiIdentitaSeam ? { leggiIdentitaProc: leggiIdentitaSeam } : {}),
   });
   t.after(() => {
     try { runtime.shutdown(); } catch (_) {}
@@ -328,5 +339,58 @@ test('down senza canale con nascita divergente ma sessione presente: nessuno sbl
   await assert.rejects(() => w.runtime.down(CELLA), rifiutaIdentita);
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session')).length, 0);
+});
+
+// --- (7..9) negativi: lettura /proc guasta -> indeterminata, non una prova --
+
+const errConCodice = (code) => { const e = new Error(code); e.code = code; return e; };
+
+// In questi tre negativi il supervisore e' DAVVERO morto (senza fault il
+// recupero chiuderebbe con resolved-dead), e la lettura del suo stat e'
+// guastata nel modo indicato: la congiunzione delle tre prove NON si
+// completa e il record non si tocca. E' la controprova dell'audit: prima
+// della lettura ternaria un errore di lettura qualsiasi valeva «morto
+// provato» e il record veniva rimosso.
+const letturaGuastaNonProva = async (t, faultStat, motivo) => {
+  const w = creaMondo(t, { faultStatSupervisore: faultStat });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  const { pid, nascita } = await w.uccidiSupervisore();
+  seminaRecord(w, { pid, nascita });
+  await assert.rejects(() => w.runtime.down(CELLA), rifiutaIdentita);
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente', motivo);
+  assert.equal(letto.record.incerto, true, motivo);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session')).length, 0, motivo);
+};
+
+test('down senza canale con /proc EACCES sul supervisore: indeterminata non e\' una prova, resta 409', (t) => letturaGuastaNonProva(
+  t, () => { throw errConCodice('EACCES'); }, 'EACCES',
+));
+
+test('down senza canale con /proc EIO sul supervisore: indeterminata non e\' una prova, resta 409', (t) => letturaGuastaNonProva(
+  t, () => { throw errConCodice('EIO'); }, 'EIO',
+));
+
+test('down senza canale con stat malformato del supervisore: indeterminata non e\' una prova, resta 409', (t) => letturaGuastaNonProva(
+  t, () => 'stat rotto senza parentesi ne\' campi', 'stat malformato',
+));
+
+// --- (10) positivo: pid riusato con nascita valida divergente ---------------
+
+test('down senza canale con pid riusato (nascita valida divergente): morte provata, resolved-dead', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  // il numero e' occupato da UN ALTRO processo vivo (il test stesso): la
+  // lettura ternaria dice «presente» con nascita diversa da quella REGISTRATA
+  // — il supervisore di quel record non esiste piu', e' morte provata.
+  const pid = process.pid;
+  const nascitaAltro = leggiStarttimeProc(pid) + 1000;
+  seminaRecord(w, { pid, nascita: nascitaAltro });
+  const esito = await w.runtime.down(CELLA);
+  assert.equal(esito.ok, true);
+  assert.equal(esito.outcome, 'resolved-dead');
+  assert.equal(esito.killed, false);
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
   assert.equal(w.log().filter((r) => r.startsWith('kill-session')).length, 0);
 });

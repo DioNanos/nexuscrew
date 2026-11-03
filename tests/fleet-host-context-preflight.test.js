@@ -76,7 +76,10 @@ if (args[0] === '-C') {
       log('channel:' + riga);
       if (riga.startsWith('kill-session')) viva = false;
       if (riga.startsWith('has-session') && !viva) {
-        process.stdout.write('%begin 1 ' + n + ' 1\\n%error 1 ' + n + ' 1\\n');
+        // il verdetto VERO di tmux per la sessione inesistente: e' l'unico
+        // %error che attesta l'assenza del target sul canale di controllo
+        const id = riga.split(/\\s+/).pop();
+        process.stdout.write('%begin 1 ' + n + ' 1\\ncan\\'t find session: ' + id + '\\n%error 1 ' + n + ' 1\\n');
       } else {
         process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
       }

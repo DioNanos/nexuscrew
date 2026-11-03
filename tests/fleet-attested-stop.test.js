@@ -163,6 +163,7 @@ function creaMondo(t) {
   const markerMorte = path.join(root, 'sessione-morta');
   const markerMuoriHas = path.join(root, 'muori-al-primo-has');
   const markerMuoriKill = path.join(root, 'muori-su-kill');
+  const markerBloccaHas = path.join(root, 'blocca-has');
   // Il «supervisore» e' un processo vero, staccato: gruppo proprio, cosi' il
   // censimento post-uscita non conta mai il processo del test.
   const paneChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000);'],
@@ -179,6 +180,7 @@ const LOG = ${JSON.stringify(logPath)};
 const MORTE = ${JSON.stringify(markerMorte)};
 const MUORI_HAS = ${JSON.stringify(markerMuoriHas)};
 const MUORI_KILL = ${JSON.stringify(markerMuoriKill)};
+const BLOCCA_HAS = ${JSON.stringify(markerBloccaHas)};
 const PANE_PID = ${paneChild.pid};
 const leggi = () => { try { return JSON.parse(fs.readFileSync(STATO, 'utf8')); } catch (_) { return []; } };
 const scrivi = (l) => fs.writeFileSync(STATO, JSON.stringify(l));
@@ -210,6 +212,8 @@ if (args[0] === '-C') {
       // la sessione e' morta: il client attached esce senza rispondere
       if (fs.existsSync(MORTE)) process.exit(0);
       if (riga.startsWith('has-session') && fs.existsSync(MUORI_HAS)) process.exit(0);
+      // silenzio sul has-session: il client resta vivo e non risponde (timeout)
+      if (riga.startsWith('has-session') && fs.existsSync(BLOCCA_HAS)) continue;
       if (riga.startsWith('kill-session')) {
         nota(riga.split(/\\s+/).pop() ? 'kill-session:' + riga.split(/\\s+/).pop() : 'kill-session');
         scrivi(leggi().filter((x) => x.id !== ${JSON.stringify(SESSIONE)}));
@@ -287,9 +291,9 @@ process.exit(0);
     payloadLancio: () => payloadLancio,
     log: () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean),
     sessioni: () => JSON.parse(fs.readFileSync(statoPath, 'utf8')),
-    marker: { morte: markerMorte, muoriHas: markerMuoriHas, muoriKill: markerMuoriKill },
+    marker: { morte: markerMorte, muoriHas: markerMuoriHas, muoriKill: markerMuoriKill, bloccaHas: markerBloccaHas },
     pulisciMarker: () => {
-      for (const p of [markerMorte, markerMuoriHas, markerMuoriKill]) {
+      for (const p of [markerMorte, markerMuoriHas, markerMuoriKill, markerBloccaHas]) {
         try { fs.unlinkSync(p); } catch (_) {}
       }
     },
@@ -299,7 +303,7 @@ process.exit(0);
 // Supervisore reale lato cella: lease client vero su un socket vero,
 // coordinatore vero che esegue lo stop del gruppo. La morte programmata
 // («la sessione muore col gruppo») e' a cura del test, dentro killGruppo.
-function attaccaSupervisore(t, w, { uccidiSessione = true } = {}) {
+function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita = false } = {}) {
   const { control } = w.payloadLancio() || {};
   assert.ok(control && control.launchId && control.token, 'payload del lancio senza canale di controllo');
   const pairPath = path.join(w.root, `pair-${hexId()}.sock`);
@@ -321,6 +325,12 @@ function attaccaSupervisore(t, w, { uccidiSessione = true } = {}) {
               if (sig !== 'SIGTERM' || morto) return;
               morto = true;
               try { process.kill(w.paneChild.pid, 'SIGKILL'); } catch (_) {}
+              if (bloccaHasDopoUscita) {
+                // il canale resta vivo ma smette di rispondere a has-session
+                // dopo l'uscita provata del supervisore: il comando va in
+                // timeout e la sua mancata risposta NON puo' valere assenza
+                try { fs.writeFileSync(w.marker.bloccaHas, '1'); } catch (_) {}
+              }
               if (uccidiSessione) {
                 // la sessione muore col gruppo: il client -C attached esce
                 fs.writeFileSync(path.join(w.root, 'sessions.json'), '[]');
@@ -361,9 +371,9 @@ function attaccaSupervisore(t, w, { uccidiSessione = true } = {}) {
   });
 }
 
-// --- (a) positivo: /proc affollato, canale morto con la sessione ------------
+// --- (a) /proc affollato: la morte del client NON attesta, il recupero chiude
 
-test('down su /proc affollato: uscita provata + canale morto con la sessione = attested-exit, e l up dopo riesce', async (t) => {
+test('down su /proc affollato: uscita provata + client morto con la sessione NON attesta; il recupero a tre prove chiude e l up dopo riesce', async (t) => {
   const w = creaMondo(t);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   assert.equal(gruppo.leggiPgrp(w.paneChild.pid), w.paneChild.pid, 'il supervisore finto deve stare in un gruppo proprio');
@@ -371,12 +381,27 @@ test('down su /proc affollato: uscita provata + canale morto con la sessione = a
   const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
   assert.ok(sup);
   affollaProc(t);
-  const esito = await w.runtime.down('CellaAtt');
-  assert.equal(esito.ok, true);
-  assert.equal(esito.outcome, 'attested-exit');
-  assert.equal(esito.killed, true);
-  assert.equal(esito.host, 'not-vl');
+  // Primo down: il supervisore esce provato e la sessione muore con lui, MA
+  // il client muore con la sessione e la sua morte da sola non attesta
+  // l'assenza (EOF, timeout e sostituzione sono indistinguibili); col
+  // censimento affollato non dichiarabile l'esito resta STOP_UNKNOWN.
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN' && /stop del gruppo stop-unknown/.test(e.message),
+  );
+  const dopoRifiuto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(dopoRifiuto.stato, 'presente');
+  assert.equal(dopoRifiuto.record.incerto, true);
   assert.equal(w.sessioni().length, 0);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  // Il down ripetuto, senza canale, chiude sulle TRE PROVE in lettura:
+  // sessione assente provata dal verdetto CLI, supervisore morto accertato
+  // (ENOENT del numero), lease non live.
+  sup.spegni();
+  const recupero = await w.runtime.down('CellaAtt');
+  assert.equal(recupero.ok, true);
+  assert.equal(recupero.outcome, 'resolved-dead');
+  assert.equal(recupero.killed, false);
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
   // il lancio successivo non e' bloccato: nessun incerto residuo
@@ -427,9 +452,9 @@ test('down con canale morto alla verifica e nessuna prova possibile: resta STOP_
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
 });
 
-// --- (a) positivo, secondo ramo: canale morto ALLA verifica, gruppo vivo --
+// --- (b) negativo: client morto PRIMA della verifica non attesta -----------
 
-test('down con canale morto alla verifica ma gruppo attestabile: attested-exit e l up dopo riesce', async (t) => {
+test('down con client morto alla verifica (uscita provata, censimento non dichiarabile): la morte del client non attesta, STOP_UNKNOWN poi recupero', async (t) => {
   const w = creaMondo(t);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   fs.writeFileSync(w.marker.muoriHas, '1');
@@ -437,13 +462,52 @@ test('down con canale morto alla verifica ma gruppo attestabile: attested-exit e
   const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
   assert.ok(sup);
   affollaProc(t);
-  const esito = await w.runtime.down('CellaAtt');
-  assert.equal(esito.ok, true);
-  assert.equal(esito.outcome, 'attested-exit');
-  assert.equal(esito.killed, false);
+  // Il client muore alla prima verifica della sessione; il gruppo esce
+  // provato nel valutaGruppo, ma senza verdetto di has-session l'assenza non
+  // e' attestabile e la morte del client non basta: STOP_UNKNOWN.
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN' && /durante la verifica/.test(e.message),
+  );
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
   assert.equal(w.sessioni().length, 0);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  // recupero onesto: tre prove in lettura, senza canale
+  sup.spegni();
+  const recupero = await w.runtime.down('CellaAtt');
+  assert.equal(recupero.ok, true);
+  assert.equal(recupero.outcome, 'resolved-dead');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
   w.pulisciMarker();
   const secondo = await w.runtime.up('CellaAtt');
   assert.equal(secondo.ok, true);
+});
+
+// --- (b) negativo: timeout del has-session dopo l'uscita, sessione viva -----
+
+test('down con has-session in timeout dopo l uscita provata e sessione ancora viva: nessun esito pulito, resta STOP_UNKNOWN', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  // il supervisore esce provato ma la sessione NON muore con lui, e il
+  // canale smette di rispondere a has-session: il timeout non e' l'assenza
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: false, bloccaHasDopoUscita: true });
+  assert.ok(sup);
+  affollaProc(t);
+  // Il has-session sul canale tace: il suo timeout consuma il budget e il
+  // censimento di fallback NON dichiara la chiusura. Resta un rifiuto della
+  // famiglia dello stop non dimostrato — mai un esito pulito senza prova.
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => (e.fleetCode === 'STOP_UNKNOWN' || e.fleetCode === 'STOP_INCOMPLETE')
+      && /stop del gruppo stop-(unknown|incomplete)/.test(e.message),
+  );
+  const record = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(record.stato, 'presente');
+  assert.equal(record.record.incerto, true);
+  // la sessione e' ANCORA VIVA: nessuna chiusura, nessun kill
+  assert.equal(w.sessioni().length, 1);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  // l'up resta bloccato dall'incertezza: nessuno sblocco cieco
+  await assert.rejects(() => w.runtime.up('CellaAtt'), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
 });

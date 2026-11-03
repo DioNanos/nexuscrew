@@ -99,7 +99,11 @@ if (cmd(args) === 'has-session') {
   const bersaglio = args[args.length - 1];
   const nudo = String(bersaglio || '').replace(/^=/, '');
   nota('has-session:' + bersaglio);
-  process.exit(leggi().some((x) => x.nome === nudo || x.id === nudo) ? 0 : 1);
+  if (leggi().some((x) => x.nome === nudo || x.id === nudo)) process.exit(0);
+  // il verdetto VERO di tmux per la sessione inesistente: e' l'unico %error
+  // che attesta l'assenza del target sul canale di controllo
+  process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
+  process.exit(1);
 }
 if (cmd(args) === 'display-message') {
   const iF = args.indexOf('-F');
