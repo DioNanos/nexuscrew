@@ -19,10 +19,13 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 
 const { ensureVlCellDirs, writeVlCellCatalog } = require('../lib/fleet/managed.js');
 const { classifyPane } = require('../lib/fleet/prompt-delivery.js');
+// Percorso assoluto via __dirname: il modulo resta caricabile anche quando
+// questo file viene eseguito in un contesto con require reindirizzato.
+const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
 const REAL_BIN = (process.env.NEXUSCREW_VL_REAL_BIN || '').trim();
 const TMUX = (process.env.NEXUSCREW_TMUX_BIN || '/usr/bin/tmux').trim();
@@ -93,14 +96,15 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   const started = [];
   const sessions = [];
 
-  // A tmux server of our own, reached ONLY through an explicit `-S` socket
-  // inside this scratch root, with a HOME/XDG of its own. The default server
-  // (the operator's, i.e. the live fleet one) must stay unreachable even when
-  // this file runs outside the isolated suite runner: no inherited TMUX
-  // variable, no TMUX_TMPDIR reliance, no shared socket by accident. The
-  // socket path stays short: it lives beside the per-cell roots and must
-  // fit in SUN_PATH_MAX like they do.
-  const tmuxSock = path.join(root, 'tmux.sock');
+  // A tmux server of our own, in the SHARED-SERVER form of production: a
+  // private TMUX_TMPDIR makes the «default» socket <root>/tmux-tmp/tmux-<uid>/
+  // default a real default socket of this harness alone, reached WITHOUT -S
+  // exactly like the fleet surfaces do. The live fleet server (its own
+  // TMUX_TMPDIR) stays unreachable even when this file runs outside the
+  // isolated suite runner: no inherited TMUX variable, no /tmp reliance, no
+  // shared socket by accident. The path stays short: it lives beside the
+  // per-cell roots and must fit in SUN_PATH_MAX like they do.
+  const tmuxSock = path.join(root, 'tmux-tmp', `tmux-${process.getuid()}`, 'default');
   const tmuxHome = path.join(root, 'tmux-home');
   fs.mkdirSync(tmuxHome, { recursive: true, mode: 0o700 });
   const tmuxEnv = {
@@ -120,9 +124,9 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   // (unusable_xdg_runtime_dir): create it, 0700 like every other world dir.
   fs.mkdirSync(tmuxEnv.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
   // Every tmux invocation of this test goes through here: server and clients
-  // share the private socket, so the panes and the cleanup below can never
-  // touch a session, or a server, that is not ours.
-  const tmux = (args) => sh(TMUX, ['-S', tmuxSock, ...args], tmuxEnv);
+  // share the harness default socket under TMUX_TMPDIR, so the panes and the
+  // cleanup below can never touch a session, or a server, that is not ours.
+  const tmux = (args) => sh(TMUX, args, tmuxEnv);
 
   // The mock provider: it records every request (with the model it carries)
   // and answers with a distinguishable text. Nothing leaves the loopback.
@@ -226,9 +230,26 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
 
   t.after(() => {
     for (const name of sessions) { try { tmux(['kill-session', '-t', name]); } catch (_) { /* gone */ } }
-    // The private server dies with the test: nobody else can be attached to
-    // this socket, it was created by this run alone.
+    // The harness server dies with the test, closed for the exact PID read
+    // from its own default socket: nobody else can be attached to this
+    // socket, it was created by this run alone, and the exit is verified so
+    // no orphan server outlives the file.
+    let serverPid = null;
+    try {
+      const pidOut = spawnSync(TMUX, ['-S', tmuxSock, 'display-message', '-p', '#{pid}'], { encoding: 'utf8', timeout: 3000, env: tmuxEnv });
+      const n = Number(String(pidOut.stdout || '').trim());
+      if (Number.isInteger(n) && n > 0) serverPid = n;
+    } catch (_) { /* no server */ }
     try { tmux(['kill-server']); } catch (_) { /* already gone */ }
+    if (serverPid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try { process.kill(serverPid, 0); } catch (e) { if (e && e.code === 'ESRCH') break; }
+        spawnSync('sleep', ['0.05']);
+      }
+      try { process.kill(serverPid, 'SIGKILL'); } catch (_) { /* already gone */ }
+      verificaUscitaServer(spawnSync, serverPid);
+    }
     for (const dirs of [A, B]) {
       try { sh(REAL_BIN, ['shutdown', '--server-root', rootOf(dirs)], cellEnv(dirs)); } catch (_) { /* already stopped */ }
     }
