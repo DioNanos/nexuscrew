@@ -82,7 +82,7 @@ test('record: paneStarttime round-trip, assente nei record vecchi, preservato da
 
 // --- mondo: runtime + tmux finto per nome + supervisore vero ---------------
 
-function creaMondo(t, { leaseManager = null, omonima = false, faultStatSupervisore = null } = {}) {
+function creaMondo(t, { leaseManager = null, omonima = false, faultStatSupervisore = null, cfgExtra = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-s3-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -199,7 +199,10 @@ process.exit(0);
       ? { leggiStat: faultStatSupervisore } : undefined)
     : undefined;
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 4000 },
+    cfg: {
+      launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 4000,
+      ...(cfgExtra || {}),
+    },
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'n'.repeat(64) }),
@@ -409,6 +412,35 @@ test('down senza canale con starttime svuotato: processo vivo, record e guardia 
 ));
 
 // --- (10) positivo: pid riusato con nascita valida divergente ---------------
+
+test('down senza canale oltre la deadline: il record resta, nessun revoke', async (t) => {
+  const tempo = { t: 0 };
+  const w = creaMondo(t, {
+    cfgExtra: { monotonicNow: () => tempo.t, groupStopBudgetMs: 4000 },
+    faultStatSupervisore: () => {
+      tempo.t = 4500;
+      const e = new Error('ENOENT');
+      e.code = 'ENOENT';
+      throw e;
+    },
+  });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  const { pid, nascita } = await w.uccidiSupervisore();
+  seminaRecord(w, { pid, nascita });
+  let revoke = 0;
+  const revoca = w.mgr.revokeControl.bind(w.mgr);
+  w.mgr.revokeControl = (id) => { revoke += 1; return revoca(id); };
+  await assert.rejects(
+    () => w.runtime.down(CELLA),
+    (e) => e.status === 409 && e.fleetCode === 'IDENTITY_UNVERIFIED' && /budget scaduto/.test(e.message),
+  );
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente');
+  assert.equal(letto.record.incerto, true);
+  assert.equal(revoke, 0);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session')).length, 0);
+  assert.equal(tempo.t, 4500);
+});
 
 test('down senza canale con pid riusato (nascita valida divergente): morte provata, resolved-dead', async (t) => {
   const w = creaMondo(t);

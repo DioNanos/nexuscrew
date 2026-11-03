@@ -150,7 +150,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -165,6 +165,7 @@ function creaMondo(t, { faultIdentita = null } = {}) {
   const markerMuoriKill = path.join(root, 'muori-su-kill');
   const markerBloccaHas = path.join(root, 'blocca-has');
   const markerBloccaHasCli = path.join(root, 'blocca-has-cli');
+  const markerRitardaHasCli = path.join(root, 'ritarda-has-cli');
   // Il «supervisore» e' un processo vero, staccato: gruppo proprio, cosi' il
   // censimento post-uscita non conta mai il processo del test.
   const paneChild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 60000);'],
@@ -183,6 +184,7 @@ const MUORI_HAS = ${JSON.stringify(markerMuoriHas)};
 const MUORI_KILL = ${JSON.stringify(markerMuoriKill)};
 const BLOCCA_HAS = ${JSON.stringify(markerBloccaHas)};
 const BLOCCA_HAS_CLI = ${JSON.stringify(markerBloccaHasCli)};
+const RITARDA_HAS_CLI = ${JSON.stringify(markerRitardaHasCli)};
 const PANE_PID = ${paneChild.pid};
 const leggi = () => { try { return JSON.parse(fs.readFileSync(STATO, 'utf8')); } catch (_) { return []; } };
 const scrivi = (l) => fs.writeFileSync(STATO, JSON.stringify(l));
@@ -254,6 +256,15 @@ if (cmd(args) === 'has-session') {
   // mai e il timeout del chiamante lo uccide. La delega del client -C (con
   // -S) resta libera, cosi' il down arriva fino alla prova del recupero.
   if (fs.existsSync(BLOCCA_HAS_CLI) && !argv.includes('-S')) { setInterval(() => {}, 1 << 30); return; }
+  if (fs.existsSync(RITARDA_HAS_CLI) && !argv.includes('-S')) {
+    const ms = Number(fs.readFileSync(RITARDA_HAS_CLI, 'utf8')) || 0;
+    const nome = bersaglio.startsWith('=') ? bersaglio.slice(1) : bersaglio;
+    setTimeout(() => {
+      process.stderr.write('can\\'t find session: ' + nome + '\\n');
+      process.exit(1);
+    }, ms);
+    return;
+  }
   if (leggi().some((x) => x.id === bersaglio)) process.exit(0);
   process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
   process.exit(1);
@@ -286,7 +297,10 @@ process.exit(0);
       ? { leggiStat: faultIdentita } : undefined)
     : null;
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 4000 },
+    cfg: {
+      launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 4000,
+      ...(cfgExtra || {}),
+    },
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async (req) => { payloadLancio = req; return { socketPath: path.join(root, 'broker.sock'), nonce: 'n'.repeat(64) }; },
@@ -307,9 +321,13 @@ process.exit(0);
     payloadLancio: () => payloadLancio,
     log: () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean),
     sessioni: () => JSON.parse(fs.readFileSync(statoPath, 'utf8')),
-    marker: { morte: markerMorte, muoriHas: markerMuoriHas, muoriKill: markerMuoriKill, bloccaHas: markerBloccaHas, bloccaHasCli: markerBloccaHasCli },
+    marker: {
+      morte: markerMorte, muoriHas: markerMuoriHas, muoriKill: markerMuoriKill,
+      bloccaHas: markerBloccaHas, bloccaHasCli: markerBloccaHasCli,
+      ritardaHasCli: markerRitardaHasCli,
+    },
     pulisciMarker: () => {
-      for (const p of [markerMorte, markerMuoriHas, markerMuoriKill, markerBloccaHas, markerBloccaHasCli]) {
+      for (const p of [markerMorte, markerMuoriHas, markerMuoriKill, markerBloccaHas, markerBloccaHasCli, markerRitardaHasCli]) {
         try { fs.unlinkSync(p); } catch (_) {}
       }
     },
@@ -319,7 +337,7 @@ process.exit(0);
 // Supervisore reale lato cella: lease client vero su un socket vero,
 // coordinatore vero che esegue lo stop del gruppo. La morte programmata
 // («la sessione muore col gruppo») e' a cura del test, dentro killGruppo.
-function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita = false, tieniLease = false } = {}) {
+function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita = false, tieniLease = false, ritardoUscitaMs = 0 } = {}) {
   const { control } = w.payloadLancio() || {};
   assert.ok(control && control.launchId && control.token, 'payload del lancio senza canale di controllo');
   const pairPath = path.join(w.root, `pair-${hexId()}.sock`);
@@ -340,22 +358,31 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
             killGruppo: (sig) => {
               if (sig !== 'SIGTERM' || morto) return;
               morto = true;
-              try { process.kill(w.paneChild.pid, 'SIGKILL'); } catch (_) {}
-              if (bloccaHasDopoUscita) {
-                // il canale resta vivo ma smette di rispondere a has-session
-                // dopo l'uscita provata del supervisore: il comando va in
-                // timeout e la sua mancata risposta NON puo' valere assenza
-                try { fs.writeFileSync(w.marker.bloccaHas, '1'); } catch (_) {}
-              }
-              if (uccidiSessione) {
-                // la sessione muore col gruppo: il client -C attached esce
-                fs.writeFileSync(path.join(w.root, 'sessions.json'), '[]');
-                try { fs.writeFileSync(w.marker.morte, '1'); } catch (_) {}
-              }
+              const chiudi = () => {
+                try { process.kill(w.paneChild.pid, 'SIGKILL'); } catch (_) {}
+                if (bloccaHasDopoUscita) {
+                  // il canale resta vivo ma smette di rispondere a has-session
+                  // dopo l'uscita provata del supervisore: il comando va in
+                  // timeout e la sua mancata risposta NON puo' valere assenza
+                  try { fs.writeFileSync(w.marker.bloccaHas, '1'); } catch (_) {}
+                }
+                if (uccidiSessione) {
+                  // la sessione muore col gruppo: il client -C attached esce
+                  fs.writeFileSync(path.join(w.root, 'sessions.json'), '[]');
+                  try { fs.writeFileSync(w.marker.morte, '1'); } catch (_) {}
+                }
+              };
+              if (ritardoUscitaMs > 0) { setTimeout(chiudi, ritardoUscitaMs); return; }
+              chiudi();
             },
-            osserva: () => (morto
-              ? { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }
-              : { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' }),
+            osserva: () => {
+              if (!morto) return { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' };
+              if (ritardoUscitaMs > 0) {
+                try { process.kill(w.paneChild.pid, 0); return { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti' }; }
+                catch (_) { return { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' }; }
+              }
+              return { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' };
+            },
             invia: (frame) => leaseCtl.sendControl(frame),
             svuota: async () => {
               await leaseCtl.svuota();
@@ -612,4 +639,80 @@ test('recupero nella stessa down con lease ancora live: la prova (3) manca, rest
   assert.equal(w.sessioni().length, 0);
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
   await assert.rejects(() => w.runtime.up('CellaAtt'), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+});
+
+// --- deadline unica: il recupero non chiude dopo la scadenza ---------------
+
+test('recupero nella stessa down entro il budget con clock fermo: attested-recovery', async (t) => {
+  const w = creaMondo(t, { cfgExtra: { monotonicNow: () => 0, groupStopBudgetMs: 4000 } });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  const recupero = await w.runtime.down('CellaAtt');
+  assert.equal(recupero.ok, true);
+  assert.equal(recupero.outcome, 'attested-recovery');
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  assert.equal(sup.conta.stop, 1);
+});
+
+test('recupero nella stessa down: il terzo riscontro a 4500 non chiude, record e guardia restano', async (t) => {
+  const tempo = { t: 0, armato: false };
+  const w = creaMondo(t, {
+    cfgExtra: { monotonicNow: () => tempo.t, groupStopBudgetMs: 4000 },
+    faultIdentita: () => {
+      tempo.armato = true;
+      const e = new Error('ENOENT');
+      e.code = 'ENOENT';
+      throw e;
+    },
+  });
+  const stato = w.mgr.status.bind(w.mgr);
+  w.mgr.status = (id) => {
+    if (tempo.armato) tempo.t = 4500;
+    return stato(id);
+  };
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  let revoke = 0;
+  const revoca = w.mgr.revokeControl.bind(w.mgr);
+  w.mgr.revokeControl = (id) => { revoke += 1; return revoca(id); };
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN',
+  );
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente');
+  assert.equal(letto.record.incerto, true);
+  assert.equal(revoke, 0);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  assert.equal(sup.conta.stop, 1);
+  assert.equal(tempo.t, 4500);
+});
+
+test('recupero nella stessa down: uscita a 1100 ms e lettura a 1500 ms oltre il budget 2000 non chiudono', async (t) => {
+  const w = creaMondo(t, { cfgExtra: { groupStopBudgetMs: 2000 } });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  fs.writeFileSync(w.marker.ritardaHasCli, '1500');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true, ritardoUscitaMs: 1100 });
+  assert.ok(sup);
+  affollaProc(t);
+  const t0 = Date.now();
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN',
+  );
+  const dt = Date.now() - t0;
+  assert.ok(dt >= 2000, `il down deve sforare il budget, misurato ${dt} ms`);
+  const letto = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(letto.stato, 'presente');
+  assert.equal(letto.record.incerto, true);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
+  assert.equal(sup.conta.stop, 1);
 });
