@@ -115,7 +115,9 @@ if (cmd === 'display-message') {
 if (cmd === 'has-session') {
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
   const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
-  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
+  if (mia && vive().includes(${JSON.stringify(SESSIONE)})) process.exit(0);
+  process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
+  process.exit(1);
 }
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 process.exit(0);

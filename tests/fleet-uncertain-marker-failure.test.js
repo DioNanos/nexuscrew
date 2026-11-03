@@ -80,7 +80,11 @@ if (args[0] === 'new-session') {
 }
 if (args[0] === 'display-message') { process.stdout.write('0\\t0\\t%6\\n'); process.exit(0); }
 if (args[0] === 'kill-session') { fs.appendFileSync(KILL, 'fresh\\n'); process.exit(0); }
-if (args[0] === 'has-session') process.exit(viva() ? 0 : 1);
+if (args[0] === 'has-session') {
+  if (viva()) process.exit(0);
+  process.stderr.write('can\\'t find session: ' + (args[args.length - 1] || '') + '\\n');
+  process.exit(1);
+}
 process.exit(0);
 `;
   fs.writeFileSync(tmuxBin, script, { mode: 0o755 });
