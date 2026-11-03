@@ -62,7 +62,9 @@ test('un lancio vive sul server condiviso: has-session, paste e listing senza -S
   const prevLcCtype = process.env.LC_CTYPE;
   process.env.TMUX_TMPDIR = tmuxd;
   process.env.LC_CTYPE = 'C.UTF-8';
-  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, PATH: '/usr/bin:/bin', HOME: home });
+  // Nessun selettore ereditato: senza -S un client con TMUX ambientale
+  // seguirebbe quel socket invece del default sotto TMUX_TMPDIR.
+  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '', TMUX_PANE: '', PATH: '/usr/bin:/bin', HOME: home });
 
   const defs = {
     engines: [{ id: 'e', command: '/bin/cat', args: [] }],
@@ -205,7 +207,9 @@ test('la protezione che fallisce al confine di creazione rifiuta il lancio senza
   const sharedSocketDir = path.join(tmuxd, `tmux-${process.getuid()}`);
   const prevTmuxTmpdir = process.env.TMUX_TMPDIR;
   process.env.TMUX_TMPDIR = tmuxd;
-  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, PATH: '/usr/bin:/bin', HOME: home });
+  // Nessun selettore ereditato: senza -S un client con TMUX ambientale
+  // seguirebbe quel socket invece del default sotto TMUX_TMPDIR.
+  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '', TMUX_PANE: '', PATH: '/usr/bin:/bin', HOME: home });
 
   const defs = {
     engines: [{ id: 'e', command: '/bin/cat', args: [] }],

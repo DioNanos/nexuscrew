@@ -98,8 +98,13 @@ test('ciclo operator-stop -> up sul condiviso: POST /down chiude, N cicli, un so
   process.env.LC_CTYPE = 'C.UTF-8';
   const tmuxHome = path.join(tmuxd, 'conf');
   fs.mkdirSync(tmuxHome, { mode: 0o700 });
+  // I client tmux dell'harness non devono portare NESSUN selettore ereditato:
+  // senza -S un client con TMUX ambientale seguirebbe quel socket invece del
+  // default sotto TMUX_TMPDIR (run standalone da dentro tmux incluso). Vuoto
+  // esplicito, come fa la fabbrica dei server di test.
   const tmuxEnv = () => ({
-    ...process.env, TMUX_TMPDIR: tmuxd, PATH: '/usr/bin:/bin',
+    ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '', TMUX_PANE: '',
+    PATH: '/usr/bin:/bin',
     HOME: tmuxHome, LC_CTYPE: 'C.UTF-8',
   });
 

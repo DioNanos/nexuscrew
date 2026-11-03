@@ -42,7 +42,9 @@ function createHarness(options = {}) {
   const sharedSocket = path.join(tmuxd, `tmux-${process.getuid()}`, 'default');
   const prevTmuxTmpdir = process.env.TMUX_TMPDIR;
   process.env.TMUX_TMPDIR = tmuxd;
-  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, PATH: '/usr/bin:/bin', HOME: home });
+  // Nessun selettore ereditato: senza -S un client con TMUX ambientale
+  // seguirebbe quel socket invece del default sotto TMUX_TMPDIR.
+  const tmuxEnv = () => ({ ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '', TMUX_PANE: '', PATH: '/usr/bin:/bin', HOME: home });
 
   const defs = {
     engines: [{ id: 'e', command: '/bin/sleep', args: ['600'] }],
