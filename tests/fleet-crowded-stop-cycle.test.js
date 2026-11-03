@@ -7,9 +7,10 @@
 //   * negativo (canary in vitro): senza prova di uscita del supervisore
 //     l'esito resta stop-unknown, il record resta incerto e l'up successivo
 //     e' rifiutato;
-//   * positivo: con l'attestazione (uscita provata + canale morto DOPO la
-//     prova, la sessione muore col gruppo) il down chiude pulito e l'up
-//     successivo riesce nonostante il /proc affollato.
+//   * positivo: con l'uscita del supervisore PROVATA (canale morto con la
+//     sessione, nessun verdetto) il recupero a tre prove chiude NELLA
+//     STESSA down (attested-recovery) e l'up successivo riesce nonostante
+//     il /proc affollato.
 // Il «supervisore» e' un processo vero staccato del test (ucciso SOLO per PID
 // esatto); tmux e' finto e scriptato: la sessione «muore» col gruppo, come in
 // produzione dove il client -C attached esce con la sessione che contiene.
@@ -307,9 +308,9 @@ test('stop con /proc affollato e nessuna prova di uscita: stop-unknown, record i
     'nessun comando di teardown senza esito dichiarabile');
 });
 
-// --- positivo: /proc affollato, recupero a tre prove -> chiuso, up ok -------
+// --- positivo: /proc affollato, recupero NELLA STESSA down -> chiuso, up ok -
 
-test('stop con /proc affollato: senza verdetto sul canale nessuna attestazione, il recupero a tre prove chiude e l up dopo riesce', async (t) => {
+test('stop con /proc affollato: senza verdetto sul canale nessuna attestazione, ma l uscita provata apre il recupero a tre prove NELLA STESSA down (attested-recovery) e l up dopo riesce', async (t) => {
   const procRoot = montaProcAffollato(t);
   const pgrpHolder = { v: null };
   const w = creaMondo(t, {
@@ -323,26 +324,18 @@ test('stop con /proc affollato: senza verdetto sul canale nessuna attestazione, 
   assert.ok(sup);
   // Primo down: il supervisore esce provato e la sessione muore con lui, ma
   // il client muore con la sessione e la sua morte da sola NON attesta
-  // l'assenza (EOF, timeout e sostituzione sono indistinguibili); col
-  // censimento affollato non dichiarabile l'esito resta STOP_UNKNOWN.
-  await assert.rejects(
-    () => w.runtime.down(CELLA),
-    (e) => e.fleetCode === 'STOP_UNKNOWN',
-  );
-  const dopoRifiuto = launchTarget.leggi(w.filesRoot, NOME);
-  assert.equal(dopoRifiuto.stato, 'presente');
-  assert.equal(dopoRifiuto.record.incerto, true);
-  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0,
-    'nessun comando di teardown senza esito dichiarabile');
-  // Recupero onesto: il down ripetuto, senza canale, chiude sulle TRE prove
-  // in lettura (sessione assente dal verdetto CLI, supervisore morto
-  // accertato in /proc reale, lease non live): il censimento affollato del
-  // nodo non serve.
-  sup.spegni();
+  // l'assenza (EOF, timeout e sostituzione sono indistinguibili) e il
+  // censimento affollato non dichiara. L'uscita PROVATA apre il recupero a
+  // tre prove NELLA STESSA down: sessione assente dal verdetto CLI,
+  // supervisore morto accertato in /proc reale, lease non live. Il censimento
+  // affollato del nodo non serve: chiusura pulita al PRIMO down.
   const recupero = await w.runtime.down(CELLA);
   assert.equal(recupero.ok, true);
-  assert.equal(recupero.outcome, 'resolved-dead');
+  assert.equal(recupero.outcome, 'attested-recovery');
+  assert.equal(recupero.killed, false);
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0,
+    'nessun comando di teardown senza esito dichiarabile');
   // il lancio successivo non e' bloccato: nessun incerto residuo. Il marker
   // della morte programmata va tolto: il client -C del NUOVO lancio uscirebbe
   // subito con il marker ancora li'.
