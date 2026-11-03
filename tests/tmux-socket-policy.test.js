@@ -15,7 +15,6 @@ const { tmuxExec } = require('../lib/fleet/launch.js');
 const { protectSharedTmuxServer } = require('../lib/tmux/shared-server.js');
 
 const TMUX_BIN = '/bin/tmux';
-const LIVE_SERVER_PID = 6083;
 
 function serverPids() {
   const found = [];
@@ -43,22 +42,24 @@ function runRaw(env, args) {
   });
 }
 
-function liveSocketPath() {
-  let fds;
-  try { fds = fs.readdirSync(`/proc/${LIVE_SERVER_PID}/fd`); } catch (_) { return ''; }
-  for (const fd of fds) {
-    let target = '';
-    try { target = fs.readlinkSync(`/proc/${LIVE_SERVER_PID}/fd/${fd}`); } catch (_) { continue; }
-    if (target.endsWith('/default') && target.includes('/tmux-')) return target;
+function liveSockets(pids) {
+  const found = [];
+  for (const pid of pids) {
+    let fds;
+    try { fds = fs.readdirSync(`/proc/${pid}/fd`); } catch (_) { continue; }
+    for (const fd of fds) {
+      let target = '';
+      try { target = fs.readlinkSync(`/proc/${pid}/fd/${fd}`); } catch (_) { continue; }
+      if (target.startsWith('/') && target.includes('tmux')) found.push(target);
+    }
   }
-  return '';
+  return found;
 }
 
 test('socket policy: discordant private TMUX never selects the NexusCrew client', async () => {
   assert.equal(fs.existsSync(TMUX_BIN), true);
   const before = serverPids();
-  assert.ok(before.includes(String(LIVE_SERVER_PID)), 'il server vivo deve restare l unico di partenza');
-  const liveSocket = liveSocketPath();
+  const live = liveSockets(before);
   const root = fs.mkdtempSync(path.join('/tmp', 'nc-s6c-pol-'));
   const home = path.join(root, 'home');
   const run = path.join(root, 'run');
@@ -79,7 +80,7 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
   assert.equal(expected, path.join(run, `tmux-${uid}`, 'default'));
   assert.ok(expected.startsWith(`${root}${path.sep}`));
-  assert.notEqual(expected, liveSocket);
+  for (const sock of live) assert.notEqual(expected, sock);
   assert.equal(expected.includes(trapSock), false);
 
   const extras = [];
@@ -95,7 +96,7 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
     assert.notEqual(launched.code, 0);
     assert.ok(launched.stderr.includes(`error connecting to ${expected}`), launched.stderr);
     assert.equal(launched.stderr.includes(trapSock), false);
-    if (liveSocket) assert.equal(launched.stderr.includes(liveSocket), false);
+    for (const sock of live) assert.equal(launched.stderr.includes(sock), false);
 
     const surfaceEnv = tmuxClientEnv(source);
     assert.equal(surfaceEnv.TMUX, undefined);
@@ -106,7 +107,7 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
     assert.notEqual(listed.code, 0);
     assert.ok(listed.stderr.includes(`error connecting to ${expected}`), listed.stderr);
     assert.equal(listed.stderr.includes(trapSock), false);
-    if (liveSocket) assert.equal(listed.stderr.includes(liveSocket), false);
+    for (const sock of live) assert.equal(listed.stderr.includes(sock), false);
 
     let seen = null;
     const guarded = await protectSharedTmuxServer(TMUX_BIN, {
@@ -128,7 +129,7 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
   } finally {
     const after = serverPids();
     for (const pid of after) {
-      if (before.includes(pid) || pid === String(LIVE_SERVER_PID)) continue;
+      if (before.includes(pid)) continue;
       let mine = false;
       try {
         mine = fs.readFileSync(`/proc/${pid}/environ`).includes(root);
@@ -141,7 +142,7 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
   }
   assert.deepEqual(extras, [], `server di test inatteso: ${extras.join(',')}`);
   const after = serverPids();
-  assert.ok(after.includes(String(LIVE_SERVER_PID)), 'il server vivo deve restare');
+  for (const pid of before) assert.ok(after.includes(pid), `server preesistente sparito: ${pid}`);
   for (const pid of after) {
     if (before.includes(pid)) continue;
     let mine = false;

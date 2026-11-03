@@ -152,6 +152,7 @@ trap cleanup_root EXIT
 NC_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 NC_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 NC_DIRTY=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+[ "$NC_DIRTY" = "0" ] || die 'worktree' "the gate requires a clean commit (${NC_DIRTY} uncommitted path(s))" 2
 
 bin_version() { probe_dir=$(mktemp -d /tmp/ncgate-ver-XXXX); mkdir -p "$probe_dir"; timeout 10 env -i PATH=/usr/bin:/bin HOME="$probe_dir" TMPDIR="$probe_dir" "$1" --version 2>/dev/null | head -n 1; rm -rf "$probe_dir"; }
 
@@ -195,6 +196,11 @@ real isolation: due celle stesso engine -> trii XDG, prompt e cataloghi distinti
 real effort gate: il verdetto segue la versione REALE del binario
 real same-binary: probe e spawn puntano lo stesso realpath (nessun ripiego PATH)
 due celle, stesso engine e stessa HOME: due host reali distinti, preferenze distinte, transcript che riprende, nuova sessione che non tocca B
+socket policy: discordant private TMUX never selects the NexusCrew client
+socket policy: relative, empty, absent and absolute TMUX_TMPDIR use the resolver base
+runtime env: minimal runtime env drops TMUX while keeping TMUX_TMPDIR
+runtime env: tmuxClientEnv removes only TMUX and leaves the rest intact
+runtime env: tmuxClientEnv drops a relative or empty TMUX_TMPDIR and keeps an absolute one
 EOF
 # The only skips this gate tolerates: a name AND the marker its reason must
 # carry. A skipped test is tolerated only when both match: a tolerated name
@@ -208,7 +214,7 @@ D2 end-to-end: Pi custom — Pi VERO carica l'estensione e il modello supera il 
 EOF
 
 shopt -s nullglob
-FILES=(tests/fleet-*.test.js)
+FILES=(tests/fleet-*.test.js tests/tmux-socket-policy.test.js tests/runtime-env.test.js)
 [ "${#FILES[@]}" -gt 0 ] || die 'environment' 'no tests/fleet-*.test.js found' 3
 CONCURRENCY=${NEXUSCREW_TEST_CONCURRENCY:-2}
 
