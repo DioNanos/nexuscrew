@@ -242,7 +242,9 @@ if (cmd(args) === 'kill-session') {
 if (cmd(args) === 'has-session') {
   const bersaglio = args[args.length - 1];
   nota('has-session:' + bersaglio);
-  process.exit(leggi().some((x) => x.id === bersaglio) ? 0 : 1);
+  if (leggi().some((x) => x.id === bersaglio)) process.exit(0);
+  process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
+  process.exit(1);
 }
 if (cmd(args) === 'display-message') {
   const iF = args.indexOf('-F');

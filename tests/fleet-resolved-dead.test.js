@@ -161,7 +161,9 @@ if (cmd(args) === 'has-session') {
   const bersaglio = args[args.length - 1];
   nota('has-session:' + bersaglio);
   const nome = bersaglio.startsWith('=') ? bersaglio.slice(1) : bersaglio;
-  process.exit(leggi().some((x) => x.id === bersaglio || x.nome === nome) ? 0 : 1);
+  if (leggi().some((x) => x.id === bersaglio || x.nome === nome)) process.exit(0);
+  process.stderr.write('can\\'t find session: ' + nome + '\\n');
+  process.exit(1);
 }
 if (cmd(args) === 'list-sessions') {
   for (const s of leggi()) process.stdout.write(s.nome + '\\t1\\n');
