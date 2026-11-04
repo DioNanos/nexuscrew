@@ -363,10 +363,16 @@ test('resolved-dead vl con claim della root non rilasciabile: record e guardia i
   const lease = fs.readdirSync(w.claimsDir()).find((f) => f.endsWith('lease'));
   assert.ok(lease, 'record lease della root non trovato');
   fs.writeFileSync(path.join(w.claimsDir(), lease), '{ corrotto');
+  const spia = spiaOrdineRimozione(t, w.hostPid);
+  let revoke = 0;
+  const revoca = w.mgr.revokeControl.bind(w.mgr);
+  w.mgr.revokeControl = (id) => { revoke += 1; return revoca(id); };
   await assert.rejects(() => w.runtime.down(CELLA), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
+  assert.equal(revoke, 0, 'la root rossa non revoca il controllo per far tornare i conti');
+  assert.equal(spia.rimozioni.length, 0, 'un none valido con la root rossa non rimuove il record');
   // l'host e' stato fermato dalla barriera (l'ordine e' quello), ma il
   // lancio NON si dichiara chiuso: la root resta sotto osservazione
   await attendi(() => { try { process.kill(hostPrima, 0); return false; } catch (_) { return true; } });

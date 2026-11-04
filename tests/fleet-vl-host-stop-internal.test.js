@@ -131,17 +131,19 @@ test('ogni reason della lista chiusa ha il suo esito, e nessuna cade sul vecchio
 
 test('server_absent con lo status che non dice none non e uno stop riuscito', async () => {
   const stop = { out: riga(false, 'server_absent'), code: 1 };
-  const { esito } = await ferma(finto({ stati: [VIVO_CON_CAP, VIVO_CON_CAP], stop }));
+  const { esito, chiamate } = await ferma(finto({ stati: [VIVO_CON_CAP, VIVO_CON_CAP], stop }));
   assert.equal(esito.outcome, 'host-stop-failed');
   assert.equal(esito.code, 'BARRIER');
   assert.equal(esito.reason, 'server_absent');
+  assert.deepEqual(comandi(chiamate), ['status', 'internal', 'status']);
 });
 
-test('un ack non basta: serve lo status none, concluso', async () => {
+test('un ack non basta: una sonda guasta e subito barriera, senza riprovare', async () => {
   const stop = { out: riga(true, 'shutdown_ack'), code: 0 };
+  // Uno status integro e non-none non e' assenza: continua l'attesa (i test
+  // con il clock seam). Qui una sonda illeggibile, troncata o con rc diverso
+  // da 0 chiude subito, con una sola lettura.
   const dopo = [
-    { out: statoJson('live', { capabilities: [CAP] }) },
-    { out: statoJson('lock_held_socket_silent', { capabilities: [CAP] }) },
     { out: statoJson('none'), code: 2 },
     { out: statoJson('probe_error'), code: 3 },
     { out: 'non e json\n' },
@@ -151,6 +153,7 @@ test('un ack non basta: serve lo status none, concluso', async () => {
     const { esito, chiamate } = await ferma(finto({ stati: [VIVO_CON_CAP, secondo], stop }));
     assert.equal(esito.outcome, 'host-stop-failed', JSON.stringify(secondo));
     assert.equal(esito.code, 'BARRIER', JSON.stringify(secondo));
+    assert.equal(esito.reason, 'shutdown_ack', JSON.stringify(secondo));
     assert.deepEqual(comandi(chiamate), ['status', 'internal', 'status']);
   }
 });
@@ -401,21 +404,25 @@ test('il totale che il modulo accetta ha un tetto: oltre 30 s non si va, qualunq
   assert.deepEqual(comandi(prove.chiamate), ['status']);
 });
 
-test('un budget che finisce prima dello status finale e BUDGET, non un successo', async () => {
+test('un ack a deadline gia scaduta non apre una sonda e non e un successo', async () => {
   const stop = { out: riga(true, 'shutdown_ack'), code: 0 };
   let ora = 1000;
   const prove = finto({ stati: [VIVO_CON_CAP, NONE], stop });
   const base = prove.spawnImpl;
-  // Lo stop «dura» 7960 ms: restano 40 ms, sotto la soglia di 50.
-  prove.spawnImpl = (b, args) => { if (args[0] === 'internal') ora += 7960; return base(b, args); };
+  // Lo stop arriva esattamente alla deadline: il none successivo non si legge.
+  prove.spawnImpl = (b, args) => { if (args[0] === 'internal') ora = 9000; return base(b, args); };
   const home = casa();
   const bin = scriviBin(path.join(home, 'vl'), '#!/bin/sh\nexit 0\n');
+  let pause = 0;
   const esito = await host.fermaHost({
     record: record(home, bin), bin, budgetMs: 8000, monoNow: () => ora, isolamento: 'isolato',
-    spawnImpl: prove.spawnImpl,
+    spawnImpl: prove.spawnImpl, attesaImpl: async () => { pause += 1; },
   });
   assert.equal(esito.outcome, 'host-stop-failed');
-  assert.equal(esito.code, 'BUDGET');
+  assert.equal(esito.code, 'BARRIER');
+  assert.equal(esito.reason, 'shutdown_ack');
+  assert.equal(pause, 0);
+  assert.deepEqual(comandi(prove.chiamate), ['status', 'internal']);
 });
 
 // ── cio' che il comando riceve ─────────────────────────────────────────────
