@@ -7,7 +7,32 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 const { qualificaAssenzaRadice, stessaImprontaRadice } = require('../lib/fleet/vl-roots.js');
+const { verificaCapacitaPeerStop, preparaSondaRadice, pulisciSondaRadice } = require('../lib/fleet/vl-host-stop.js');
+
+function spawnFinto(stdout, code) {
+  const visti = [];
+  const spawnImpl = (bin, args) => {
+    visti.push({ bin, args });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    process.nextTick(() => {
+      child.stdout.emit('data', Buffer.from(stdout));
+      child.emit('close', code);
+    });
+    return child;
+  };
+  return { spawnImpl, visti };
+}
+
+const STATO_OK = `${JSON.stringify({
+  state: 'none',
+  peer_identity_support: 'supported',
+  capabilities: ['host_peer_identity_v1', 'host_stop_expected_v1'],
+})}\n`;
 
 function mondo() {
   const base = fs.mkdtempSync(path.join('/tmp', 'nc-s6h-abs-'));
@@ -78,4 +103,18 @@ test('assenza: la comparsa della root rompe l impronta', () => {
   } finally {
     fs.rmSync(w.base, { recursive: true, force: true });
   }
+});
+
+test('sonda: root assente usa una directory usa e getta e la ripulisce', async () => {
+  const sonda = preparaSondaRadice();
+  assert.equal(sonda.ok, true);
+  assert.equal(sonda.dir.includes('host-v1'), false);
+  const { spawnImpl, visti } = spawnFinto(STATO_OK, 0);
+  const cap = await verificaCapacitaPeerStop({
+    bin: '/usr/bin/vl', env: { PATH: '/usr/bin:/bin' }, root: sonda.dir, spawnImpl,
+  });
+  assert.equal(cap.ok, true);
+  assert.deepEqual(visti[0].args, ['host', 'status', '--json', '--server-root', sonda.dir]);
+  assert.equal(pulisciSondaRadice(sonda), true);
+  assert.equal(fs.existsSync(sonda.dir), false);
 });
