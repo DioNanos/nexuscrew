@@ -346,6 +346,67 @@ test('runtime: root mai lanciata, probe rifiutata — niente ticket e temp spari
   await assert.rejects(fleet.up('CellaPre'), (e) => e.fleetCode === 'VL_PEER_STOP_UNSUPPORTED');
 });
 
+test('runtime: la root compare durante la protezione finale — niente sessione', async (t) => {
+  const w = mondo(t, { caps: true });
+  const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
+  const vl = path.join(w.base(), 'state', 'vl');
+  const vlBin = path.join(w.home, '.local', 'bin', 'vl');
+  fs.writeFileSync(vlBin, `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi
+printf '%s\\n' "$0 $*" >> ${JSON.stringify(w.vlLog)}
+if [ "$1" = "host" ]; then printf '%s\\n' ${JSON.stringify(STATO_CAPS)}; exit 0; fi
+exit 0
+`, { mode: 0o755 });
+  let n = 0;
+  const revoche = [];
+  const broker = w.cfgBase.launchBroker;
+  w.cfgBase.launchBroker = {
+    ...broker,
+    revoke: async (nonce) => { revoche.push(nonce); },
+  };
+  w.cfgBase.ensureTmuxProtection = async () => {
+    n += 1;
+    if (n === 3) fs.mkdirSync(hostRoot, { mode: 0o700 });
+  };
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'HOST_UNRESOLVABLE');
+    assert.equal(e.fleetPhase, 'new-session');
+    return true;
+  });
+  assert.equal(fs.existsSync(hostRoot), true);
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '');
+  assert.equal(revoche.length, 1, 'il ticket gia emesso e\' revocato');
+  assert.equal(fs.existsSync(vl), true);
+});
+
+test('runtime: un antenato cambia durante la protezione finale — niente sessione', async (t) => {
+  const w = mondo(t, { caps: true });
+  const vl = path.join(w.base(), 'state', 'vl');
+  const hostRoot = path.join(vl, 'host-v1');
+  const vlBin = path.join(w.home, '.local', 'bin', 'vl');
+  fs.writeFileSync(vlBin, `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi
+if [ "$1" = "host" ]; then printf '%s\\n' ${JSON.stringify(STATO_CAPS)}; exit 0; fi
+exit 0
+`, { mode: 0o755 });
+  let n = 0;
+  w.cfgBase.ensureTmuxProtection = async () => {
+    n += 1;
+    if (n !== 3) return;
+    fs.renameSync(vl, `${vl}-vecchia`);
+    fs.mkdirSync(vl, { mode: 0o700 });
+  };
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'HOST_UNRESOLVABLE');
+    assert.equal(e.fleetPhase, 'new-session');
+    return true;
+  });
+  assert.equal(fs.existsSync(hostRoot), false);
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '');
+});
+
 test('runtime: la root compare durante la sonda — rifiuto prima dello spawn', async (t) => {
   const w = mondo(t, { caps: true });
   const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
