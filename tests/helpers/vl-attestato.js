@@ -129,6 +129,12 @@ if (argv[0] === 'host' && argv[1] === 'status') {
   const iRoot = argv.lastIndexOf('--server-root');
   const radice = iRoot >= 0 ? String(argv[iRoot + 1] || '') : '';
   const base = { ...comune, server_root: radice };
+  // La root usa e getta della sonda di capacita' non e' l'host del lancio.
+  if (radice.indexOf('nc-vl-cap-') !== -1) {
+    process.stdout.write(JSON.stringify({ ...base, state: 'none', declared_pid: null,
+      pid_number_in_use: null, since: null }) + '\\n');
+    process.exit(0);
+  }
   const p = leggiPid();
   if (p > 0 && esiste(p)) {
     const id = identitaKernel(p);

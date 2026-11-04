@@ -22,6 +22,29 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
+const STATO_SONDA_NONE = JSON.stringify({
+  state: 'none',
+  capabilities: ['host_stop_v1', 'host_peer_identity_v1', 'host_stop_expected_v1'],
+  peer_identity_support: 'supported',
+});
+function scriptVlMatrice(version) {
+  return `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '${version}\\n'; fi
+if [ "$1" = "host" ]; then
+  root=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--server-root" ]; then root=$a; fi
+    prev=$a
+  done
+  case $root in
+    *nc-vl-cap-*) printf '%s\\n' '${STATO_SONDA_NONE}' ;;
+    *) printf '%s\\n' '${STATO_HOST_ATTESTATO}' ;;
+  esac
+fi
+exit 0
+`;
+}
 
 // Come un valore sembra un segreto: stessi casi del logger di produzione.
 const REDACT_RE = /^(sk-|secret|token|bearer |key-|ghp_)/i;
@@ -61,7 +84,7 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
   // stesso status con host LIVE e peer_identity verified (contratto del
   // binario attestato, condiviso con gli altri test runtime del fleet).
   const pathBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(pathBin, scriptVlMatrice(version), { mode: 0o755 });
   fs.chmodSync(pathBin, 0o755);
 
   const statoPath = path.join(root, 'sessions.txt');
@@ -198,7 +221,7 @@ function binarioConSpazi(home, version = 'vl 0.5.0') {
   // 'host status' dichiara le capacita' peer/stop che il preflight dell'up
   // richiede al binario pinnato, e l'host attestato che la registrazione
   // all'up esige dallo stesso status: stesso contratto del binario nel PATH.
-  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nif [ "$1" = "host" ]; then printf '%s\\n' '${STATO_HOST_ATTESTATO}'; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(file, scriptVlMatrice(version), { mode: 0o755 });
   fs.chmodSync(file, 0o755);
   return file;
 }

@@ -121,6 +121,11 @@ if (argv[0] === 'host' && argv[1] === 'status') {
     capabilities: ['host_stop_v1', 'host_peer_identity_v1', 'host_stop_expected_v1'],
     peer_identity_support: 'supported',
   };
+  if (radice.indexOf('nc-vl-cap-') !== -1) {
+    process.stdout.write(JSON.stringify({ ...comune, state: 'none', declared_pid: null,
+      pid_number_in_use: null, since: null }) + '\\n');
+    process.exit(0);
+  }
   if (p > 0 && esiste(p)) {
     process.stdout.write(JSON.stringify({ ...comune, state: 'live', declared_pid: p,
       pid_number_in_use: true, since: { source: 'declared', unix: 1 },
