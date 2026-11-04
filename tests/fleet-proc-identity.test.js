@@ -74,6 +74,16 @@ test('identita: stat malformato non e\' una prova -> indeterminata', () => {
   const daVuoto = leggiIdentitaProc(4242, { leggiStat: () => svuotato });
   assert.equal(daVuoto.esito, 'indeterminata');
   assert.equal(daVuoto.nascita, null);
+  // spazio doppio dopo lo stato: la colonna vuota non fa leggere itrealvalue come nascita
+  const dopoStato = '4242 (nome) S  1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0 0\n';
+  const daDopo = leggiIdentitaProc(4242, { leggiStat: () => dopoStato });
+  assert.equal(daDopo.esito, 'indeterminata');
+  assert.equal(daDopo.nascita, null);
+  // spazio doppio prima di un'altra colonna numerica, ancora prima della nascita
+  const prima = '4242 (nome) S 1  1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0 0\n';
+  const daPrima = leggiIdentitaProc(4242, { leggiStat: () => prima });
+  assert.equal(daPrima.esito, 'indeterminata');
+  assert.equal(daPrima.nascita, null);
   // starttime non numerico, decimale, esponente, segno, arrotondato
   const nonNumerico = '4242 (x) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 non-un-numero 0 0\n';
   assert.equal(

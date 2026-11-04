@@ -411,6 +411,14 @@ test('down senza canale con starttime svuotato: processo vivo, record e guardia 
   t, () => '4242 (nome con spazio) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0  0 0\n', 'starttime vuoto',
 ));
 
+test('down senza canale con spazio doppio dopo lo stato: processo vivo, record e guardia restano, nessun revoke', (t) => statVivoNonProva(
+  t, () => '4242 (nome) S  1 1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0 0\n', 'spazio dopo lo stato',
+));
+
+test('down senza canale con spazio doppio prima della nascita: processo vivo, record e guardia restano, nessun revoke', (t) => statVivoNonProva(
+  t, () => '4242 (nome) S 1  1 1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 777 0 0\n', 'spazio prima della nascita',
+));
+
 // --- (10) positivo: pid riusato con nascita valida divergente ---------------
 
 test('down senza canale oltre la deadline: il record resta, nessun revoke', async (t) => {
