@@ -199,6 +199,44 @@ test('assenza: due celle distinte non si toccano', () => {
   }
 });
 
+test('sonda: EIO al primo stat lascia la base e non la cancella', () => {
+  let n = 0;
+  const prep = preparaSondaRadice({
+    lstat: (p) => {
+      n += 1;
+      if (n === 1) { const e = new Error('io'); e.code = 'EIO'; throw e; }
+      return fs.lstatSync(p);
+    },
+  });
+  assert.equal(prep.ok, false);
+  assert.equal(prep.code, 'EIO');
+  assert.equal(prep.baseDev, undefined);
+  assert.equal(fs.existsSync(prep.base), true);
+  assert.equal(pulisciSondaRadice(prep), false);
+  assert.equal(fs.existsSync(prep.base), true);
+  const st = fs.lstatSync(prep.base);
+  assert.equal(st.isSymbolicLink(), false);
+  assert.equal(st.uid, process.getuid());
+  fs.rmSync(prep.base, { recursive: true, force: true });
+});
+
+test('sonda: EIO sullo stat del figlio rimuove la base qualificata', () => {
+  let n = 0;
+  const prep = preparaSondaRadice({
+    lstat: (p) => {
+      n += 1;
+      if (n === 2) { const e = new Error('io'); e.code = 'EIO'; throw e; }
+      return fs.lstatSync(p);
+    },
+  });
+  assert.equal(prep.ok, false);
+  assert.equal(prep.code, 'EIO');
+  assert.ok(prep.baseDev != null);
+  assert.equal(fs.existsSync(prep.dir), true);
+  assert.equal(pulisciSondaRadice(prep), true);
+  assert.equal(fs.existsSync(prep.base), false);
+});
+
 test('sonda: rc 1 con JSON plausibile non e una capacita', async () => {
   const { spawnImpl } = spawnFinto(STATO_OK, 1);
   const cap = await verificaCapacitaPeerStop({

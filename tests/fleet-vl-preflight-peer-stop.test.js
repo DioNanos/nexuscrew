@@ -330,6 +330,46 @@ test('runtime reale: binario qualificato fin da subito — up ok al primo colpo'
   assert.ok(fs.existsSync(path.join(w.base(), 'host-context.json')));
 });
 
+test('runtime: EIO sul primo stat della sonda — il residuo resta', async (t) => {
+  const w = mondo(t, { caps: true });
+  const base = fs.mkdtempSync('/tmp/nc-vl-cap-');
+  const orig = host.preparaSondaRadice;
+  host.preparaSondaRadice = () => ({ ok: false, code: 'EIO', base, residuo: base });
+  t.after(() => { host.preparaSondaRadice = orig; });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'VL_PEER_STOP_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    assert.equal(e.data && e.data.residuo, true);
+    assert.ok(String(e.message).includes(base));
+    return true;
+  });
+  assert.equal(fs.existsSync(base), true);
+  assert.equal(w.tickets.length, 0);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test('runtime: EIO sullo stat del figlio — si rimuove la base qualificata', async (t) => {
+  const w = mondo(t, { caps: true });
+  const base = fs.mkdtempSync('/tmp/nc-vl-cap-');
+  const dir = path.join(base, 'r');
+  fs.mkdirSync(dir, { mode: 0o700 });
+  const st = fs.lstatSync(base);
+  const orig = host.preparaSondaRadice;
+  host.preparaSondaRadice = () => ({
+    ok: false, code: 'EIO', base, dir, baseDev: st.dev, baseIno: st.ino,
+  });
+  t.after(() => { host.preparaSondaRadice = orig; });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'VL_PEER_STOP_UNSUPPORTED');
+    assert.equal(e.data && e.data.residuo, undefined);
+    return true;
+  });
+  assert.equal(fs.existsSync(base), false);
+  assert.equal(w.tickets.length, 0);
+});
+
 test('runtime: sonda temporanea con host vivo — rifiuto prima del contesto', async (t) => {
   const w = mondo(t, { caps: true });
   const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
