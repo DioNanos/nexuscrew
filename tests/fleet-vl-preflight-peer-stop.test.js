@@ -323,6 +323,59 @@ test('runtime reale: binario qualificato fin da subito — up ok al primo colpo'
   assert.ok(fs.existsSync(path.join(w.base(), 'host-context.json')));
 });
 
+test('runtime: root mai lanciata, probe rifiutata — niente ticket e temp sparita', async (t) => {
+  const w = mondo(t, { caps: false });
+  const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
+  assert.equal(fs.existsSync(hostRoot), false);
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'VL_PEER_STOP_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    return true;
+  });
+  assert.equal(fs.existsSync(hostRoot), false);
+  assert.equal(w.tickets.length, 0);
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '');
+  assert.equal(fs.existsSync(path.join(w.base(), 'host-context.json')), false);
+  const radici = fs.readFileSync(w.vlLog, 'utf8').split('\n')
+    .filter((r) => r.includes('--server-root'))
+    .map((r) => r.slice(r.indexOf('--server-root ') + '--server-root '.length).split(' ')[0]);
+  assert.ok(radici.length >= 1);
+  assert.ok(radici.every((r) => r.startsWith('/tmp/nc-vl-cap-') && !r.includes('host-v1')));
+  assert.ok(radici.every((r) => !fs.existsSync(r)));
+  await assert.rejects(fleet.up('CellaPre'), (e) => e.fleetCode === 'VL_PEER_STOP_UNSUPPORTED');
+});
+
+test('runtime: la root compare durante la sonda — rifiuto prima dello spawn', async (t) => {
+  const w = mondo(t, { caps: true });
+  const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
+  const vlBin = path.join(w.home, '.local', 'bin', 'vl');
+  fs.writeFileSync(vlBin, `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi
+printf '%s\\n' "$0 $*" >> ${JSON.stringify(w.vlLog)}
+if [ "$1" = "host" ]; then
+  mkdir -m 0700 ${JSON.stringify(hostRoot)}
+  printf '%s\\n' ${JSON.stringify(STATO_CAPS)}
+  exit 0
+fi
+exit 0
+`, { mode: 0o755 });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'HOST_UNRESOLVABLE');
+    assert.equal(e.fleetPhase, 'preflight');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0);
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '');
+  assert.equal(fs.existsSync(path.join(w.base(), 'host-context.json')), false);
+  assert.equal(fs.existsSync(hostRoot), true);
+  const righe = fs.readFileSync(w.vlLog, 'utf8').split('\n').filter((r) => r.includes('--server-root'));
+  assert.equal(righe.length, 1);
+  assert.ok(righe[0].includes('/tmp/nc-vl-cap-'));
+  assert.equal(righe[0].includes(hostRoot), false);
+});
+
 // --- Identita' owner del nodo PRIMA dello spawn (audit finale F1-01) --------
 // Owner assente o di forma non valida: il rifiuto e' un PREFLIGHT visibile,
 // prima di riserva/contesto/broker/new-session — zero effetti. Prima del fix
