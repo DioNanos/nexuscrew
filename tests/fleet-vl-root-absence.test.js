@@ -109,6 +109,8 @@ test('sonda: root assente usa una directory usa e getta e la ripulisce', async (
   const sonda = preparaSondaRadice();
   assert.equal(sonda.ok, true);
   assert.equal(sonda.dir.includes('host-v1'), false);
+  assert.notEqual(path.dirname(sonda.dir), '/tmp');
+  assert.equal(fs.lstatSync(path.dirname(sonda.dir)).mode & 0o777, 0o700);
   const { spawnImpl, visti } = spawnFinto(STATO_OK, 0);
   const cap = await verificaCapacitaPeerStop({
     bin: '/usr/bin/vl', env: { PATH: '/usr/bin:/bin' }, root: sonda.dir, spawnImpl,
@@ -220,7 +222,9 @@ test('sonda: temp non creabile, pulizia fallita, spawn, timeout, JSON e capacita
   fs.rmSync(vera.dir, { recursive: true });
   fs.symlinkSync('/tmp', vera.dir);
   assert.equal(pulisciSondaRadice(vera), false);
+  assert.equal(fs.existsSync(vera.base), true);
   fs.unlinkSync(vera.dir);
+  fs.rmdirSync(vera.base);
   const rotto = spawnFinto('non-json\n', 0);
   const capRotto = await verificaCapacitaPeerStop({
     bin: '/usr/bin/vl', env: {}, root: '/tmp/x', spawnImpl: rotto.spawnImpl,
