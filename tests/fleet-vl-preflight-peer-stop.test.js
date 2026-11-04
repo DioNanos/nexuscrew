@@ -124,10 +124,17 @@ const SESSIONE = 'cloud-CellaPre';
 const PROMPT = 'Leggi CLAUDE.md e parti';
 
 function vlCorpo(rispostaHost, vlLog) {
+  const sullaSonda = String(rispostaHost).includes('host_peer_identity_v1') ? STATO_CAPS : rispostaHost;
   return `#!/bin/sh
 if [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi
 printf '%s\\n' "$0 $*" >> ${JSON.stringify(vlLog)}
-if [ "$1" = "host" ]; then printf '%s\\n' ${JSON.stringify(rispostaHost)}; exit 0; fi
+if [ "$1" = "host" ]; then
+  case " $* " in
+    *host-v1*) printf '%s\\n' ${JSON.stringify(rispostaHost)} ;;
+    *) printf '%s\\n' ${JSON.stringify(sullaSonda)} ;;
+  esac
+  exit 0
+fi
 if [ "$1" = "shutdown" ]; then printf '%s\\n' '{"ok":true}'; exit 0; fi
 exit 0
 `;
@@ -321,6 +328,51 @@ test('runtime reale: binario qualificato fin da subito — up ok al primo colpo'
   assert.equal(res.ok, true);
   assert.equal(w.tickets.length, 1);
   assert.ok(fs.existsSync(path.join(w.base(), 'host-context.json')));
+});
+
+test('runtime: sonda temporanea con host vivo — rifiuto prima del contesto', async (t) => {
+  const w = mondo(t, { caps: true });
+  const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
+  const vlBin = path.join(w.home, '.local', 'bin', 'vl');
+  const vivo = STATO_HOST_ATTESTATO;
+  fs.writeFileSync(vlBin, `#!/bin/sh
+if [ "$1" = "--version" ]; then printf 'vl 0.4.0\\n'; exit 0; fi
+printf '%s\\n' "$0 $*" >> ${JSON.stringify(w.vlLog)}
+if [ "$1" = "host" ]; then printf '%s\\n' ${JSON.stringify(vivo)}; exit 0; fi
+exit 0
+`, { mode: 0o755 });
+  const fleet = await w.fleet();
+  await assert.rejects(fleet.up('CellaPre'), (e) => {
+    assert.equal(e.fleetCode, 'VL_PEER_STOP_UNSUPPORTED');
+    assert.equal(e.fleetPhase, 'preflight');
+    assert.equal(e.data && e.data.motivo, 'probe');
+    return true;
+  });
+  assert.equal(w.tickets.length, 0);
+  assert.equal(fs.readFileSync(w.statoPath, 'utf8').trim(), '');
+  assert.equal(fs.existsSync(path.join(w.base(), 'host-context.json')), false);
+  assert.equal(fs.existsSync(hostRoot), false);
+});
+
+test('runtime: root reale gia presente e viva — la sonda resta sulla root vera', async (t) => {
+  const w = mondo(t, { caps: true });
+  const hostRoot = path.join(w.base(), 'state', 'vl', 'host-v1');
+  fs.mkdirSync(hostRoot, { recursive: true, mode: 0o700 });
+  for (const d of [
+    path.join(w.home, '.nexuscrew'),
+    path.join(w.home, '.nexuscrew', 'vl-cells'),
+    w.base(),
+    path.join(w.base(), 'state'),
+    path.join(w.base(), 'state', 'vl'),
+    hostRoot,
+  ]) fs.chmodSync(d, 0o700);
+  const fleet = await w.fleet();
+  const res = await fleet.up('CellaPre');
+  assert.equal(res.ok, true, `up con root gia presente: ${JSON.stringify(res)}`);
+  const righe = fs.readFileSync(w.vlLog, 'utf8').split('\n').filter((r) => r.includes('--server-root'));
+  assert.ok(righe.length >= 1);
+  assert.ok(righe.every((r) => r.includes(hostRoot)));
+  assert.ok(righe.every((r) => !r.includes('/tmp/nc-vl-cap-')));
 });
 
 test('runtime: root mai lanciata, probe rifiutata — niente ticket e temp sparita', async (t) => {
