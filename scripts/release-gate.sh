@@ -112,6 +112,11 @@ fi
 
 STATUS_SHA=$(sha_of "$STATUS_BIN")
 CLIENT_SHA=$(sha_of "$CLIENT_BIN")
+# The launch binary of a managed vl cell is the TUI client, not the headless
+# build used for status and host probes. The hash is frozen: a different file
+# is a red gate, not a skip.
+LAUNCH_SHA=fcf9e75f1537a72c61af0a7a1ce47f9899c5a1ac3c5c35838ab37c7ab82a645a
+[ "$CLIENT_SHA" = "$LAUNCH_SHA" ] || die 'hash' "launch binary must be the TUI client $LAUNCH_SHA, actual $CLIENT_SHA ($CLIENT_BIN): the headless build is not a launch binary" 4
 # The status-contract and client binaries may legitimately be the same
 # qualified artifact as the new one; if a path is the same file, its recorded
 # hash must agree with the verified one.
@@ -167,6 +172,8 @@ bin_version() { probe_dir=$(mktemp -d /tmp/ncgate-ver-XXXX); mkdir -p "$probe_di
     role=${pair%%:*}; rest=${pair#*:}; p=${rest%%:*}; s=${rest#*:}
     printf '%s binary: %s\n  sha256: %s\n  realpath: %s\n  version: %s\n' "$role" "$p" "$s" "$(readlink -f "$p")" "$(bin_version "$p")"
   done
+  printf 'launch binary: %s\n  sha256: %s\n  expected: %s\n  realpath: %s\n  build: tui\n  version: %s\n' \
+    "$CLIENT_BIN" "$CLIENT_SHA" "$LAUNCH_SHA" "$(readlink -f "$CLIENT_BIN")" "$(bin_version "$CLIENT_BIN")"
 } > "$LOG/manifest.txt"
 
 # --- 5. the suite, capped and isolated ----------------------------------------

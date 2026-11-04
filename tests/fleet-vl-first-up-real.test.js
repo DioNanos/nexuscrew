@@ -1,7 +1,7 @@
 'use strict';
-// Primo up di una cella VL che non e' mai stata lanciata. Il binario e' quello
-// pinnato (NC_VL_REAL_BIN): niente seam di status, niente host-v1 preparata.
-// Un binario assente fa fallire il test. Il tmux e' un server privato.
+// Primo up di una cella VL che non e' mai stata lanciata. Il binario di lancio
+// e' il client TUI, con questo sha e non un altro. La build headless non apre
+// il layout. Binario mancante o diverso: il test fallisce, non si salta.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -22,7 +22,7 @@ const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-
 // Il binario pinnato e' il client TUI: la build headless esce subito e non
 // apre il layout. Assente = fallimento, mai uno skip.
 const REALE = process.env.NEXUSCREW_VL_REAL_BIN || '';
-const SHA = process.env.NEXUSCREW_VL_REAL_BIN_SHA256 || '';
+const SHA_LANCIO = 'fcf9e75f1537a72c61af0a7a1ce47f9899c5a1ac3c5c35838ab37c7ab82a645a';
 const TMUX = '/usr/bin/tmux';
 const LIVE = 6083;
 const PROMPT = 'Leggi CLAUDE.md e parti';
@@ -38,7 +38,7 @@ function sha256(file) {
 test('VL vero: primo up di una cella mai lanciata, layout del binario, un prompt', async (t) => {
   assert.ok(REALE && fs.existsSync(REALE) && fs.statSync(REALE).isFile(),
     'NEXUSCREW_VL_REAL_BIN assente: il primo up non si salta');
-  if (SHA) assert.equal(sha256(REALE), SHA, 'il binario pinnato non e\' quello dichiarato');
+  assert.equal(sha256(REALE), SHA_LANCIO, 'il binario di lancio non e\' il client TUI atteso');
   assert.ok(fs.existsSync(TMUX), 'tmux di sistema assente');
 
   const umaskPrima = process.umask(0o022);
