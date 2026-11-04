@@ -196,6 +196,7 @@ real isolation: due celle stesso engine -> trii XDG, prompt e cataloghi distinti
 real effort gate: il verdetto segue la versione REALE del binario
 real same-binary: probe e spawn puntano lo stesso realpath (nessun ripiego PATH)
 due celle, stesso engine e stessa HOME: due host reali distinti, preferenze distinte, transcript che riprende, nuova sessione che non tocca B
+VL vero: primo up di una cella mai lanciata, layout del binario, un prompt
 socket policy: discordant private TMUX never selects the NexusCrew client
 socket policy: relative, empty, absent and absolute TMUX_TMPDIR use the resolver base
 runtime env: minimal runtime env drops TMUX while keeping TMUX_TMPDIR
@@ -253,6 +254,10 @@ NODE_CMD=$(printf '%q ' systemd-run --user --scope -q -p MemoryMax=2G -p MemoryS
 printf 'suite command line: %s\n' "$NODE_CMD" >> "$LOG/manifest.txt"
 printf 'suite files: %s\n' "${#FILES[@]}" >> "$LOG/manifest.txt"
 
+# The host-root walk refuses a group-writable ancestor. The suite's fixtures
+# are created with the process umask, and a umask of 002 would make those
+# directories replaceable. 022 keeps them traversable and not group-writable.
+umask 022
 note "running ${#FILES[@]} fleet files under the cap (artifacts in $LOG)"
 # The launcher itself needs the real user bus to reach systemd --user; the
 # suite environment inside the scope is the private one above.
