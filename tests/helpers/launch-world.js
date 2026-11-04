@@ -63,7 +63,13 @@ function eseguiComando(riga, n) {
     }
     return frame('0\\t\\t' + idPane + '\\n', true);
   }
-  if (cmd === 'respawn-pane') { alza('respawned'); return frame('', true); }
+  if (cmd === 'respawn-pane') {
+    if (S.snapshotRespawn) {
+      try { fs.copyFileSync(S.snapshotRespawn.from, S.snapshotRespawn.to); } catch (_) { fs.writeFileSync(S.snapshotRespawn.to, 'ASSENTE'); }
+    }
+    alza('respawned');
+    return frame('', true);
+  }
   if (cmd === 'has-session') {
     return esiste('nato') ? frame('', true) : frame("can't find session: " + idSessione + '\\n', false);
   }
@@ -72,7 +78,19 @@ function eseguiComando(riga, n) {
 }
 if (args[0] === '-C' && args.includes('new-session')) {
   const modo = S.newSession || 'ok';
-  const resta = () => setInterval(() => {}, 10000);
+  // Resta vivo finche' il processo che lo possiede non chiude la pipe: se il
+  // possessore muore (crash di test) il client finto esce da solo, nessun orfano.
+  const resta = () => {
+    process.stdin.resume();
+    process.stdin.on('end', () => process.exit(0));
+    process.stdin.on('close', () => process.exit(0));
+    setInterval(() => {}, 10000);
+  };
+  // Fotografia del record nel momento esatto della new-session: prova cosa
+  // era GIA' sul disco quando la creazione e' stata emessa.
+  if (S.snapshot) {
+    try { fs.copyFileSync(S.snapshot.from, S.snapshot.to); } catch (_) { fs.writeFileSync(S.snapshot.to, 'ASSENTE'); }
+  }
   if (S.materializza) alza('nato');
   if (modo === 'hang') { resta(); return; }
   if (modo === 'eof') { process.exit(0); }
