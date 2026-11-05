@@ -1044,10 +1044,13 @@ for (const [nome, stessoRuntime] of [['stesso runtime', true], ['due runtime', f
     const upP = a1.runtime.up(d.cella);
     await b.arrivato;
     const restartP = a2.runtime.restart(d.cella);
-    await lasciaCorrere();
-    assert.equal(b.chiamate(), 1, 'il restart non oltrepassa la guardia mentre l\'up e\' sospeso');
-    b.libera();
-    await raccogli([upP, restartP]);
+    try {
+      await lasciaCorrere();
+      assert.equal(b.chiamate(), 1, 'il restart non oltrepassa la guardia mentre l\'up e\' sospeso');
+    } finally {
+      b.libera();
+      await raccogli([upP, restartP]);
+    }
   });
 
   test(`R4/R3-01: restart sospeso contro down e contro un secondo restart (${nome})`, async (t) => {
@@ -1062,11 +1065,14 @@ for (const [nome, stessoRuntime] of [['stesso runtime', true], ['due runtime', f
     let downFinita = false;
     const downP = a2.runtime.down(d.cella).then((v) => { downFinita = true; return v; }, (e) => { downFinita = true; throw e; });
     const secondo = a2.runtime.restart(d.cella);
-    await lasciaCorrere();
-    assert.equal(downFinita, false, 'il down aspetta la fine dell\'intera transizione del restart');
-    assert.equal(b.chiamate(), 1, 'il secondo restart non raggiunge issue');
-    b.libera();
-    await raccogli([primo, downP, secondo]);
+    try {
+      await lasciaCorrere();
+      assert.equal(downFinita, false, 'il down aspetta la fine dell\'intera transizione del restart');
+      assert.equal(b.chiamate(), 1, 'il secondo restart non raggiunge issue');
+    } finally {
+      b.libera();
+      await raccogli([primo, downP, secondo]);
+    }
   });
 }
 
@@ -1079,10 +1085,15 @@ test('R4/R3-01: dopo un fallimento la coda avanza (restart fallito, poi up)', as
   const primo = a.runtime.restart(d.cella);
   await b.arrivato;
   const dopo = a.runtime.up(d.cella);
-  await lasciaCorrere();
-  assert.equal(b.chiamate(), 1);
-  b.libera();
-  const [e1] = await raccogli([primo, dopo]);
+  let esiti;
+  try {
+    await lasciaCorrere();
+    assert.equal(b.chiamate(), 1);
+  } finally {
+    b.libera();
+    esiti = await raccogli([primo, dopo]);
+  }
+  const [e1] = esiti;
   assert.ok(e1 instanceof Error, 'il primo restart e\' fallito');
   assert.ok(b.chiamate() >= 2, 'la coda e\' avanzata: il secondo ciclo ha raggiunto issue');
 });
@@ -1098,8 +1109,11 @@ test('R4/R3-01: radici (e quindi celle) diverse restano indipendenti', async (t)
   t.after(() => { for (const x of [r1, r2]) { try { x.runtime.shutdown(); } catch (_) {} } });
   const p1 = r1.runtime.restart(d1.cella);
   const p2 = r2.runtime.restart(d2.cella);
-  await Promise.all([b1.arrivato, b2.arrivato]);
-  assert.equal(b1.chiamate() + b2.chiamate(), 2, 'entrambi arrivano a issue insieme');
-  b1.libera(); b2.libera();
-  await raccogli([p1, p2]);
+  try {
+    await Promise.all([b1.arrivato, b2.arrivato]);
+    assert.equal(b1.chiamate() + b2.chiamate(), 2, 'entrambi arrivano a issue insieme');
+  } finally {
+    b1.libera(); b2.libera();
+    await raccogli([p1, p2]);
+  }
 });
