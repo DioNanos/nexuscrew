@@ -996,3 +996,110 @@ test('R3/R2-A: due runtime nello stesso processo su stessa radice e cella => uno
   liberaPrimo();
   await Promise.all([upA, upB]);
 });
+
+// ---------------------------------------------------------------------------
+// R4 / R3-01: restart acquisisce la STESSA catena, una volta per down+up
+// ---------------------------------------------------------------------------
+
+// Un broker con barriera di arrivo: `arrivato` si risolve quando il PRIMO
+// lancio entra in issue; resta sospeso finche' il test non chiama libera().
+function brokerSospeso({ fallisci = false } = {}) {
+  let chiamate = 0;
+  let segnala; let libera;
+  const arrivato = new Promise((r) => { segnala = r; });
+  const via = new Promise((r) => { libera = r; });
+  const issue = async () => {
+    chiamate += 1;
+    if (chiamate === 1) {
+      segnala();
+      await via;
+      if (fallisci) throw new Error('broker rifiutato dal test');
+    } else {
+      await via;
+    }
+    return null;
+  };
+  return { issue, arrivato, libera, chiamate: () => chiamate };
+}
+
+// Lascia correre il loop abbastanza perche' un'operazione NON serializzata
+// raggiunga issue (down + preflight + prepared sono tutti asincroni).
+async function lasciaCorrere() {
+  for (let i = 0; i < 100; i += 1) await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setTimeout(r, 400));
+}
+
+async function raccogli(promesse) {
+  return Promise.all(promesse.map((p) => p.then((v) => v, (e) => e)));
+}
+
+for (const [nome, stessoRuntime] of [['stesso runtime', true], ['due runtime', false]]) {
+  test(`R4/R3-01: up sospeso contro restart (${nome}) => issue una sola volta`, async (t) => {
+    const d = W.scriviMondo({ famiglia: 'other' });
+    t.after(() => W.pulisci(d));
+    const b = brokerSospeso();
+    const a1 = W.apriRuntime(d, { issue: b.issue });
+    const a2 = stessoRuntime ? a1 : W.apriRuntime(d, { issue: b.issue });
+    t.after(() => { for (const x of [a1, a2]) { try { x.runtime.shutdown(); } catch (_) {} } });
+    const upP = a1.runtime.up(d.cella);
+    await b.arrivato;
+    const restartP = a2.runtime.restart(d.cella);
+    await lasciaCorrere();
+    assert.equal(b.chiamate(), 1, 'il restart non oltrepassa la guardia mentre l\'up e\' sospeso');
+    b.libera();
+    await raccogli([upP, restartP]);
+  });
+
+  test(`R4/R3-01: restart sospeso contro down e contro un secondo restart (${nome})`, async (t) => {
+    const d = W.scriviMondo({ famiglia: 'other' });
+    t.after(() => W.pulisci(d));
+    const b = brokerSospeso();
+    const a1 = W.apriRuntime(d, { issue: b.issue });
+    const a2 = stessoRuntime ? a1 : W.apriRuntime(d, { issue: b.issue });
+    t.after(() => { for (const x of [a1, a2]) { try { x.runtime.shutdown(); } catch (_) {} } });
+    const primo = a1.runtime.restart(d.cella);
+    await b.arrivato;
+    let downFinita = false;
+    const downP = a2.runtime.down(d.cella).then((v) => { downFinita = true; return v; }, (e) => { downFinita = true; throw e; });
+    const secondo = a2.runtime.restart(d.cella);
+    await lasciaCorrere();
+    assert.equal(downFinita, false, 'il down aspetta la fine dell\'intera transizione del restart');
+    assert.equal(b.chiamate(), 1, 'il secondo restart non raggiunge issue');
+    b.libera();
+    await raccogli([primo, downP, secondo]);
+  });
+}
+
+test('R4/R3-01: dopo un fallimento la coda avanza (restart fallito, poi up)', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const b = brokerSospeso({ fallisci: true });
+  const a = W.apriRuntime(d, { issue: b.issue });
+  t.after(() => { try { a.runtime.shutdown(); } catch (_) {} });
+  const primo = a.runtime.restart(d.cella);
+  await b.arrivato;
+  const dopo = a.runtime.up(d.cella);
+  await lasciaCorrere();
+  assert.equal(b.chiamate(), 1);
+  b.libera();
+  const [e1] = await raccogli([primo, dopo]);
+  assert.ok(e1 instanceof Error, 'il primo restart e\' fallito');
+  assert.ok(b.chiamate() >= 2, 'la coda e\' avanzata: il secondo ciclo ha raggiunto issue');
+});
+
+test('R4/R3-01: radici (e quindi celle) diverse restano indipendenti', async (t) => {
+  const d1 = W.scriviMondo({ famiglia: 'other' });
+  const d2 = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => { W.pulisci(d1); W.pulisci(d2); });
+  const b1 = brokerSospeso();
+  const b2 = brokerSospeso();
+  const r1 = W.apriRuntime(d1, { issue: b1.issue });
+  const r2 = W.apriRuntime(d2, { issue: b2.issue });
+  t.after(() => { for (const x of [r1, r2]) { try { x.runtime.shutdown(); } catch (_) {} } });
+  const p1 = r1.runtime.restart(d1.cella);
+  const p2 = r2.runtime.restart(d2.cella);
+  await Promise.all([b1.arrivato, b2.arrivato]);
+  assert.equal(b1.chiamate() + b2.chiamate(), 2, 'entrambi arrivano a issue insieme');
+  b1.libera(); b2.libera();
+  await raccogli([p1, p2]);
+});
