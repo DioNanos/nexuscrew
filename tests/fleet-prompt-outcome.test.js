@@ -47,20 +47,21 @@ function chiaviEsatte(record) {
 test('record: round-trip dei quattro stati, chiavi esatte, nessuna extra accettata', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
   try {
+    // Un lancio diverso per stato: la macchina delle transizioni (provata piu'
+    // sotto) rende immutabile il terminale di uno stesso lancio.
     const casi = [
       [pending(), ['deadlineTs', 'event', 'generation', 'launchId', 'state', 'ts', 'version']],
-      [terminale({ state: 'submitted' }), ['event', 'generation', 'launchId', 'state', 'ts', 'version']],
-      [terminale({ state: 'skipped', reason: 'not-ready', notReady: 'not-ready-auth' }),
+      [terminale({ launchId: 'b'.repeat(16), state: 'submitted' }), ['event', 'generation', 'launchId', 'state', 'ts', 'version']],
+      [terminale({ launchId: 'c'.repeat(16), state: 'skipped', reason: 'not-ready', notReady: 'not-ready-auth' }),
         ['event', 'generation', 'launchId', 'notReady', 'reason', 'state', 'ts', 'version']],
-      [terminale({ state: 'unknown', reason: 'delivery-unknown' }),
+      [terminale({ launchId: 'd'.repeat(16), state: 'unknown', reason: 'delivery-unknown' }),
         ['event', 'generation', 'launchId', 'reason', 'state', 'ts', 'version']],
     ];
     for (const [record, chiavi] of casi) {
       assert.equal(activityFiles.scriviRecordPrompt(dir, record), true, record.state);
-      const suDisco = leggiGrezzo(dir);
+      const suDisco = leggiGrezzo(dir, record.launchId);
       assert.deepEqual(chiaviEsatte(suDisco), chiavi);
       assert.equal(suDisco.state, record.state);
-      // La ripubblicazione identica dello stesso pending non riscrive il file.
     }
     assert.equal(PROMPT_STATES.length, 4);
     // Chiave in piu' in qualunque stato: rifiuto, nessun effetto.
@@ -385,4 +386,61 @@ test('C3: tabella esaustiva, nessun submitted fuori da submitted', () => {
       ...c, launchId: 'e'.repeat(16),
     })), true, `${state} produce un record valido`);
   }
+});
+
+// ===========================================================================
+// Macchina delle transizioni per generazione, sul disco (difesa per il
+// riavvio): il file e' per lancio, la generazione arbitra.
+// ===========================================================================
+test('transizioni: pending->terminale ammesso, terminale immutabile e idempotente', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), true, 'pending gen0');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted' })), true,
+      'pending -> terminale ammesso');
+    const prima = fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8');
+    const mtime = fs.statSync(path.join(dir, nomeRecordPrompt(LAUNCH))).mtimeMs;
+    // Ripubblicazione identica del terminale: true, file invariato.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted' })), true);
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+    assert.equal(fs.statSync(path.join(dir, nomeRecordPrompt(LAUNCH))).mtimeMs, mtime);
+    // Terminale DIVERSO sulla stessa generazione: false, file invariato.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'skipped', reason: 'not-ready' })), false);
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+    // pending dopo il terminale: false.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), false);
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('transizioni: pending identico idempotente, pending diverso rifiutato', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), true);
+    const prima = fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ ts: 1700000009999 })), true,
+      'stesso pending (solo ts diverso): idempotente, file invariato');
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ deadlineTs: 1700000099999 })), false,
+      'pending con deadline diversa sulla stessa generazione: rifiutato');
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('transizioni: generazione maggiore sostituisce, minore mai', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ generation: 0, state: 'submitted' })), true);
+    // gen1 scrive il proprio pending nel MEDESIMO file: sostituisce.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ generation: 1 })), true);
+    assert.equal(leggiGrezzo(dir).generation, 1);
+    assert.equal(leggiGrezzo(dir).state, 'pending');
+    // Scrittura tardiva di gen0 dopo l'ammissione di gen1: false, file invariato.
+    const prima = fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ generation: 0, state: 'skipped', reason: 'not-ready' })), false);
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima);
+    // gen2 terminale: ammesso.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ generation: 2, state: 'unknown', reason: 'delivery-unknown' })), true);
+    assert.equal(leggiGrezzo(dir).state, 'unknown');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
