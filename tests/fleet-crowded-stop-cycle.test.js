@@ -316,6 +316,13 @@ test('stop con /proc affollato: senza verdetto sul canale nessuna attestazione, 
   const w = creaMondo(t, {
     mgrWrapper: (mgrReale) => mgrConCensimentoAffollato(mgrReale, procRoot, pgrpHolder),
   });
+  // Il tempo passa: la lease in grace dopo l'uscita del supervisore e' SCADUTA per
+  // il valutatore unico (none/expired ammesse, grace e live bloccano).
+  const statoLease = w.mgr.status.bind(w.mgr);
+  w.mgr.status = (id) => {
+    const r = statoLease(id);
+    return r && r.state === 'grace' ? { ...r, state: 'expired' } : r;
+  };
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   pgrpHolder.v = gruppo.leggiPgrp(w.paneChild.pid);
   assert.ok(pgrpHolder.v);

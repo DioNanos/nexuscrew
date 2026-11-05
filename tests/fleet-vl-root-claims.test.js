@@ -117,7 +117,10 @@ test('release tardiva di A, dopo B, rilegge e non toglie B', async () => {
   assert.equal((await radici.rilascia({ ...base, launchId: lancioA })).outcome, 'released');
   assert.equal((await radici.riserva({ ...base, launchId: lancioB })).outcome, 'claimed');
   const tardi = await radici.rilascia({ ...base, launchId: lancioA });
-  assert.equal(tardi.outcome, 'not-held');
+  // La lease di B e' di un ALTRO lancio: non e' un'assenza (`not-held`) ma un
+  // mismatch, che blocca. B resta intatta.
+  assert.equal(tardi.ok, false);
+  assert.equal(tardi.outcome, 'mismatch');
   const visto = await radici.ispeziona({ ...base, launchId: lancioB });
   assert.equal(visto.lease.launchId, lancioB);
   assert.equal(visto.own.cellId, 'Cella');

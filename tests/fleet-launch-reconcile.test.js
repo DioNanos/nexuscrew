@@ -691,6 +691,7 @@ test('single writer: un altro processo NC che tiene il lock blocca up e down; fe
   await new Promise((resolveP, rejectP) => {
     figlio.stdout.once('data', (b) => (String(b).includes('"lock":true') ? resolveP() : rejectP(new Error(String(b)))));
     figlio.once('error', rejectP);
+    figlio.once('exit', (code) => rejectP(new Error(`il figlio e' uscito prima di tenere il lock (rc=${code})`)));
   });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
