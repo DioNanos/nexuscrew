@@ -163,6 +163,17 @@ function paneOptionsTmux() {
 }
 
 const IMMEDIATE = { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {} };
+// Fixture del canale del record del prompt (consegna supervisionata: il canale
+// dedicato e' obbligatorio). Directory effimera per chiamata, lancio fisso.
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
+const fxPromptOutcome = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(dir);
+  return { dir, launchId: '5f4e3d2c1b0a9988' };
+};
 const CFG = (extra = {}) => ({
   tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'mandato', readyMs: 0,
   readyWaitMs: 1000, client: '', ...extra,
@@ -172,7 +183,7 @@ test('supervisore: gen0 dell opt-in e del supervisore — un solo paste SENZA En
   const { exec, argv } = paneOptionsTmux();
   let inject = 0;
   const ctl = startGenerationPrompt(CFG({ reprompt: false }), 0, { exited: false }, {
-    ...IMMEDIATE, tmuxExec: exec,
+    ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxPromptOutcome(),
     securePaste: async () => ({ ok: true, stage: 'pasted', paneId: '%42' }),
     injectPrompt: async () => { inject += 1; return { injected: true }; },
   });
@@ -187,9 +198,10 @@ test('supervisore: gen0 dell opt-in e del supervisore — un solo paste SENZA En
 test('supervisore: gen>0 dell opt-in — NESSUN paste e NESSUN injectPrompt', async () => {
   const { exec } = paneOptionsTmux();
   let inject = 0; let pastes = 0;
+  const fxCanaleGen = fxPromptOutcome();
   for (const generation of [1, 2, 3]) {
     const ctl = startGenerationPrompt(CFG({ reprompt: false }), generation, { exited: false }, {
-      ...IMMEDIATE, tmuxExec: exec,
+      ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxCanaleGen,
       securePaste: async () => { pastes += 1; return { ok: true, stage: 'pasted', paneId: '%42' }; },
       injectPrompt: async () => { inject += 1; return { injected: true }; },
     });
@@ -222,7 +234,7 @@ test('supervisore: pasted -> paste-delivered pubblicato bounded; paste-only NON 
   const { exec, options } = paneOptionsTmux();
   const target = process.env.TMUX_PANE || '=cloud-T';
   const ctl = startGenerationPrompt(CFG({ reprompt: false }), 0, { exited: false }, {
-    ...IMMEDIATE, tmuxExec: exec,
+    ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxPromptOutcome(),
     securePaste: async () => ({ ok: true, stage: 'pasted', paneId: '%42' }),
   });
   await ctl.settled;
@@ -241,7 +253,7 @@ test('supervisore: fallimento certo pre-paste (load) -> paste-failed:load, la ge
   const { exec, options } = paneOptionsTmux();
   const target = process.env.TMUX_PANE || '=cloud-T';
   const ctl = startGenerationPrompt(CFG({ reprompt: false }), 0, { exited: false }, {
-    ...IMMEDIATE, tmuxExec: exec,
+    ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxPromptOutcome(),
     securePaste: async () => ({ ok: false, stage: 'load', reason: 'buffer non disponibile' }),
   });
   const outcome = await ctl.settled;
@@ -260,7 +272,7 @@ test('supervisore: errore post-paste -> delivery-unknown al main, pubblicato, ma
   const target = process.env.TMUX_PANE || '=cloud-T';
   // (a) lo stage esplicito 'paste' del trasporto: tentativo fatto, esito incerto.
   const ctl = startGenerationPrompt(CFG({ reprompt: false }), 0, { exited: false }, {
-    ...IMMEDIATE, tmuxExec: exec,
+    ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxPromptOutcome(),
     securePaste: async () => ({ ok: false, stage: 'paste', reason: 'paste-buffer failed' }),
   });
   const outcome = await ctl.settled;
@@ -268,7 +280,7 @@ test('supervisore: errore post-paste -> delivery-unknown al main, pubblicato, ma
   // (b) un throw del trasporto non puo' diventare null innocuo: non si puo'
   // provare che il paste non sia partito -> delivery-unknown, fermata bounded.
   const ctl2 = startGenerationPrompt(CFG({ reprompt: false }), 0, { exited: false }, {
-    ...IMMEDIATE, tmuxExec: exec,
+    ...IMMEDIATE, tmuxExec: exec, promptOutcome: fxPromptOutcome(),
     securePaste: async () => { throw new Error('boom nel paste'); },
   });
   const outcome2 = await ctl2.settled;
@@ -330,7 +342,9 @@ test('fence: la delivery gen0 annullata non tocca la generazione nuova sullo ste
   const gate = new Promise((resolve) => { release = resolve; });
   const config = CFG({ reprompt: false });
   const childState = { exited: false };
+  const fxCanaleFence = fxPromptOutcome();
   const ctl0 = startGenerationPrompt(config, 0, childState, {
+    promptOutcome: fxCanaleFence,
     setTimeout: (fn) => { fn(); return 1; },
     clearTimeout: () => {},
     securePaste: async (bin, session, prompt, opts) => {
@@ -349,6 +363,7 @@ test('fence: la delivery gen0 annullata non tocca la generazione nuova sullo ste
   effects.push('settled-gen0');
   // generazione nuova sul medesimo pane: per la policy, NESSUN paste
   const ctl1 = startGenerationPrompt({ ...config, prompt: 'nuovo' }, 1, { exited: false }, {
+    promptOutcome: fxCanaleFence,
     setTimeout: (fn) => { fn(); return 1; },
     clearTimeout: () => {},
     securePaste: async () => { effects.push('paste-gen1'); return { ok: true, stage: 'pasted' }; },
@@ -366,6 +381,7 @@ test('fence: la delivery gen0 annullata non tocca la generazione nuova sullo ste
 function supervisorPayload(restartPrompt) {
   return {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,

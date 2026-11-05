@@ -934,7 +934,12 @@ test('clocks 17a: buildMcpWait — notBeforeMs civile e deadlineMs monotona da D
   const monoNow = () => monoT0;
   const wallNow = () => t0Wall;
   const waitCalls = [];
+  // Fixture del canale del record del prompt: la consegna supervisionata del
+  // test richiede il canale dedicato (directory effimera).
+  const fxDir = require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'nc-prompt-fx-'));
+  process.on('exit', () => { try { require('node:fs').rmSync(fxDir, { recursive: true, force: true }); } catch (_) {} });
   const s = {
+    promptOutcome: { dir: fxDir, launchId: '1a2b3c4d5e6f7788' },
     setTimeout: (fn) => { queueMicrotask(() => { try { fn(); } catch (_) {} }); return { unref() {} }; },
     clearTimeout: () => {},
     waitMcpReadiness: async (args) => { waitCalls.push(args); return { state: 'ready', ready: ['a'], failed: [], pending: [] }; },

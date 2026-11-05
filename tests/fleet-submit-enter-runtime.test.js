@@ -149,7 +149,13 @@ function publishFromProducer(markerFile) {
     { tmuxBin: 'tmux', tmuxSession: 'work-submit', prompt: 'hello\nworld', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     { exited: false },
-    { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },
+    // Canale del record del prompt: la consegna supervisionata lo richiede.
+    {
+      promptOutcome: { dir: fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-')), launchId: '3c4d5e6f70819203' },
+      setTimeout: (fn) => { fn(); return 1; },
+      clearTimeout: () => {},
+      tmuxExec: exec,
+    },
   );
   return { ctl, argv };
 }

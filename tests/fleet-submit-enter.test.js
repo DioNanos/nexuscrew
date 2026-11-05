@@ -10,6 +10,21 @@ const {
   submitPromptWithEnter, DELIVERY_STATES,
 } = require('../lib/fleet/prompt-delivery.js');
 
+// Fixture del canale del record del prompt (consegna supervisionata: il canale
+// dedicato e' obbligatorio). Directory effimera per chiamata, lancio fisso.
+const fsFx = require('node:fs');
+const osFx = require('node:os');
+const pathFx = require('node:path');
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fsFx.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
+const fxPromptOutcome = () => {
+  const dir = fsFx.mkdtempSync(pathFx.join(osFx.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(dir);
+  return { dir, launchId: '2b3c4d5e6f708192' };
+};
+
 // --- 2. consegna at-most-once ----------------------------------------------
 
 // fakeTmux: stesso formato di output del vero resolveSessionPane
@@ -195,6 +210,7 @@ function supervisorRun({ attestor = null } = {}) {
     readyWaitMs: 1000, submit: true,
   };
   const seams = {
+    promptOutcome: fxPromptOutcome(),
     setTimeout: (fn) => { fn(); return 1; },
     clearTimeout: () => {},
     submitPromptWithEnter: async (opts) => {
@@ -320,6 +336,7 @@ test('il supervisore conserva l incertezza anche se il figlio e gia morto', asyn
     const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true };
     const childState = { exited: false };
     const ctl = startGenerationPrompt(config, 1, childState, {
+      promptOutcome: fxPromptOutcome(),
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       submitPromptWithEnter: async () => { childState.exited = true; seen.push(state); return { delivered: false, state }; },
@@ -336,6 +353,7 @@ test('la generazione 0 di un opt-in e del supervisore (un solo proprietario)', a
     const seen = [];
     const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true };
     const ctl = startGenerationPrompt(config, generation, { exited: false }, {
+      promptOutcome: fxPromptOutcome(),
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       submitPromptWithEnter: async () => { seen.push(generation); return { delivered: false, state: 'transport-unsupported' }; },
@@ -356,7 +374,9 @@ test('fence: la delivery della generazione vecchia non tocca la nuova sul medesi
   const gate = new Promise((resolve) => { release = resolve; });
   const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'vecchio', readyMs: 0, readyWaitMs: 60000, submit: true };
   const childState = { exited: false };
+  const fxCanaleFence = fxPromptOutcome();
   const ctl0 = startGenerationPrompt(config, 0, childState, {
+    promptOutcome: fxCanaleFence,
     setTimeout: (fn) => { fn(); return 1; },
     clearTimeout: () => {},
     submitPromptWithEnter: async (opts) => {
@@ -375,6 +395,7 @@ test('fence: la delivery della generazione vecchia non tocca la nuova sul medesi
   const outcome0 = await ctl0.settled;
   // gen1 sullo stesso pane
   const ctl1 = startGenerationPrompt({ ...config, prompt: 'nuovo' }, 1, { exited: false }, {
+    promptOutcome: fxCanaleFence,
     setTimeout: (fn) => { fn(); return 1; },
     clearTimeout: () => {},
     submitPromptWithEnter: async () => { effects.push('consegna-nuova'); return { delivered: true, state: 'submitted' }; },
@@ -423,7 +444,7 @@ test('R01: il ramo custom pubblica il report e il consumer lo legge davvero', as
     { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     { exited: false },
-    { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },
+    { promptOutcome: fxPromptOutcome(), setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },
   );
   assert.ok(ctl, 'la generazione 0 del opt-in e del supervisore');
   await ctl.settled;
@@ -454,6 +475,7 @@ test('R01: un esito incerto viene pubblicato e resta bloccante', async () => {
     1,
     { exited: false },
     {
+      promptOutcome: fxPromptOutcome(),
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       tmuxExec: exec,
@@ -474,6 +496,7 @@ test('R01: un esito di generazione invalidata non diventa l esito della nuova', 
     0,
     childState,
     {
+      promptOutcome: fxPromptOutcome(),
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       tmuxExec: exec,

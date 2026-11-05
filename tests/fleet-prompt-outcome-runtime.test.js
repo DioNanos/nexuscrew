@@ -13,6 +13,8 @@ const { EventEmitter } = require('node:events');
 
 const activityFiles = require('../lib/files/activity.js');
 const { main: cellExecMain, startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+const { createLaunchBroker } = require('../lib/fleet/launch-broker.js');
+const W = require('./helpers/launch-world.js');
 
 const LAUNCH = 'a1b2c3d4e5f60718';
 const SECRET = 'SECRET-PROMPT-MARKER-xyz';
@@ -262,4 +264,179 @@ test('supervisore: crash dopo l\'effetto -> resta pending, MAI submitted dedotto
     try { fs.chmodSync(esito.dir, 0o700); } catch (_) {}
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- 19. Canale dedicato, indipendente dagli hook --------------------------------
+test('runtime: activityHooks false -> il payload porta comunque il canale del prompt', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  let catturato = null;
+  const { runtime } = W.apriRuntime(d, {
+    issue: async (payload) => {
+      catturato = payload;
+      return { socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const r = await runtime.up(d.cella);
+  assert.equal(r.ok, true);
+  // Il canale ATTIVITA' non c'e' (hooks off), quello del prompt SI': la
+  // durabilita' dell'esito non dipende dagli hook del client.
+  assert.equal(catturato.activity, undefined, 'hooks off: nessun canale attivita\'');
+  assert.ok(catturato.promptOutcome && typeof catturato.promptOutcome === 'object',
+    'il canale del prompt viaggia comunque nel payload');
+  assert.deepEqual(Object.keys(catturato.promptOutcome).sort(), ['dir', 'launchId'],
+    'chiavi esatte del canale');
+  assert.equal(catturato.promptOutcome.dir, path.join(d.filesRoot, d.sessione),
+    'la directory e\' quella privata della sessione');
+  assert.match(catturato.promptOutcome.launchId, /^[0-9a-f]{16}$/,
+    'l\'identita\' del canale e\' il lancio (hex16)');
+});
+
+test('runtime: hooks attivi -> canale attivita\' E canale del prompt, distinti', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  let catturato = null;
+  const { runtime } = W.apriRuntime(d, {
+    cfg: { activityHooks: true },
+    issue: async (payload) => {
+      catturato = payload;
+      return { socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) };
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const r = await runtime.up(d.cella);
+  assert.equal(r.ok, true);
+  assert.ok(catturato.activity, 'canale attivita\' presente');
+  assert.ok(catturato.promptOutcome, 'canale del prompt presente');
+  assert.equal(catturato.activity.dir, catturato.promptOutcome.dir,
+    'stessa directory privata di sessione');
+  assert.equal(catturato.activity.generation, catturato.promptOutcome.launchId,
+    'l\'identita\' del lancio e\' UNA: generation del canale attivita\' = launchId del prompt');
+  assert.notDeepEqual(Object.keys(catturato.activity).sort(), Object.keys(catturato.promptOutcome).sort(),
+    'i due canali restano oggetti distinti con chiavi proprie');
+});
+
+test('supervisore: canale assente -> consegna trattenuta, zero paste, stderr fisso, nessun record', async () => {
+  const root = tmpRoot();
+  try {
+    const w = harness({
+      // NESSUN promptOutcome nel payload: chiamante vecchio.
+      unaGenerazione: true,
+      deliver: () => { throw new Error('la consegna non deve mai partire'); },
+    });
+    const code = await w.run();
+    assert.equal(code, 0, 'la cella parte e non diventa fallita');
+    assert.equal(w.deliveries.length, 0, 'zero consegna supervisionata senza canale');
+    assert.equal(w.launches(), 1, 'la generazione e\' partita normalmente');
+    assert.ok(w.errs.some((m) => m.includes('prompt outcome channel unavailable')),
+      'stderr a testo fisso dichiara il canale non disponibile');
+    assert.ok(w.marks.some((m) => m.includes('@nc_delivery skipped-unknown')),
+      'marcatore volatile compatibile skipped-unknown');
+    assert.equal(fs.existsSync(path.join(root, 'cloud-T')), false,
+      'nessun record costruito in una directory indovinata');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('payload: canale del prompt malformato -> rifiutato dal validatore (broker vero)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-chan-'));
+  fs.chmodSync(home, 0o700);
+  const broker = createLaunchBroker({ home, launchTokenTtlMs: 15000 });
+  try {
+    const LANCI0 = '0123456789abcdef';
+    const cattivi = [
+      { dir: '/tmp/privato', launchId: LANCI0, extra: 1 },        // chiave in piu'
+      { dir: '/tmp/privato', launchId: '..' },                     // id ostile: componente
+      { dir: '/tmp/privato', launchId: '.' },                      // id ostile: componente
+      { dir: '/tmp/privato', launchId: 'a/b' },                    // id ostile: separatore
+      { dir: '/tmp/privato', launchId: 'a\nb' },                   // id ostile: CR/LF
+      { dir: '/tmp/privato', launchId: '' },                       // id vuoto
+      { dir: 'riga\nnuova', launchId: LANCI0 },                    // dir con CR/LF
+      { dir: '', launchId: LANCI0 },                               // dir vuota
+      { dir: '/tmp/privato', launchId: 42 },                       // id non stringa
+      'non-oggetto',
+    ];
+    for (const cattivo of cattivi) {
+      const payload = {
+        command: '/bin/true', args: [], env: {}, supervise: { enabled: false },
+        promptOutcome: cattivo,
+      };
+      const ticket = await broker.issue(payload);
+      const errors = [];
+      const code = await cellExecMain(['--socket', ticket.socketPath, '--nonce', ticket.nonce], {
+        spawn: () => { throw new Error('il payload rifiutato non deve mai spawnare'); },
+        process: new EventEmitter(),
+        writeError: (l) => errors.push(String(l)),
+      }).catch((e) => { errors.push(String(e && e.message)); return 1; });
+      assert.equal(code, 1);
+      assert.ok(errors.some((m) => m.includes('invalid launch payload')),
+        `payload rifiutato per ${JSON.stringify(cattivo)}`);
+    }
+    // Un canale BEN FORMATO non e' un payload rifiutato: la stessa corsa arriva
+    // fino allo spawn (che qui e' il seam che registra) e il figlio esce.
+    const buono = await broker.issue({
+      command: '/bin/true', args: [], env: {}, supervise: { enabled: false },
+      promptOutcome: { dir: '/tmp/privato', launchId: LANCI0 },
+    });
+    let spawnato = false;
+    const code = await cellExecMain(['--socket', buono.socketPath, '--nonce', buono.nonce], {
+      spawn: () => {
+        spawnato = true;
+        const c = new EventEmitter();
+        c.kill = () => {};
+        queueMicrotask(() => c.emit('exit', 0, null));
+        return c;
+      },
+      process: new EventEmitter(),
+      writeError: () => {},
+    });
+    assert.ok(spawnato, 'canale ben formato: il payload passa e la cella nasce');
+    assert.equal(code, 0, 'uscita pulita del figlio');
+  } finally { await broker.close(); fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('supervisore: generazioni che non possono ricevere prompt -> terminale diretto, mai pending', () => {
+  const root = tmpRoot(); const esito = canale(root);
+  const seamsBase = {
+    deliverBootstrapPrompt: async () => { throw new Error('non deve partire'); },
+    securePaste: async () => { throw new Error('non deve partire'); },
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+    setTimeout: () => 1, clearTimeout: () => {},
+    writeError: () => {},
+  };
+  const gate = { ultimaGenerazioneAmmessa: -1 };
+  try {
+    // gen>0 con reprompt:false: il prompt non si reinvia MAI.
+    startGenerationPrompt(
+      { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 60000, client: '', reprompt: false, readyWaitMs: 1000 },
+      1, { exited: true }, { ...seamsBase, promptOutcome: esito, promptGate: gate },
+    );
+    let record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'skipped', 'reprompt:false gen>0');
+    assert.equal(record.reason, 'reprompt-disabled');
+    assert.equal(record.generation, 1);
+    assert.equal(record.deadlineTs, undefined, 'nessun pending, nessun limite artificiale');
+
+    // vl ineleggibile: skip con la ragione chiusa del launcher, zero paste.
+    // (Generazione 2: sopra la precedente — un terminale DIVERSO sulla stessa
+    // generazione e' immutabile, e' il contratto delle transizioni.)
+    startGenerationPrompt(
+      { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 60000, client: 'vl', readyWaitMs: 1000, vlBootstrap: { eligible: false, reason: 'claim-taken' } },
+      2, { exited: true }, { ...seamsBase, promptOutcome: esito, promptGate: gate },
+    );
+    record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'skipped', 'vl ineleggibile');
+    assert.equal(record.reason, 'vl-bootstrap-claim-taken');
+    assert.equal(record.generation, 2, 'la generazione ammessa sostituisce, non indietro');
+
+    // vl gen>0 (eleggibile): la claim e' della generazione 0, qui si skip.
+    startGenerationPrompt(
+      { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 60000, client: 'vl', readyWaitMs: 1000, vlBootstrap: { eligible: true, claimPath: '/tmp/claim' } },
+      3, { exited: true }, { ...seamsBase, promptOutcome: esito, promptGate: gate },
+    );
+    record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'skipped', 'vl gen>0');
+    assert.equal(record.reason, 'vl-bootstrap-generation');
+    assert.equal(record.generation, 3);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

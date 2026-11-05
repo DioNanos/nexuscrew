@@ -5,6 +5,16 @@
 // timeout resta bloccante (il gate MCP non bypassa mai il composer).
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+// Fixture del canale del record del prompt (consegna supervisionata: il
+// canale dedicato e' obbligatorio). Directory effimera per fixture.
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
 
 const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
 const { startGenerationPrompt, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
@@ -137,9 +147,12 @@ test('parseMcpListOption: formato bounded, nomi validati, duplicati e spazzatura
 function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   const setOptions = [];
   const waitCalls = [];
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   return {
     setOptions,
     waitCalls,
+    promptOutcome: { dir: fxDir, launchId: '0f1e2d3c4b5a6978' },
     // Il timer di consegna del prodotto e' unref'd (non deve tenere vivo il
     // supervisor): nel test lo scatto avviene in microtask, cosi' la promise
     // del test si risolve senza dipendere dal timer sullo scheduler reale
@@ -255,9 +268,6 @@ test('validRestartPrompt: accetta client claude con mcpReadiness; rifiuta attesa
 });
 
 // --- runtime: gate anche per celle claude legacy (config nota meno negati) ---
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { buildMcpReadinessPayload, cellMcpExpectedServers } = require('../lib/fleet/runtime.js');
 
 function legacyHome(t) {

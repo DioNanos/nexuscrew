@@ -18,6 +18,20 @@ const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { main: cellExecMain, startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+
+// Fixture del canale del record del prompt (adattamento del supervised
+// fixture: la consegna supervisionata richiede il canale dedicato, anche con
+// gli hook attivita' spenti). Una directory effimera per test, rimossa
+// all'uscita del processo; lancio unico per non condividere il file del record.
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
+function fxPromptOutcome(launchId = '0a1b2c3d4e5f6071') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(dir);
+  return { dir, launchId };
+}
 const { EventEmitter } = require('node:events');
 
 // --- Schermate TUI reali (probe tmux, 2026-07-31): claude 2.1.220, kimi 0.31.1
@@ -683,6 +697,7 @@ test('cell-exec kimi: delivery owner per OGNI generazione + marker @nc_delivery 
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 1,
@@ -728,6 +743,7 @@ test('cell-exec R2: gen0 exit durante attesa -> delivery gen0 CANCELLATA, gen1 e
   let cancelObserved = 0;
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -820,6 +836,7 @@ test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun ha
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 8,
@@ -864,6 +881,7 @@ test('cell-exec R9: exit durante paste (delivery-unknown) -> STOP bounded, nessu
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -902,6 +920,7 @@ test('cell-exec R9: exit durante Enter (staged-not-submitted) -> STOP bounded, n
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -942,6 +961,7 @@ test('cell-exec R12: esito incerto chiuso PRIMA dell\'exit -> stop al primo exit
     const proc = new EventEmitter();
     const payload = {
       command: '/bin/fake', args: [], env: {},
+      promptOutcome: fxPromptOutcome(),
       supervise: {
         enabled: true, initialReadyMs: 5, restartDelayMs: 5,
         maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -980,6 +1000,7 @@ test('cell-exec restart: senza client -> legacy injectPrompt (G4); failure deliv
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 1,
@@ -1106,6 +1127,9 @@ function supervisorHarness({
   const proc = new EventEmitter();
   const fullPayload = {
     command: '/bin/fake', args: [], env: {},
+    // Fixture del canale del record del prompt: la consegna supervisionata
+    // richiede il canale dedicato (un canale per harness, lancio fisso).
+    promptOutcome: fxPromptOutcome(),
     ...payload,
     ...(activity ? { activity } : {}),
     supervise: {
