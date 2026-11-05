@@ -134,7 +134,10 @@ function fakeTmux(script = {}) {
 }
 
 const READY_CAPTURE = () => async () => CLAUDE_READY;
-const BASE = { tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', client: 'claude', readyWaitMs: 0 };
+// readyWaitMs: 1000 (valore di contratto valido): con la regola C7 «ready a
+// deadline o dopo non autorizza» uno zero non consegnerebbe mai, quindi le
+// fixture usano 1000 e iniettano il clock virtuale dove la finestra si esaurisce.
+const BASE = { tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', client: 'claude', readyWaitMs: 1000 };
 
 test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async () => {
   const { calls, exec } = fakeTmux();
@@ -154,16 +157,20 @@ test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async 
 });
 
 test('delivery: consent/auth/onboarding -> skipped-not-ready, ZERO paste e ZERO Enter, TUI vivo', async () => {
+  const { virtualClock } = require('./helpers/delivery-clock.js');
   for (const [screen, kind] of [
     [CLAUDE_CONSENT, 'not-ready-consent'],
     [CLAUDE_TRUST, 'not-ready-onboarding'],
     [CLAUDE_NOT_LOGGED_IN, 'not-ready-auth'],
     [KIMI_LOGGED_OUT, 'not-ready-auth'],
   ]) {
+    const clk = virtualClock();
     const { calls, exec } = fakeTmux();
     const r = await deliverBootstrapPrompt({
-      ...BASE, client: kind === 'not-ready-auth' && screen === KIMI_LOGGED_OUT ? 'kimi' : 'claude',
+      ...BASE, pollMs: 300,
+      client: kind === 'not-ready-auth' && screen === KIMI_LOGGED_OUT ? 'kimi' : 'claude',
       tmuxExecImpl: exec, captureImpl: async () => screen,
+      nowImpl: clk.now, sleepImpl: clk.sleep,
     });
     assert.equal(r.delivered, false);
     assert.equal(r.state, 'skipped-not-ready');

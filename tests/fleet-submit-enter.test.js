@@ -43,7 +43,7 @@ const submit = (script, extra = {}) => {
   const { calls, exec } = fakeTmux(script);
   return { calls, run: () => submitPromptWithEnter({
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', env: {},
-    readyWaitMs: 0, tmuxExecImpl: exec, sleepImpl: async () => {}, ...extra,
+    readyWaitMs: 1000, tmuxExecImpl: exec, sleepImpl: async () => {}, ...extra,
   }) };
 };
 const count = (calls, prefix) => calls.filter((c) => c.startsWith(prefix)).length;
@@ -118,7 +118,7 @@ test('consegna: cancellazione DOPO il paste -> nessun Enter, esito incerto', asy
   };
   const r = await submitPromptWithEnter({
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
-    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     bracketedPaste: true, isCancelled: () => cancelled,
   });
   assert.equal(r.state, 'delivery-unknown');
@@ -192,7 +192,7 @@ function supervisorRun({ attestor = null } = {}) {
   const seen = [];
   const config = {
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-    readyWaitMs: 0, submit: true,
+    readyWaitMs: 1000, submit: true,
   };
   const seams = {
     setTimeout: (fn) => { fn(); return 1; },
@@ -245,7 +245,7 @@ function cancelAt(calls, when, script = {}) {
 
 const runWith = (harness, extra = {}) => submitPromptWithEnter({
   tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
-  readyWaitMs: 0, tmuxExecImpl: harness.exec, sleepImpl: async () => {},
+  readyWaitMs: 1000, tmuxExecImpl: harness.exec, sleepImpl: async () => {},
   bracketedPaste: true, isCancelled: harness.isCancelled, ...extra,
 });
 
@@ -268,7 +268,7 @@ test('cancellazione dopo il resolve -> nessun load e nessun paste', async () => 
   };
   const r = await submitPromptWithEnter({
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
-    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     bracketedPaste: true, isCancelled: () => cancelled,
   });
   assert.equal(r.state, 'cancelled');
@@ -303,7 +303,7 @@ test('il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', a
   };
   const r = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
-    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     captureImpl: async () => '❯\n', isCancelled: () => cancelled,
   });
   assert.equal(r.state, 'cancelled');
@@ -315,7 +315,7 @@ test('il supervisore conserva l incertezza anche se il figlio e gia morto', asyn
   // arriva al loop principale, che su delivery-unknown non riavvia.
   for (const state of ['delivery-unknown', 'staged-not-submitted']) {
     const seen = [];
-    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true };
+    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true };
     const childState = { exited: false };
     const ctl = startGenerationPrompt(config, 1, childState, {
       setTimeout: (fn) => { fn(); return 1; },
@@ -332,7 +332,7 @@ test('il supervisore conserva l incertezza anche se il figlio e gia morto', asyn
 test('la generazione 0 di un opt-in e del supervisore (un solo proprietario)', async () => {
   for (const generation of [0, 1]) {
     const seen = [];
-    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true };
+    const config = { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true };
     const ctl = startGenerationPrompt(config, generation, { exited: false }, {
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
@@ -418,7 +418,7 @@ test('R01: il ramo custom pubblica il report e il consumer lo legge davvero', as
   // Nessuna attestazione (default di produzione): l'esito e' il rifiuto.
   const target = process.env.TMUX_PANE || '=cloud-T';
   const ctl = startGenerationPrompt(
-    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     { exited: false },
     { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },
@@ -448,7 +448,7 @@ test('R01: un esito incerto viene pubblicato e resta bloccante', async () => {
   const { exec, options } = paneOptionsTmux();
   const target = process.env.TMUX_PANE || '=cloud-T';
   const ctl = startGenerationPrompt(
-    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true },
     1,
     { exited: false },
     {
@@ -468,7 +468,7 @@ test('R01: un esito di generazione invalidata non diventa l esito della nuova', 
   const target = process.env.TMUX_PANE || '=cloud-T';
   const childState = { exited: false };
   const ctl = startGenerationPrompt(
-    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 0, submit: true },
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     childState,
     {
@@ -515,7 +515,7 @@ test('R02: il bootstrap cancella il buffer dopo una cancellazione durante il loa
   };
   const r = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
-    readyWaitMs: 0, tmuxExecImpl: exec2, sleepImpl: async () => {},
+    readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     captureImpl: async () => '❯\n', isCancelled: () => cancelled,
   });
   assert.equal(r.state, 'cancelled');

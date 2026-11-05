@@ -98,7 +98,7 @@ const PAYLOAD_BASE = (restartPrompt) => ({
 test('validPayload: reprompt false dentro restartPrompt custom e accettato', () => {
   const p = PAYLOAD_BASE({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-    client: '', readyWaitMs: 0, reprompt: false,
+    client: '', readyWaitMs: 1000, reprompt: false,
   });
   assert.equal(validPayload(p), true);
 });
@@ -106,7 +106,7 @@ test('validPayload: reprompt false dentro restartPrompt custom e accettato', () 
 test('validPayload: reprompt true esplicito su custom accettato (il default dichiarato)', () => {
   const p = PAYLOAD_BASE({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-    client: '', readyWaitMs: 0, reprompt: true,
+    client: '', readyWaitMs: 1000, reprompt: true,
   });
   assert.equal(validPayload(p), true);
 });
@@ -115,7 +115,7 @@ test('validPayload: reprompt non booleano rifiuta il payload', () => {
   for (const value of ['false', 0, null]) {
     const p = PAYLOAD_BASE({
       tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-      client: '', readyWaitMs: 0, reprompt: value,
+      client: '', readyWaitMs: 1000, reprompt: value,
     });
     assert.equal(validPayload(p), false, `payload rifiutato: reprompt=${JSON.stringify(value)}`);
   }
@@ -124,7 +124,7 @@ test('validPayload: reprompt non booleano rifiuta il payload', () => {
 test('validPayload: reprompt su client classificato rifiuta il payload', () => {
   const p = PAYLOAD_BASE({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-    client: 'kimi', readyWaitMs: 0, reprompt: false,
+    client: 'kimi', readyWaitMs: 1000, reprompt: false,
   });
   assert.equal(validPayload(p), false, 'la policy e' + ' dei soli engine custom');
 });
@@ -132,7 +132,7 @@ test('validPayload: reprompt su client classificato rifiuta il payload', () => {
 test('validPayload: reprompt insieme a submit rifiuta il payload (policy non sommabili)', () => {
   const p = PAYLOAD_BASE({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0,
-    client: '', readyWaitMs: 0, submit: true, reprompt: false,
+    client: '', readyWaitMs: 1000, submit: true, reprompt: false,
   });
   assert.equal(validPayload(p), false);
 });
@@ -165,7 +165,7 @@ function paneOptionsTmux() {
 const IMMEDIATE = { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {} };
 const CFG = (extra = {}) => ({
   tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'mandato', readyMs: 0,
-  readyWaitMs: 0, client: '', ...extra,
+  readyWaitMs: 1000, client: '', ...extra,
 });
 
 test('supervisore: gen0 dell opt-in e del supervisore — un solo paste SENZA Enter, mai injectPrompt', async () => {
@@ -381,7 +381,7 @@ test('main: esito incerto della gen0 (paste tentato) -> fermata bounded, NESSUNA
   let launches = 0; let pastes = 0;
   const payload = supervisorPayload({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'mandato', readyMs: 0,
-    client: '', readyWaitMs: 0, reprompt: false,
+    client: '', readyWaitMs: 1000, reprompt: false,
   });
   const code = await cellExecMain(['--socket', '/tmp/x', '--nonce', 'a'.repeat(64)], {
     receivePayload: async () => payload,
@@ -410,7 +410,7 @@ test('main: gen>0 dell opt-in — nessun paste dopo il restart, spawn regolare',
   let launches = 0; let pastes = 0;
   const payload = supervisorPayload({
     tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'mandato', readyMs: 0,
-    client: '', readyWaitMs: 0, reprompt: false,
+    client: '', readyWaitMs: 1000, reprompt: false,
   });
   const code = await cellExecMain(['--socket', '/tmp/x', '--nonce', 'c'.repeat(64)], {
     receivePayload: async () => payload,

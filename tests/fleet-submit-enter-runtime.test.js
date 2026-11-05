@@ -146,7 +146,7 @@ function publishFromProducer(markerFile) {
   };
   const { startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
   const ctl = startGenerationPrompt(
-    { tmuxBin: 'tmux', tmuxSession: 'work-submit', prompt: 'hello\nworld', readyMs: 0, readyWaitMs: 0, submit: true },
+    { tmuxBin: 'tmux', tmuxSession: 'work-submit', prompt: 'hello\nworld', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     { exited: false },
     { setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {}, tmuxExec: exec },

@@ -2,7 +2,7 @@
 const test=require('node:test');const assert=require('node:assert/strict');const {EventEmitter}=require('node:events');
 const {startGenerationPrompt,main}=require('../lib/fleet/cell-exec.js');const {securePaste}=require('../lib/fleet/launch.js');
 const defer=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return{promise,resolve};};
-const cfg={tmuxBin:'tmux',tmuxSession:'cloud-T',prompt:'sentinel',readyMs:0,readyWaitMs:0,client:'',reprompt:false};
+const cfg={tmuxBin:'tmux',tmuxSession:'cloud-T',prompt:'sentinel',readyMs:0,readyWaitMs:1000,client:'',reprompt:false};
 function transport(pauseAt){const entered=defer(),release=defer(),calls=[];const exec=async(_b,args)=>{calls.push(args[0]);if(args[0]===pauseAt){entered.resolve();await release.promise;}return{err:null,stdout:'cloud-T\t0\t%42\n',stderr:'',code:0};};return{entered,release,calls,exec};}
 for(const pauseAt of ['paste-buffer','delete-buffer'])test('cancel after paste attempt remains uncertain at '+pauseAt,async()=>{
  const tr=transport(pauseAt);const childState={exited:false};let fire;const marks=[];
