@@ -210,3 +210,112 @@ test('record: nessun testo del prompt nel file, solo chiavi ammesse', () => {
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// ===========================================================================
+// Lettore legato all'autorita' del lancio corrente (per IDENTITA', mai
+// attraverso il selettore, mai condizionato dal canale attivita').
+// ===========================================================================
+const VECCHIO = 'b'.repeat(16);
+const CORRENTE = 'c'.repeat(16);
+
+test('lettore: assente -> absent; rotto -> unknown/record-broken; mai un esito dal rotto', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    // Assenza VERIFICATA (ENOENT): absent, che non e' uno stato di consegna.
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: CORRENTE }),
+      { state: 'absent', launchId: CORRENTE });
+    // Rotto: JSON invalido, versione sbagliata, chiave in piu', launchId del
+    // contenuto diverso dal nome. Mai submitted/skipped da un record rotto.
+    for (const [nome, contenuto] of [
+      ['json-invalido', '{'],
+      ['versione-sbagliata', JSON.stringify({ ...pending(), version: 2 })],
+      ['chiave-in-piu', JSON.stringify({ ...pending(), extra: 1 })],
+      ['launchId-diverso', JSON.stringify(pending({ launchId: VECCHIO }))],
+    ]) {
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, nomeRecordPrompt(CORRENTE)), contenuto);
+      assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: CORRENTE }),
+        { state: 'unknown', reason: 'record-broken', launchId: CORRENTE }, nome);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+    // leggiRecordPrompt: stessa validazione stretta, null per assente/rotto.
+    assert.equal(activityFiles.leggiRecordPrompt(dir, CORRENTE), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore: tuple del record per identita\', anche con canale attivita\' off', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ launchId: VECCHIO, state: 'submitted' })), true);
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ launchId: CORRENTE, state: 'skipped', reason: 'not-ready', notReady: 'not-ready-auth' })), true);
+    // Il record del lancio corrente, PER IDENTITA': mai quello di un lancio
+    // vecchio, mai attraverso il selettore launch-current.
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: CORRENTE, canale: 'off' });
+    assert.deepEqual(letto, {
+      launchId: CORRENTE, generation: 0, state: 'skipped',
+      reason: 'not-ready', notReady: 'not-ready-auth', ts: 1700000000000,
+    });
+    // Un terzo lancio non vede il record degli altri due.
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: 'd'.repeat(16) }),
+      { state: 'absent', launchId: 'd'.repeat(16) });
+    // leggiRecordPrompt: la stessa tupla.
+    assert.deepEqual(activityFiles.leggiRecordPrompt(dir, CORRENTE), letto);
+    // Input invalidi: null, mai un absent inventato.
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', null), null);
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', {}), null);
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: '../x' }), null);
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, '../altro', { launchId: CORRENTE }), null);
+    assert.equal(activityFiles.leggiEsitoPromptCorrente('', 'cloud-T', { launchId: CORRENTE }), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore: pending oltre deadlineTs+2000 -> unknown/deadline-exceeded, senza riscrittura', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    const adesso = Date.now();
+    const scaduto = pending({ ts: adesso - 10000, deadlineTs: adesso - 4000 });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, scaduto), true);
+    const prima = fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8');
+    const mtimePrima = fs.statSync(path.join(dir, nomeRecordPrompt(LAUNCH))).mtimeMs;
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }), {
+      state: 'unknown', reason: 'deadline-exceeded', launchId: LAUNCH,
+      generation: 0, ts: scaduto.ts,
+    });
+    assert.equal(fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8'), prima,
+      'il record non si riscrive in lettura');
+    assert.equal(fs.statSync(path.join(dir, nomeRecordPrompt(LAUNCH))).mtimeMs, mtimePrima);
+    // Clock civile incoerente (ts nel futuro): unknown bounded, non pending eterno.
+    fs.rmSync(dir, { recursive: true, force: true });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ ts: adesso + 600000, deadlineTs: adesso + 604000 })), true);
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }), {
+      state: 'unknown', reason: 'deadline-exceeded', launchId: LAUNCH,
+      generation: 0, ts: adesso + 600000,
+    });
+    // Un terminale realmente persistito DOPO resta leggibile.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted' })), true);
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }).state, 'submitted');
+    // Pending NON scaduto: resta pending in lettura.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ launchId: VECCHIO, ts: adesso, deadlineTs: adesso + 60000 })), true);
+    const vivo = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: VECCHIO });
+    assert.equal(vivo.state, 'pending');
+    assert.equal(vivo.deadlineTs, adesso + 60000);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettura: non crea, non modifica e non pota nulla', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted' })), true);
+    fs.writeFileSync(path.join(dir, 'file-altrui.json'), '{}\n');
+    const prima = fs.readdirSync(dir).sort();
+    const mtime = new Map(prima.map((n) => [n, fs.statSync(path.join(dir, n)).mtimeMs]));
+    activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: 'zz'.repeat(8) });
+    activityFiles.leggiEsitoPromptCorrente(root, 'sessione-che-non-esiste', { launchId: LAUNCH });
+    activityFiles.leggiRecordPrompt(dir, LAUNCH);
+    assert.deepEqual(fs.readdirSync(dir).sort(), prima);
+    for (const n of prima) {
+      assert.equal(fs.statSync(path.join(dir, n)).mtimeMs, mtime.get(n), `${n} non toccato`);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
