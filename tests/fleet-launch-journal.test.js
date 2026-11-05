@@ -618,7 +618,7 @@ async function fermaHostFinto(host) {
   await finito;
 }
 
-test('abort con root comparsa e host VIVO (sonda di audit): claim e record restano, host intatto', async (t) => {
+test('abort con root comparsa e host VIVO: claim e record restano, host intatto', async (t) => {
   const d = W.scriviMondo({ famiglia: 'vl' });
   t.after(() => W.pulisci(d));
   let host = null;
