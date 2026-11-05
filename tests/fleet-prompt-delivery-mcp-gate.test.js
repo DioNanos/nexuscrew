@@ -164,9 +164,11 @@ function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   };
 }
 
-test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget approvato)', async () => {
+test('cell-exec: claude.* riceve mcpWait con notBeforeMs civile e deadline monotona da due seam distinti', async () => {
   const optsCatturati = [];
-  const t0 = 1_700_000_000_000;
+  const t0 = 1_700_000_000_000;          // civile (notBeforeMs: nomi log MCP)
+  const monoT0 = 987_654;                // monotona (budget/deadline)
+  const monoNow = () => monoT0;
   const s = cellExecSeams({
     deliverResult: { delivered: true, state: 'submitted', notReady: '', attempts: 1, mcp: { state: 'ready', ready: ['a'], failed: [], pending: [] } },
     waitResult: { state: 'ready', ready: ['a'], failed: [], pending: [] },
@@ -179,7 +181,7 @@ test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget a
       mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['nexuscrew', 'memory'], budgetMs: 20000 },
     },
     0, { exited: false },
-    { ...s, nowImpl: () => t0, sleepImpl: async () => {} },
+    { ...s, wallNowImpl: () => t0, monoNowImpl: monoNow, sleepImpl: async () => {} },
   );
   await ctl.settled;
   assert.strictEqual(optsCatturati.length, 1);
@@ -188,8 +190,9 @@ test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget a
   assert.ok(waitArg, 'il gate deve passare dall adattatore waitMcpReadiness');
   assert.deepStrictEqual(waitArg.params.expectedServers, ['nexuscrew', 'memory']);
   assert.strictEqual(waitArg.params.cwd, '/tmp/cella');
-  assert.strictEqual(waitArg.params.notBeforeMs, t0, 'notBefore = avvio della GENERAZIONE corrente');
-  assert.strictEqual(waitArg.deadlineMs, t0 + 20000, 'deadline composta = spawn + budget');
+  assert.strictEqual(waitArg.params.notBeforeMs, t0, 'notBefore CIVILE = avvio della generazione (confrontato coi log su disco)');
+  assert.strictEqual(waitArg.deadlineMs, monoT0 + 20000, 'deadline MONOTONA composta = spawn monotono + budget');
+  assert.strictEqual(waitArg.nowImpl, monoNow, 'LO STESSO monotono passa esplicitamente al consumer');
 });
 
 test('cell-exec: avvio degradato visibile -> @nc_delivery con :mcpdegraded e @nc_mcp_list bounded', async () => {
