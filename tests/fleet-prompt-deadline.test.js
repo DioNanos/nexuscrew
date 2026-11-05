@@ -9,7 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 
-const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+const { deliverBootstrapPrompt, submitPromptWithEnter } = require('../lib/fleet/prompt-delivery.js');
 const { virtualClock } = require('./helpers/delivery-clock.js');
 const {
   SIM_CLAUDE_CONTRACT, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY, CLAUDE_ATTRS_OCCUPIED,
@@ -481,4 +481,111 @@ test('fresh 20: proprietario cambiato sullo stesso %N -> 0 paste, target pinned 
   const resolves = t.calls.filter((c) => c.argv.startsWith('display-message'));
   assert.ok(resolves.some((c) => c.argv.includes('-t %42')),
     'il trasporto risolve il %N pinnato dalla verifica, non =sessione');
+});
+
+// ===========================================================================
+// Submit opt-in custom (C8/A7): stessa disciplina di deadline sul trasporto
+// (sleep e timeout al residuo, deadline dopo ogni await) e identita' fresca
+// del pane (binding del proprietario) ri-verificata subito prima del primo
+// effetto, con il bound passato al nucleo condiviso e alla guardia
+// pre-effetto di securePaste. NESSUN classifier del composer: un engine
+// custom non ce l'ha. Retry certo pre-paste e post-paste incerto invariati.
+// ===========================================================================
+
+// 16a. Pane cambiato prima del primo effetto -> ZERO paste, ZERO Enter.
+test('submit 16a: pane cambiato prima del primo effetto -> 0 paste / 0 Enter', async () => {
+  const clk = virtualClock();
+  let resolves = 0;
+  const t = mkTmux(clk, {});
+  const execT = async (bin, args, opts) => {
+    if (args[0] === 'display-message') {
+      resolves += 1;
+      const pane = resolves === 1 ? '%42' : '%99';
+      t.calls.push({ argv: `display-message … ${pane}`, timeoutMs: opts && opts.timeoutMs });
+      return { err: null, stdout: `cloud-T\t0\t${pane}\n`, stderr: '', code: 0 };
+    }
+    return t.exec(bin, args, opts);
+  };
+  const r = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 30000, pollMs: 500,
+    bracketedPaste: true,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: execT,
+  });
+  assert.equal(r.delivered, false);
+  assert.notEqual(r.state, 'submitted');
+  assert.equal(pasteCount(t), 0, 'il pane atteso non e' + ' piu' + ' quello: nessun paste');
+  assert.equal(enterCount(t), 0);
+});
+
+// 16b. Resolve oltre la deadline -> ZERO paste.
+test('submit 16b: resolve oltre la deadline -> failed-pre-paste + deadlineExceeded, 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, {});
+  const execT = async (bin, args, opts) => {
+    if (args[0] === 'display-message') clk.advanceMono(9000);
+    return t.exec(bin, args, opts);
+  };
+  const r = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 5000, pollMs: 500,
+    bracketedPaste: true,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: execT,
+  });
+  assert.equal(r.state, 'failed-pre-paste', 'il submit mantiene il suo esito pre-effetto');
+  assert.equal(r.deadlineExceeded, true);
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// 16c. Retry certo pre-paste e post-paste incerto INVARIATI (regressione
+// esplicita): il bound non indebolisce il retry entro finestra ne' la
+// disciplina at-most-once.
+test('submit 16c: retry entro finestra e post-paste invariati', async () => {
+  // (a) load fallito al primo tentativo, residuo ampio: UN retry, submitted.
+  const clkA = virtualClock();
+  const tA = mkTmux(clkA, { loadFailsFirst: true });
+  const rA = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 30000, pollMs: 500,
+    bracketedPaste: true,
+    nowImpl: clkA.now, sleepImpl: clkA.sleep,
+    tmuxExecImpl: tA.exec,
+  });
+  assert.equal(rA.state, 'submitted');
+  assert.equal(rA.attempts, 2, 'un solo retry pre-paste, come oggi');
+  assert.equal(pasteCount(tA), 1);
+
+  // (b) paste fallito: delivery-unknown, NESSUN secondo paste.
+  const clkB = virtualClock();
+  const tB = mkTmux(clkB, { pasteFails: true });
+  const rB = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 30000, pollMs: 500,
+    bracketedPaste: true,
+    nowImpl: clkB.now, sleepImpl: clkB.sleep,
+    tmuxExecImpl: tB.exec,
+  });
+  assert.equal(rB.state, 'delivery-unknown');
+  assert.equal(pasteCount(tB), 1, 'il paste e' + ' stato tentato: zero secondi paste');
+  assert.equal(enterCount(tB), 0);
+});
+
+// 16d. Guardia pre-effetto anche per il submit: load lento dentro securePaste
+// oltre la deadline -> ZERO paste.
+test('submit 16d: load lento dentro securePaste oltre la deadline -> 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, { loadDelayMs: 9000 });
+  const r = await submitPromptWithEnter({
+    tmuxBin: 'tmux', session: 'cloud-T', prompt: 'p', env: {},
+    readyWaitMs: 5000, pollMs: 500,
+    bracketedPaste: true,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+  });
+  assert.equal(r.state, 'failed-pre-paste');
+  assert.equal(r.deadlineExceeded, true);
+  assert.equal(pasteCount(t), 0);
 });
