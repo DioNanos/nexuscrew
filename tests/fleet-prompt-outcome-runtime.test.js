@@ -555,3 +555,28 @@ test('supervisore vl: claim non aggiornata -> unknown/claim-settle-failed, claim
   }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// --- 21 (supervisore): il terminale scritto pota a 8, corrente dentro -------
+test('supervisore: dopo il terminale la retention lascia 8 record TOTALI con il corrente', async () => {
+  const root = tmpRoot(); const esito = canale(root);
+  try {
+    fs.mkdirSync(esito.dir, { recursive: true, mode: 0o700 });
+    for (let i = 0; i < 9; i += 1) {
+      const id = `vecchio${String(i)}abcdef01`.slice(0, 16);
+      fs.writeFileSync(path.join(esito.dir, `prompt-${id}.json`), JSON.stringify({
+        version: 1, event: 'prompt-delivery', launchId: id, generation: 0,
+        state: 'unknown', reason: 'delivery-unknown', ts: 1700000000000 + i,
+      }));
+    }
+    const w = harness({
+      promptOutcome: esito, unaGenerazione: true,
+      deliver: () => ({ delivered: true, state: 'submitted', notReady: '' }),
+    });
+    await w.run();
+    const record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'submitted');
+    const restanti = fs.readdirSync(esito.dir).filter((n) => n.startsWith('prompt-'));
+    assert.equal(restanti.length, 8, 'otto TOTALI dopo il terminale, corrente compreso');
+    assert.ok(restanti.includes(`prompt-${LAUNCH}.json`), 'il lancio corrente e\' dentro gli otto');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

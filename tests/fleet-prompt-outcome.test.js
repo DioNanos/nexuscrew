@@ -463,3 +463,112 @@ test('record: pending senza deadlineTs rifiutato in scrittura e non leggibile co
       'via effettiva: lo schema rifiuta il pending senza deadline, la lettura lo dichiara rotto');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// --- 21. Retention: otto TOTALI, corrente compreso, tie-break sul nome -------
+test('retention: 10 record -> 8 piu\' recenti; il corrente preservato anche se il piu\' vecchio', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const ids = [];
+    for (let i = 0; i < 9; i += 1) {
+      const id = `old${String(i).padStart(2, '0')}aabbccdd`;
+      ids.push(id);
+      fs.writeFileSync(path.join(dir, nomeRecordPrompt(id)), JSON.stringify(terminale({
+        launchId: id, generation: 0, state: 'unknown', reason: 'delivery-unknown',
+      })));
+      const t = 1700000000000 + i * 1000;   // mtime crescente: 00 = il piu' vecchio
+      fs.utimesSync(path.join(dir, nomeRecordPrompt(id)), new Date(t), new Date(t));
+    }
+    // Il corrente e' il PIU' VECCHIO di tutti.
+    const corrente = 'cur00000feedface';
+    fs.writeFileSync(path.join(dir, nomeRecordPrompt(corrente)), JSON.stringify(terminale({
+      launchId: corrente, generation: 0, state: 'submitted',
+    })));
+    fs.utimesSync(path.join(dir, nomeRecordPrompt(corrente)), new Date(1699999000000), new Date(1699999000000));
+    const rimossi = activityFiles.potaPrompt(dir, { preserva: corrente });
+    const restanti = fs.readdirSync(dir).filter((n) => n.startsWith('prompt-')).sort();
+    assert.equal(restanti.length, 8, 'otto TOTALI, non otto piu\' il corrente');
+    assert.ok(restanti.includes(nomeRecordPrompt(corrente)), 'il corrente e' + ' sempre dentro gli otto');
+    // Con il corrente preservato, gli altri 7 sono i piu' recenti: old02..old08.
+    for (const id of ['old00aabbccdd', 'old01aabbccdd']) {
+      assert.ok(!restanti.includes(nomeRecordPrompt(id)), `${id} fra i piu' vecchi dei non-correnti: via`);
+    }
+    for (const id of ids.slice(2)) {
+      assert.ok(restanti.includes(nomeRecordPrompt(id)), `${id} resta (piu' recente del taglio)`);
+    }
+    assert.deepEqual(rimossi.sort(),
+      [nomeRecordPrompt('old00aabbccdd'), nomeRecordPrompt('old01aabbccdd')].sort());
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('retention: senza corrente presente restano gli ultimi 8; tie di mtime sul nome', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // 10 record: i primi 6 con mtime DISTINTA crescente, poi 4 con lo STESSO
+    // mtime (tie): il tie-break e' sul nome, deterministico.
+    const ids = [];
+    for (let i = 0; i < 10; i += 1) {
+      const id = `tie${String(i).padStart(2, '0')}aabbccdd`;
+      ids.push(id);
+      fs.writeFileSync(path.join(dir, nomeRecordPrompt(id)), JSON.stringify(terminale({
+        launchId: id, generation: 0, state: 'unknown', reason: 'delivery-unknown',
+      })));
+      const t = i < 6 ? 1700000000000 + i * 1000 : 1700000100000;
+      fs.utimesSync(path.join(dir, nomeRecordPrompt(id)), new Date(t), new Date(t));
+    }
+    activityFiles.potaPrompt(dir);
+    const restanti = fs.readdirSync(dir).filter((n) => n.startsWith('prompt-')).sort();
+    assert.equal(restanti.length, 8);
+    // Via i due piu' vecchi (tie00, tie01); tra i pari-merito piu' recenti
+    // (tie06..tie09) il tie-break sul nome non cambia CHI resta (tutti e 4),
+    // ma l'insieme e' deterministico: nessun nome fuori catalogo, nessun caso.
+    assert.ok(!restanti.includes(nomeRecordPrompt('tie00aabbccdd')));
+    assert.ok(!restanti.includes(nomeRecordPrompt('tie01aabbccdd')));
+    for (const id of ids.slice(2)) assert.ok(restanti.includes(nomeRecordPrompt(id)));
+    // Un tie che TAGLIA: 4 record con lo stesso mtime di cui solo 2 entrano.
+    const dir2 = path.join(root, 'tie');
+    fs.mkdirSync(dir2, { recursive: true, mode: 0o700 });
+    for (const id of ['aaa00000aabbccdd', 'bbb00000aabbccdd', 'ccc00000aabbccdd', 'ddd00000aabbccdd']) {
+      fs.writeFileSync(path.join(dir2, nomeRecordPrompt(id)), JSON.stringify(terminale({
+        launchId: id, generation: 0, state: 'unknown', reason: 'delivery-unknown',
+      })));
+      fs.utimesSync(path.join(dir2, nomeRecordPrompt(id)), new Date(1700000000000), new Date(1700000000000));
+    }
+    const rimossi2 = activityFiles.potaPrompt(dir2, { conserva: 2 });
+    // Con quota 2 tengono i primi due per NOME (aaa, bbb): deterministico.
+    assert.deepEqual(rimossi2.sort(),
+      [nomeRecordPrompt('ccc00000aabbccdd'), nomeRecordPrompt('ddd00000aabbccdd')].sort());
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('retention: symlink prompt-*.json mai seguito ne\' rimosso; mai throw; nomi non-validi ignorati', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const bersaglio = path.join(root, 'bersaglio.txt');
+    fs.writeFileSync(bersaglio, 'vittima');
+    fs.symlinkSync(bersaglio, path.join(dir, nomeRecordPrompt('sym00000aabbccdd')));
+    // Nome CHE NON MATCHA il pattern del record (id vuoto): ignorato, non
+    // contato come record e non rimosso dalla potatura.
+    fs.writeFileSync(path.join(dir, 'prompt-.json'), '{}');
+    for (let i = 0; i < 9; i += 1) {
+      const id = `rr${String(i).padStart(2, '0')}0000000000`.slice(0, 16);
+      fs.writeFileSync(path.join(dir, nomeRecordPrompt(id)), JSON.stringify(terminale({
+        launchId: id, generation: 0, state: 'unknown', reason: 'delivery-unknown',
+      })));
+    }
+    let rimossi;
+    assert.doesNotThrow(() => { rimossi = activityFiles.potaPrompt(dir); });
+    const restanti = fs.readdirSync(dir).filter((n) => n.startsWith('prompt-'));
+    assert.equal(restanti.length, 10, 'il symlink NON conta e il nome non-valido resta: 8 regolari + i due estranei');
+    assert.ok(fs.existsSync(path.join(dir, nomeRecordPrompt('sym00000aabbccdd'))),
+      'il symlink non viene rimosso');
+    assert.equal(fs.readFileSync(bersaglio, 'utf8'), 'vittima', 'e non viene seguito');
+    assert.ok(fs.existsSync(path.join(dir, 'prompt-.json')), 'il nome fuori catalogo non viene toccato');
+    assert.ok(!rimossi.includes(nomeRecordPrompt('sym00000aabbccdd')));
+    assert.ok(!rimossi.includes('prompt-.json'));
+    // Directory assente: [], mai throw.
+    assert.doesNotThrow(() => assert.deepEqual(activityFiles.potaPrompt(path.join(root, 'non-ce')), []));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
