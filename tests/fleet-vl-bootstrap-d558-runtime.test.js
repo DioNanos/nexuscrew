@@ -19,6 +19,11 @@ const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 const cellExec = require('../lib/fleet/cell-exec.js');
 
+// Supervised-delivery fixture: the prompt-outcome channel is required. The
+// ephemeral dirs it creates are removed when the test process exits.
+const FX_DIRS = [];
+process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
+
 const SESSIONE = 'cloud-CellaProva';
 const PROMPT = 'Leggi CLAUDE.md e parti';
 
@@ -188,13 +193,15 @@ process.exit(0);
 function supervisorSeams() {
   const calls = { deliver: [], options: [] };
   const live = new Set();
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   return {
     calls,
     seams: {
       // Supervised-delivery fixture: the prompt-outcome channel is required
       // (fresh ephemeral dir per seams instance).
       promptOutcome: {
-        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-')),
+        dir: fxDir,
         launchId: '7f8091a2b3c4d5e6',
       },
       setTimeout: (fn, ms) => {

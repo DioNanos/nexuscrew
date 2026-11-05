@@ -12,6 +12,11 @@ const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
 
+// Supervised-delivery fixture: the prompt-outcome channel is required. The
+// ephemeral dirs it creates are removed when the test process exits.
+const FX_DIRS = [];
+process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
+
 function world({ markerFile = '', markerValue = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsubmit-'));
   const home = path.join(root, 'home');
@@ -145,13 +150,15 @@ function publishFromProducer(markerFile) {
     return { err: null, stdout: '', stderr: '', code: 0 };
   };
   const { startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   const ctl = startGenerationPrompt(
     { tmuxBin: 'tmux', tmuxSession: 'work-submit', prompt: 'hello\nworld', readyMs: 0, readyWaitMs: 1000, submit: true },
     0,
     { exited: false },
     // Canale del record del prompt: la consegna supervisionata lo richiede.
     {
-      promptOutcome: { dir: fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-')), launchId: '3c4d5e6f70819203' },
+      promptOutcome: { dir: fxDir, launchId: '3c4d5e6f70819203' },
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       tmuxExec: exec,
