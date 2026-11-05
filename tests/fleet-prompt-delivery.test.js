@@ -156,7 +156,7 @@ test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async 
   assert.ok(!calls.some((c) => c.includes('boot prompt')), 'prompt mai in argv tmux');
 });
 
-test('delivery: consent/auth/onboarding -> skipped-not-ready, ZERO paste e ZERO Enter, TUI vivo', async () => {
+test('delivery: consent/auth/onboarding a scadenza -> skipped-unknown (C7), kind dettaglio, ZERO paste/Enter, TUI vivo', async () => {
   const { virtualClock } = require('./helpers/delivery-clock.js');
   for (const [screen, kind] of [
     [CLAUDE_CONSENT, 'not-ready-consent'],
@@ -172,9 +172,13 @@ test('delivery: consent/auth/onboarding -> skipped-not-ready, ZERO paste e ZERO 
       tmuxExecImpl: exec, captureImpl: async () => screen,
       nowImpl: clk.now, sleepImpl: clk.sleep,
     });
+    // 0.9.80 s2a (C7): a deadline lo stato resta skipped-unknown anche con
+    // kind qualificato; il kind survives come dettaglio bounded in notReady,
+    // il fatto e' zero paste/zero Enter e la sessione resta viva.
     assert.equal(r.delivered, false);
-    assert.equal(r.state, 'skipped-not-ready');
-    assert.equal(r.notReady, kind);
+    assert.equal(r.state, 'skipped-unknown');
+    assert.equal(r.notReady, kind, `${kind}: kind conservato come dettaglio bounded`);
+    assert.equal(r.deadlineExceeded, true);
     assert.equal(r.attempts, 0);
     assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0, `zero paste su ${kind}`);
     assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, `zero Enter su ${kind}`);

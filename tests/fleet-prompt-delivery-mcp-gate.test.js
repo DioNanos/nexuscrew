@@ -83,18 +83,24 @@ test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', as
   assert.strictEqual(pasteChiamate, 0, 'mai paste dopo cancel');
 });
 
-test('dialogo aperto al timeout: skipped-not-ready, mai consegna (il gate MCP non bypassa il composer)', async () => {
+test('dialogo aperto al timeout: skipped-unknown (C7) con kind dettaglio, mai consegna (il gate MCP non bypassa il composer)', async () => {
+  const { virtualClock } = require('./helpers/delivery-clock.js');
+  const clk = virtualClock();
   const s = seams({ captures: ['  Do you want to use this API key?'] });
   let mcpChiamata = false;
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
     readyWaitMs: 40, pollMs: 10, settleMs: 0,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     mcpWait: async () => { mcpChiamata = true; return { state: 'ready', ready: ['x'], failed: [], pending: [] }; },
   });
   assert.strictEqual(result.delivered, false);
-  assert.strictEqual(result.state, 'skipped-not-ready');
+  // 0.9.80 s2a (C7): a deadline lo stato resta skipped-unknown; il kind del
+  // dialogo resta dettaglio bounded, zero paste.
+  assert.strictEqual(result.state, 'skipped-unknown');
   assert.strictEqual(result.notReady, 'not-ready-consent');
+  assert.strictEqual(result.deadlineExceeded, true);
   assert.strictEqual(mcpChiamata, false, 'composer blocca: niente consegna, niente gate MCP a valle');
   assert.strictEqual(result.mcp, undefined);
 });

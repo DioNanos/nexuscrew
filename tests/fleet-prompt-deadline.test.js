@@ -250,7 +250,10 @@ test('deadline 13: timeout del capture limitato al residuo, mai oltre la finestr
   let mono = 0; const deadline = 3000;
   for (const c of caps) {
     const residuo = deadline - mono;
-    assert.ok(c.timeoutMs <= residuo, `timeout ${c.timeoutMs} > residuo ${residuo}`);
+    // mai oltre il residuo; il floor a 1 ms e' voluto: execFile tratta
+    // timeout 0 come NESSUN timeout (finestra infinita), quindi a residuo 0
+    // il limite e' 1 ms, non 0.
+    assert.ok(c.timeoutMs <= Math.max(1, residuo), `timeout ${c.timeoutMs} > residuo ${residuo}`);
     assert.ok(c.timeoutMs >= 1, 'mai timeout zero (0 = nessun timeout per execFile)');
     mono += 1000; // il pollMs del test avanza il clock virtuale
   }
