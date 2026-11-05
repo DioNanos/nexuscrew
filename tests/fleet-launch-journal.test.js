@@ -724,3 +724,69 @@ test('rifiuto duplicate provato con host vivo comparso sulla root: abortito dure
   assert.equal(rec.abortReason, 'duplicate-session');
   assert.equal(statoHost(d), 'live');
 });
+
+// --- Base della cella qualificata e poi scomparsa -------------------------------
+
+function baseCellaVl(d) { return path.dirname(path.dirname(path.dirname(rootVl(d)))); }
+
+test('base della cella qualificata e poi RINOMINATA con host vivo: claim e prepared restano', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  let host = null;
+  t.after(() => fermaHostFinto(host));
+  const base = baseCellaVl(d);
+  const spostata = `${base}-spostata`;
+  let n = 0;
+  const { runtime } = W.apriRuntime(d, {
+    ensureProtection: async () => {
+      n += 1;
+      if (n === 2) {
+        fs.renameSync(base, spostata);
+        host = spawnaHostFinto();
+        host.ref();
+        fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
+      }
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
+  assert.equal(fs.existsSync(base), false, 'il vecchio percorso non esiste piu\'');
+  assert.equal(fs.existsSync(spostata), true);
+  assert.equal(statoHost(d), 'live', 'il prodotto non tocca l\'host');
+  assert.equal(W.lease(d).length, 1, 'claim conservata');
+  assert.equal(leggiRecord(d).phase, 'prepared', 'record conservato');
+  assert.deepStrictEqual(nuoveSessioni(d), []);
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
+});
+
+test('base della cella qualificata e poi TOLTA senza host osservabile: stessa conservazione', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  const base = baseCellaVl(d);
+  let n = 0;
+  const { runtime } = W.apriRuntime(d, {
+    ensureProtection: async () => {
+      n += 1;
+      if (n === 2) fs.rmSync(base, { recursive: true, force: true });
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella));
+  assert.equal(fs.existsSync(base), false);
+  assert.equal(W.lease(d).length, 1, 'ENOENT di oggi non prova «mai preparata»');
+  assert.equal(leggiRecord(d).phase, 'prepared');
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
+});
+
+test('base della cella mai esistita + errore ordinario: nessun blocco (positivo conservato)', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  const base = baseCellaVl(d);
+  assert.equal(fs.existsSync(base), false, 'premessa: la base non esiste all\'inizio');
+  fs.unlinkSync(path.join(d.home, '.local', 'bin', 'vl'));
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella));
+  assert.deepStrictEqual(W.lease(d), []);
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+});
