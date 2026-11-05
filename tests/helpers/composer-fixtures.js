@@ -82,11 +82,38 @@ const CLAUDE_EMPTY_REGION = [
 // contract exists in 2a: every Kimi capture resolves 'unknown' (decision 3).
 const KIMI_BOX_EMPTY = ' ╭──────────────────────────────────────────╮\n │ >                                        │\n ╰──────────────────────────────────────────╯';
 
+// Plain (no -e) ready capture for the readiness loop: the ❯ line classifies
+// 'ready' for client claude.
+const CLAUDE_READY_LIKE = [
+  '│             Welcome back!          │',
+  '',
+  '────────────────────────────────────',
+  '❯ ',
+  '────────────────────────────────────',
+  '  ⏸ manual mode on · ? for shortcuts · ← for agents                               ● high · /effort',
+].join('\n');
+
+// Attrs (-e) capture of an EMPTY composer (placeholder) as the simulator
+// renders it, with the blank line closing the composer region.
+const CLAUDE_ATTRS_EMPTY = [
+  '────────────────────────────────────',
+  CLAUDE_EMPTY,
+  '',
+  '  ⏸ manual mode on · ? for shortcuts · ← for agents                               ● high · /effort',
+].join('\n');
+
+// Not-ready plain screens (same markers as the live-verified fixtures of
+// fleet-prompt-delivery.test.js; synthetic copies for this file).
+const CLAUDE_CONSENT_LIKE = '  Detected a custom API key in your environment\n\n  Do you want to use this API key?\n\n  ❯ 2. No (recommended)\n';
+const CLAUDE_TRUST_LIKE = ' Quick safety check: Is this a project you created or one you trust?\n\n ❯ 1. Yes, I trust this folder\n';
+const CLAUDE_AUTH_LIKE = '❯ \n  ⏸ manual mode on · ? for shortcuts · ← for agents                     Not logged in · Run /login\n';
+
 module.exports = {
   GRAY, CYAN, RESET,
   SIM_CLAUDE_CONTRACT,
   CLAUDE_EMPTY, CLAUDE_TYPED, CLAUDE_PLACEHOLDER_PLUS_TYPED, CLAUDE_MULTILINE,
   CLAUDE_EMPTY_WRAPPED, CLAUDE_SPACES, CLAUDE_CURSOR_MOVED, CLAUDE_UNKNOWN_THEME,
   CLAUDE_NO_ATTRS, CLAUDE_BROKEN_ESCAPE, CLAUDE_BARE_PROMPT, CLAUDE_EMPTY_REGION,
-  KIMI_BOX_EMPTY,
+  KIMI_BOX_EMPTY, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY,
+  CLAUDE_CONSENT_LIKE, CLAUDE_TRUST_LIKE, CLAUDE_AUTH_LIKE,
 };
