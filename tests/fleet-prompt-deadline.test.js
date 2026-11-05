@@ -633,6 +633,101 @@ test('fresh 23: client senza contratto, retry da =sessione -> riverifica il pinn
 });
 
 // ===========================================================================
+// Deadline NEI RAMI della verifica fresca: il residuo si controlla DOPO ogni
+// await della verifica (resolve, capture, capture con attributi) e il
+// dettaglio bounded deadlineExceeded arriva fino al ritorno diretto. Un esito
+// negativo oltre il limite NON perde la deadline; un esito positivo oltre il
+// limite NON prosegue verso il trasporto: zero paste e nessuna operazione
+// successiva (il solo guard del trasporto non basta).
+// ===========================================================================
+
+// Resolve oltre la deadline: il ramo negativo della verifica fresca riporta
+// la deadline e ferma tutto PRIMA del trasporto.
+test('fresh 24: resolve oltre la deadline nella verifica fresca -> skipped-unknown + deadlineExceeded, 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const execT = async (bin, args, opts) => {
+    if (args[0] === 'display-message') clk.advanceMono(6000);
+    return t.exec(bin, args, opts);
+  };
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: execT,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.state, 'skipped-unknown', 'il ramo del resolve riporta la deadline, non procede al trasporto');
+  assert.equal(r.deadlineExceeded, true);
+  assert.equal(r.attempts, 0, 'nessuna operazione di trasporto dopo il limite');
+  assert.equal(t.count('load-buffer'), 0);
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// Capture fresco oltre la deadline, sia READY sia NON-READY: ready tardivo
+// non autorizza il paste; non-ready tardivo conserva il kind bounded E la
+// deadline (stato skipped-unknown, attempts 0).
+test('fresh 25: capture fresco oltre la deadline, ready o non-ready -> skipped-unknown + deadlineExceeded', async () => {
+  for (const [screen, kind] of [
+    [CLAUDE_READY_LIKE, ''],
+    ['⏺ working…\nesc to interrupt', 'busy'],
+  ]) {
+    const clk = virtualClock();
+    const t = mkTmux(clk);
+    const r = await deliverBootstrapPrompt({
+      ...OPTS, readyWaitMs: 5000, pollMs: 500,
+      nowImpl: clk.now, sleepImpl: clk.sleep,
+      tmuxExecImpl: t.exec,
+      captureImpl: async (target) => {
+        if (target === undefined) return CLAUDE_READY_LIKE; // readiness: in tempo
+        clk.advanceMono(6000);                              // capture fresco: tardivo
+        return screen;
+      },
+      captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+      composerContract: SIM_CLAUDE_CONTRACT,
+    });
+    assert.equal(r.state, 'skipped-unknown', `${kind || 'ready'}: stato a limite`);
+    assert.equal(r.deadlineExceeded, true, `${kind || 'ready'}: dettaglio deadline nel ritorno diretto`);
+    assert.equal(r.notReady, kind, `${kind || 'ready'}: kind bounded conservato come dettaglio`);
+    assert.equal(r.attempts, 0);
+    assert.equal(t.count('load-buffer'), 0, `${kind || 'ready'}: nessun trasporto dopo il limite`);
+    assert.equal(pasteCount(t), 0);
+    assert.equal(enterCount(t), 0);
+  }
+});
+
+// Capture con attributi oltre la deadline: empty tardivo non autorizza;
+// occupied/unknown tardivi conservano kind e deadline.
+test('fresh 26: capture con attributi oltre la deadline -> skipped-unknown + deadlineExceeded', async () => {
+  const { CLAUDE_BROKEN_ESCAPE } = require('./helpers/composer-fixtures.js');
+  for (const [attrs, kind] of [
+    [CLAUDE_ATTRS_EMPTY, ''],
+    [CLAUDE_ATTRS_OCCUPIED, 'busy'],
+    [CLAUDE_BROKEN_ESCAPE, ''],
+  ]) {
+    const clk = virtualClock();
+    const t = mkTmux(clk);
+    const r = await deliverBootstrapPrompt({
+      ...OPTS, readyWaitMs: 5000, pollMs: 500,
+      nowImpl: clk.now, sleepImpl: clk.sleep,
+      tmuxExecImpl: t.exec,
+      captureImpl: async () => CLAUDE_READY_LIKE,
+      captureAttrsImpl: async () => { clk.advanceMono(6000); return attrs; },
+      composerContract: SIM_CLAUDE_CONTRACT,
+    });
+    assert.equal(r.state, 'skipped-unknown', `attrs ${kind || 'unknown'}: stato a limite`);
+    assert.equal(r.deadlineExceeded, true, `attrs ${kind || 'unknown'}: dettaglio deadline nel ritorno diretto`);
+    assert.equal(r.notReady, kind);
+    assert.equal(r.attempts, 0);
+    assert.equal(t.count('load-buffer'), 0);
+    assert.equal(pasteCount(t), 0);
+    assert.equal(enterCount(t), 0);
+  }
+});
+
+// ===========================================================================
 // Submit opt-in custom (C8/A7): stessa disciplina di deadline sul trasporto
 // (sleep e timeout al residuo, deadline dopo ogni await) e identita' fresca
 // del pane (binding del proprietario) ri-verificata subito prima del primo
