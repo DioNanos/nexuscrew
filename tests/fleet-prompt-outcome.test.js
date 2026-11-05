@@ -319,3 +319,70 @@ test('lettura: non crea, non modifica e non pota nulla', () => {
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// ===========================================================================
+// Tabella C3: UNA funzione pura mappa l'esito del proprietario della consegna
+// nello stato canonico del record. Nessun secondo posto nel codice mappa.
+// ===========================================================================
+const { canonicalOutcome } = require('../lib/fleet/prompt-outcome.js');
+const { DELIVERY_STATES } = require('../lib/fleet/prompt-delivery.js');
+
+test('C3: tabella esaustiva, nessun submitted fuori da submitted', () => {
+  const NA = 'not-applicable';
+  const casi = [
+    [{ state: 'submitted' }, { state: 'submitted' }, NA],
+    [{ state: 'staged-not-submitted' }, { state: 'unknown', reason: 'staged-not-submitted' }, NA],
+    [{ state: 'delivery-unknown' }, { state: 'unknown', reason: 'delivery-unknown' }, NA],
+    [{ state: 'failed-pre-paste' }, { state: 'skipped', reason: 'failed-pre-paste' }, NA],
+    [{ state: 'skipped-not-ready', notReady: 'not-ready-auth' }, { state: 'skipped', reason: 'not-ready', notReady: 'not-ready-auth' }, NA],
+    [{ state: 'skipped-not-ready' }, { state: 'skipped', reason: 'not-ready' }, NA],
+    [{ state: 'skipped-unknown', notReady: 'busy' }, { state: 'skipped', reason: 'not-ready', notReady: 'busy' }, NA],
+    [{ state: 'skipped-unknown' }, { state: 'skipped', reason: 'not-ready' }, NA],
+    // deadlineExceeded con zero paste attestato: reason deadline-exceeded, kind conservato.
+    [{ state: 'skipped-unknown', notReady: 'busy', deadlineExceeded: true }, { state: 'skipped', reason: 'deadline-exceeded', notReady: 'busy' }, NA],
+    [{ state: 'skipped-vl-bootstrap', notReady: 'claim-taken' }, { state: 'skipped', reason: 'vl-bootstrap-claim-taken' }, NA],
+    [{ state: 'skipped-vl-bootstrap' }, { state: 'skipped', reason: 'vl-bootstrap-no-proof' }, NA],
+    [{ state: 'prompt-rejected' }, { state: 'skipped', reason: 'prompt-rejected' }, NA],
+    [{ state: 'cancelled' }, { state: 'skipped', reason: 'cancelled-pre-paste' }, NA],
+    [{ state: 'report-timeout' }, { state: 'unknown', reason: 'report-timeout' }, NA],
+    [{ state: 'transport-unsupported' }, { state: 'skipped', reason: 'transport-unsupported' }, NA],
+    [{ state: 'paste-delivered' }, { state: 'unknown', reason: 'paste-only-no-enter' }, NA],
+    [{ state: 'paste-failed', stage: 'validate' }, { state: 'skipped', reason: 'failed-pre-paste-validate' }, NA],
+    [{ state: 'paste-failed', stage: 'resolve' }, { state: 'skipped', reason: 'failed-pre-paste-resolve' }, NA],
+    [{ state: 'paste-failed', stage: 'load' }, { state: 'skipped', reason: 'failed-pre-paste-load' }, NA],
+    [{ state: 'paste-failed' }, { state: 'skipped', reason: 'failed-pre-paste' }, NA],
+    [{ state: 'paste-failed', stage: 'garbage' }, { state: 'skipped', reason: 'failed-pre-paste' }, NA],
+    // Valore non riconosciuto: unknown, mai un successo per deduzione.
+    [{ state: 'delivered' }, { state: 'unknown' }, NA],
+    [{ state: '' }, { state: 'unknown' }, NA],
+    [null, { state: 'unknown' }, NA],
+    // claim: il terminale vl si compone DOPO il settle (un tentativo).
+    [{ state: 'submitted' }, { state: 'submitted' }, 'settled'],
+    [{ state: 'submitted' }, { state: 'unknown', reason: 'claim-settle-failed' }, 'failed'],
+    // claim non aggiornata vince anche su un fallimento certo pre-paste.
+    [{ state: 'failed-pre-paste' }, { state: 'unknown', reason: 'claim-settle-failed' }, 'failed'],
+    [{ state: 'skipped-unknown' }, { state: 'unknown', reason: 'claim-settle-failed' }, 'failed'],
+    // claim fuori catalogo: conservativo, mai un attestato.
+    [{ state: 'submitted' }, { state: 'unknown', reason: 'claim-settle-failed' }, 'x'],
+  ];
+  for (const [sorgente, atteso, claim] of casi) {
+    assert.deepEqual(canonicalOutcome(sorgente, claim), atteso, JSON.stringify(sorgente));
+  }
+  // Ogni valore dell'enum di consegna ha una riga: nessuno produce submitted
+  // fuori da submitted, con qualunque claim ammesso.
+  for (const state of DELIVERY_STATES) {
+    for (const claim of [NA, 'settled', 'failed']) {
+      const esito = canonicalOutcome({ state }, claim);
+      if (state !== 'submitted' || claim === 'failed') {
+        assert.notEqual(esito.state, 'submitted', `${state}/${claim} non e' mai submitted`);
+      }
+    }
+  }
+  // Il canonico entra nello schema del record senza ritocchi.
+  for (const state of DELIVERY_STATES) {
+    const c = canonicalOutcome({ state });
+    assert.equal(validPromptRecord(terminale({
+      ...c, launchId: 'e'.repeat(16),
+    })), true, `${state} produce un record valido`);
+  }
+});
