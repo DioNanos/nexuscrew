@@ -82,6 +82,36 @@ const CLAUDE_EMPTY_REGION = [
 // contract exists in 2a: every Kimi capture resolves 'unknown' (decision 3).
 const KIMI_BOX_EMPTY = ' ╭──────────────────────────────────────────╮\n │ >                                        │\n ╰──────────────────────────────────────────╯';
 
+// ---------------------------------------------------------------------------
+// Superfici correnti NON interpretabili: il parser non puo' concludere
+// 'empty' quando il composer di adesso e' illeggibile, nemmeno se piu' in
+// alto resta un vecchio prompt perfettamente qualificato. La riga vuota che
+// chiude la regione del vecchio prompt NON autorizza a ignorare quello che
+// sta sotto.
+// ---------------------------------------------------------------------------
+
+// Vecchio prompt qualificato (placeholder), riga vuota che chiude la sua
+// regione, e composer CORRENTE con un escape malformato: il glifo c'e', ma
+// l'attributo e' spezzato — l'informazione persa non puo' autorizzare empty.
+const CLAUDE_STALE_EMPTY_CURRENT_MALFORMED = [
+  CLAUDE_EMPTY,
+  '',
+  `${CYAN}❯${RESET} \x1b[38;2;136Typed`,
+].join('\n');
+
+// Composer corrente unico, con la capture che CLIPPA la riga a meta'
+// escape: testo presente ma attributi irrecuperabili.
+const CLAUDE_CURRENT_CLIPPED = `${CYAN}❯${RESET} ${GRAY}Try "create a util logging.py th\x1b[38;2;13`;
+
+// Attributi PARZIALI (colore 24-bit incompleto): l'escape e' ben formato ma
+// l'insieme non e' nel contratto — tema non qualificato.
+const CLAUDE_PARTIAL_ATTRS = `${CYAN}❯${RESET} \x1b[38;2;136mTry "create a util logging.py that..."\x1b[0m`;
+
+// Wrapping non interpretabile: composer valido con placeholder, continuazione
+// (riga successiva, nessuna riga vuota in mezzo) con escape malformato.
+const CLAUDE_WRAPPED_MALFORMED_CONTINUATION = `${CYAN}❯${RESET} ${GRAY}Try "create a util logging.py${RESET}\n\x1b[38;2;136T that..."`;
+
+
 // Plain (no -e) ready capture for the readiness loop: the ❯ line classifies
 // 'ready' for client claude.
 const CLAUDE_READY_LIKE = [
@@ -122,6 +152,8 @@ module.exports = {
   CLAUDE_EMPTY, CLAUDE_TYPED, CLAUDE_PLACEHOLDER_PLUS_TYPED, CLAUDE_MULTILINE,
   CLAUDE_EMPTY_WRAPPED, CLAUDE_SPACES, CLAUDE_CURSOR_MOVED, CLAUDE_UNKNOWN_THEME,
   CLAUDE_NO_ATTRS, CLAUDE_BROKEN_ESCAPE, CLAUDE_BARE_PROMPT, CLAUDE_EMPTY_REGION,
+  CLAUDE_STALE_EMPTY_CURRENT_MALFORMED, CLAUDE_CURRENT_CLIPPED,
+  CLAUDE_PARTIAL_ATTRS, CLAUDE_WRAPPED_MALFORMED_CONTINUATION,
   KIMI_BOX_EMPTY, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY, CLAUDE_ATTRS_OCCUPIED,
   CLAUDE_CONSENT_LIKE, CLAUDE_TRUST_LIKE, CLAUDE_AUTH_LIKE,
 };

@@ -97,3 +97,27 @@ test('parser: nessun confronto fra due capture e nessuna whitelist di frasi', ()
     .replace('Try "create a util logging.py that..."', 'una frase qualsiasi mai censita');
   assert.equal(composerOccupied(neverSeen, 'claude', SIM_CLAUDE_CONTRACT), 'empty');
 });
+
+test('parser: superficie corrente non interpretabile MAI scavalcata da un vecchio prompt valido -> unknown', () => {
+  const {
+    CLAUDE_STALE_EMPTY_CURRENT_MALFORMED, CLAUDE_CURRENT_CLIPPED,
+    CLAUDE_PARTIAL_ATTRS, CLAUDE_WRAPPED_MALFORMED_CONTINUATION,
+  } = require('./helpers/composer-fixtures.js');
+  // I pezzi da soli: il vecchio prompt qualificato e' empty, il composer
+  // malformato da solo e' unknown. La COMBINAZIONE e' il caso del difetto:
+  // la scansione all'indietro non puo' saltare la riga corrente malformata
+  // per andare aleggere il prompt di prima.
+  assert.equal(composerOccupied(CLAUDE_EMPTY, 'claude', SIM_CLAUDE_CONTRACT), 'empty');
+  assert.equal(composerOccupied(CLAUDE_BROKEN_ESCAPE, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
+  // Vecchio prompt + riga vuota (chiude la sua regione) + composer corrente
+  // con escape malformato: il glifo corrente c'e' ma l'attributo e' spezzato.
+  // L'informazione persa NON autorizza «vuoto»: unknown.
+  assert.equal(composerOccupied(CLAUDE_STALE_EMPTY_CURRENT_MALFORMED, 'claude', SIM_CLAUDE_CONTRACT), 'unknown',
+    'un composer corrente illeggibile non puo' + ' diventare empty grazie a un prompt vecchio');
+  // Clipping del composer corrente (capture che taglia a meta' escape).
+  assert.equal(composerOccupied(CLAUDE_CURRENT_CLIPPED, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
+  // Attributi parziali: escape ben formato ma colore incompleto fuori contratto.
+  assert.equal(composerOccupied(CLAUDE_PARTIAL_ATTRS, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
+  // Wrapping non interpretabile: continuazione malformata sotto un composer valido.
+  assert.equal(composerOccupied(CLAUDE_WRAPPED_MALFORMED_CONTINUATION, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
+});
