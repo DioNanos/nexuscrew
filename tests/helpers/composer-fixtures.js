@@ -102,6 +102,14 @@ const CLAUDE_ATTRS_EMPTY = [
   '  ⏸ manual mode on · ? for shortcuts · ← for agents                               ● high · /effort',
 ].join('\n');
 
+// Attrs (-e) capture of an OCCUPIED composer: human input in the buffer.
+const CLAUDE_ATTRS_OCCUPIED = [
+  '────────────────────────────────────',
+  CLAUDE_TYPED('digitato dall operatore'),
+  '',
+  '  ⏸ manual mode on · ? for shortcuts · ← for agents                               ● high · /effort',
+].join('\n');
+
 // Not-ready plain screens (same markers as the live-verified fixtures of
 // fleet-prompt-delivery.test.js; synthetic copies for this file).
 const CLAUDE_CONSENT_LIKE = '  Detected a custom API key in your environment\n\n  Do you want to use this API key?\n\n  ❯ 2. No (recommended)\n';
@@ -114,6 +122,6 @@ module.exports = {
   CLAUDE_EMPTY, CLAUDE_TYPED, CLAUDE_PLACEHOLDER_PLUS_TYPED, CLAUDE_MULTILINE,
   CLAUDE_EMPTY_WRAPPED, CLAUDE_SPACES, CLAUDE_CURSOR_MOVED, CLAUDE_UNKNOWN_THEME,
   CLAUDE_NO_ATTRS, CLAUDE_BROKEN_ESCAPE, CLAUDE_BARE_PROMPT, CLAUDE_EMPTY_REGION,
-  KIMI_BOX_EMPTY, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY,
+  KIMI_BOX_EMPTY, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY, CLAUDE_ATTRS_OCCUPIED,
   CLAUDE_CONSENT_LIKE, CLAUDE_TRUST_LIKE, CLAUDE_AUTH_LIKE,
 };

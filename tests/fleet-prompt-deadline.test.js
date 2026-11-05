@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
 const { virtualClock } = require('./helpers/delivery-clock.js');
 const {
-  SIM_CLAUDE_CONTRACT, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY,
+  SIM_CLAUDE_CONTRACT, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY, CLAUDE_ATTRS_OCCUPIED,
 } = require('./helpers/composer-fixtures.js');
 
 // tmux finto con clock virtuale: registra argv E timeoutMs (per il caso del
@@ -275,4 +275,204 @@ test('deadline 14: nessun marcatore del testo catturato o del prompt nel ritorno
   const body = JSON.stringify(r);
   assert.ok(!body.includes('CAPTURE-SENTINEL-s2a'), 'nessun testo catturato nel ritorno');
   assert.ok(!body.includes('PROMPT-SENTINEL-s2a'), 'nessun prompt nel ritorno');
+});
+
+// ===========================================================================
+// Verifica fresca prima del PRIMO paste e prima del retry certo (A4/C6):
+// pane pinned con binding del proprietario, capture con attributi su quel
+// pane, classifyPane ready, composer empty qualificato. Qualunque altro
+// esito -> ZERO paste, ZERO Enter, stato/dettaglio bounded.
+// ===========================================================================
+
+// 5. Input umano nel gate MCP: il composer e' occupato alla verifica fresca
+// -> ZERO paste con motivo bounded.
+test('fresh 5: composer occupato alla verifica fresca -> skipped-unknown, motivo bounded, 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  let attrsCalls = 0;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => { attrsCalls += 1; return CLAUDE_ATTRS_OCCUPIED; },
+    composerContract: SIM_CLAUDE_CONTRACT,
+    mcpWait: async () => ({ state: 'ready', ready: ['a'], failed: [], pending: [] }),
+  });
+  assert.equal(attrsCalls, 1, 'la verifica fresca legge il composer con attributi');
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'skipped-unknown');
+  assert.equal(r.notReady, 'busy', 'motivo bounded: il composer e' + ' occupato da input umano');
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// 6. Capture tardivo NELLA verifica fresca: l'attrs capture finisce oltre
+// la deadline -> ZERO paste (guardia al confine pre-effetto).
+test('fresh 6: attrs capture oltre la deadline nella verifica fresca -> 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => { clk.advanceMono(6000); return CLAUDE_ATTRS_EMPTY; },
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.deadlineExceeded, true);
+  assert.equal(pasteCount(t), 0, 'nessun paste oltre la deadline, nemmeno con verify ok');
+  assert.equal(enterCount(t), 0);
+});
+
+// 7. Cancellazione durante la verifica fresca -> cancelled, ZERO paste.
+test('fresh 7: cancellazione durante la verifica fresca -> cancelled, 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  let cancelled = false;
+  let attrsCalls = 0;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => { attrsCalls += 1; cancelled = true; return CLAUDE_ATTRS_EMPTY; },
+    composerContract: SIM_CLAUDE_CONTRACT,
+    isCancelled: () => cancelled,
+  });
+  assert.equal(attrsCalls, 1, 'la cancellazione avviene DENTRO la finestra di verifica');
+  assert.equal(r.state, 'cancelled');
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// 8. Pane sostituito fra readiness e consegna: %N non piu' quello atteso ->
+// ZERO paste, nessuna ri-risoluzione libera.
+test('fresh 8: pane sostituito (%N diverso) -> 0 paste', async () => {
+  // (a) il pane della sessione non e' piu' risolvibile alla verifica fresca:
+  // la PRIMA verifica (pre-paste) non qualifica il pane -> skipped-unknown.
+  const clkA = virtualClock();
+  let resolves = 0;
+  const tA = mkTmux(clkA, {});
+  const execA = async (bin, args, opts) => {
+    if (args[0] === 'display-message') {
+      resolves += 1;
+      return { err: new Error('gone'), stdout: '', stderr: '', code: 1 };
+    }
+    return tA.exec(bin, args, opts);
+  };
+  const rA = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clkA.now, sleepImpl: clkA.sleep,
+    tmuxExecImpl: execA,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(rA.state, 'skipped-unknown', 'pane non qualificabile: zero effetti');
+  assert.equal(pasteCount(tA), 0);
+  assert.equal(enterCount(tA), 0);
+
+  // (b) il %N cambia DOPO il pinning della verifica: il target pinned non
+  // viene ri-risolto a un pane nuovo -> fallimento certo pre-paste, 0 paste.
+  const clkB = virtualClock();
+  let seq = 0;
+  const tB = mkTmux(clkB, {});
+  const execB = async (bin, args, opts) => {
+    if (args[0] === 'display-message') {
+      seq += 1;
+      const pane = seq === 1 ? '%42' : '%99';
+      tB.calls.push({ argv: `display-message -p -t ${args[3]} … ${pane}`, timeoutMs: opts && opts.timeoutMs });
+      return { err: null, stdout: `cloud-T\t0\t${pane}\n`, stderr: '', code: 0 };
+    }
+    return tB.exec(bin, args, opts);
+  };
+  const rB = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clkB.now, sleepImpl: clkB.sleep,
+    tmuxExecImpl: execB,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(rB.delivered, false);
+  assert.notEqual(rB.state, 'submitted');
+  assert.equal(pasteCount(tB), 0, 'il pane atteso non e' + ' piu' + ' quello: nessun paste');
+  assert.equal(enterCount(tB), 0);
+});
+
+// 9. Generazione morta durante la verifica fresca (child uscito) ->
+// cancelled, ZERO paste.
+test('fresh 9: generazione morta durante la verifica fresca -> cancelled, 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const childState = { exited: false };
+  let attrsCalls = 0;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => { attrsCalls += 1; childState.exited = true; return CLAUDE_ATTRS_EMPTY; },
+    composerContract: SIM_CLAUDE_CONTRACT,
+    isCancelled: () => childState.exited === true,
+  });
+  assert.equal(attrsCalls, 1, 'la generazione muore DENTRO la verifica fresca');
+  assert.equal(r.state, 'cancelled');
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// 19. Attesa lenta DENTRO securePaste: il load supera la deadline fra la
+// verifica e l'effetto -> ZERO paste (guardia al confine pre-effetto reale,
+// non solo prima della chiamata).
+test('fresh 19: load lento dentro securePaste oltre la deadline -> 0 paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, { loadDelayMs: 9000 });
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'failed-pre-paste');
+  assert.equal(r.deadlineExceeded, true, 'dettaglio deadline sul abort pre-effetto');
+  assert.equal(pasteCount(t), 0, 'il paste NON parte oltre la deadline');
+  assert.equal(enterCount(t), 0);
+});
+
+// 20. Proprietario cambiato con lo STESSO %N: il pane e' riusato dalla
+// generazione successiva e isCancelled cambia fra verifica e paste ->
+// ZERO paste; da =session il target pinned non viene ri-risolto a un pane
+// nuovo.
+test('fresh 20: proprietario cambiato sullo stesso %N -> 0 paste, target pinned mai ri-risolto', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, {});
+  let cancelled = false;
+  const execT = async (bin, args, opts) => {
+    if (args[0] === 'load-buffer') cancelled = true;
+    return t.exec(bin, args, opts);
+  };
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: execT,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+    isCancelled: () => cancelled,
+  });
+  assert.equal(r.state, 'cancelled', 'binding del proprietario: la generazione non e' + ' piu' + ' quella');
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+  // il pinning: dopo la verifica (=sessione -> %42) il trasporto lavora sul
+  // %N PINNATO; il codice attuale risolve liberamente =sessione dentro
+  // securePaste, quindi nessun '-t %42' comparirebbe.
+  const resolves = t.calls.filter((c) => c.argv.startsWith('display-message'));
+  assert.ok(resolves.some((c) => c.argv.includes('-t %42')),
+    'il trasporto risolve il %N pinnato dalla verifica, non =sessione');
 });
