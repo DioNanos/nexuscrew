@@ -939,3 +939,60 @@ test('R2/P1B-03: il record cambia DOPO la barriera host, prima del rilascio dell
 function LID_REALE(d) {
   return launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
 }
+
+// ---------------------------------------------------------------------------
+// R3 / R2-B: il record cambia durante l'host-stop del ramo ternario
+// ---------------------------------------------------------------------------
+
+test('R3/R2-B: ternary vl, il record cambia durante lo stop dell\'host => la claim resta', async (t) => {
+  const d = mondoVlCrashato(t);
+  const lid = LID_REALE(d);
+  const f = figlioVivo(t);
+  const nascita = leggiStarttimeProc(f.pid);
+  await morto(f.pid);
+  assert.equal(launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: lid, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    panePid: f.pid, paneStarttime: nascita, family: 'vl',
+  }), true);
+  let toccato = false;
+  const orig = fs.readFileSync;
+  fs.readFileSync = function (...a) {
+    if (!toccato && String(a[0]).endsWith('host-context.json')) {
+      toccato = true;
+      const dato = JSON.parse(orig.call(fs, W.fileRecord(d), 'utf8'));
+      fs.writeFileSync(W.fileRecord(d), `${JSON.stringify(dato)}\n\n`);
+    }
+    return orig.apply(this, a);
+  };
+  t.after(() => { fs.readFileSync = orig; });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
+  fs.readFileSync = orig;
+  assert.equal(toccato, true, 'il record e\' stato modificato durante la fase host');
+  assert.equal(W.lease(d).length, 1, 'la claim NON si rilascia: la fotografia non vale piu\'');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'presente');
+  assert.equal(fs.existsSync(quarantena(d, lid)), false);
+});
+
+// ---------------------------------------------------------------------------
+// R3 / R2-A: due runtime nello stesso processo, stessa radice e stessa cella
+// ---------------------------------------------------------------------------
+
+test('R3/R2-A: due runtime nello stesso processo su stessa radice e cella => uno solo arriva a issue', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  let chiamate = 0;
+  let liberaPrimo;
+  const sospeso = new Promise((r) => { liberaPrimo = r; });
+  const broker = async () => { chiamate += 1; await sospeso; return null; };
+  const a = W.apriRuntime(d, { issue: broker });
+  const b = W.apriRuntime(d, { issue: broker });
+  t.after(() => { for (const x of [a, b]) { try { x.runtime.shutdown(); } catch (_) {} } });
+  const upA = a.runtime.up(d.cella).catch((e) => e);
+  const upB = b.runtime.up(d.cella).catch((e) => e);
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(chiamate, 1, 'il secondo runtime non oltrepassa la guardia mentre il primo ciclo e\' sospeso');
+  liberaPrimo();
+  await Promise.all([upA, upB]);
+});
