@@ -17,6 +17,14 @@ function socketFinto() {
   return s;
 }
 
+// Supervised-delivery fixture: the prompt-outcome channel is required.
+// A fresh ephemeral dir per harness instance.
+const FX_DIRS = [];
+process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 function createHarness(options = {}) {
   const launchId = hexId();
   const token = `token-${hexId()}`;
@@ -35,10 +43,13 @@ function createHarness(options = {}) {
     sock.emit('data', Buffer.from(`${JSON.stringify(frame)}\n`, 'utf8'));
   };
 
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   const payload = {
     command: process.execPath,
     args: ['-e', 'process.exit(0)'],
     env: { HOME: '/tmp', PATH: '/usr/bin' },
+    promptOutcome: { dir: fxDir, launchId: '6e7f8091a2b3c4d5' },
     supervise: { enabled: true, initialReadyMs: 0, ...(options.supervise || {}) },
     lease: { cellId: 'CellPrep', launchEpoch: hexId(), stablePath: '/tmp/test-prep.sock' },
     control: { launchId, token },

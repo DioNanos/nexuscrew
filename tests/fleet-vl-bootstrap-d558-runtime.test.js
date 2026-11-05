@@ -191,6 +191,12 @@ function supervisorSeams() {
   return {
     calls,
     seams: {
+      // Supervised-delivery fixture: the prompt-outcome channel is required
+      // (fresh ephemeral dir per seams instance).
+      promptOutcome: {
+        dir: fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-')),
+        launchId: '7f8091a2b3c4d5e6',
+      },
       setTimeout: (fn, ms) => {
         const h = {};
         live.add(h);
