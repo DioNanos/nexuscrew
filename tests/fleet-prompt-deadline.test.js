@@ -484,6 +484,155 @@ test('fresh 20: proprietario cambiato sullo stesso %N -> 0 paste, target pinned 
 });
 
 // ===========================================================================
+// Retry da target =sessione: il pane ammesso e' FISSO. La prima verifica
+// fresca risolve e pinna il pane; il retry riverifica ESATTAMENTE quel pane
+// pinnato e l'effetto (paste/Enter) usa QUEL target. Mai una ri-risoluzione
+// libera di =sessione che convalida il pane NUOVO mentre l'effetto resta
+// sul vecchio: se il pinnato non supera la riverifica, zero effetti.
+// ===========================================================================
+
+// Due pane ENTRAMBI vivi nella STESSA sessione; il target attivo cambia
+// durante il fallimento pre-paste e il pane originale non supera la
+// verifica fresca: il secondo paste/Enter devono restare ZERO.
+test('fresh 21: retry con pane attivo cambiato e pinnato non piu pronto -> failed-pre-paste, 0 paste/0 Enter', async () => {
+  const clk = virtualClock();
+  let loads = 0;
+  let sessionResolves = 0;
+  const calls = [];
+  const exec = async (bin, args) => {
+    const cmd = args[0];
+    const tIdx = args.indexOf('-t');
+    const tgt = tIdx >= 0 ? args[tIdx + 1] : cmd;
+    calls.push(`${cmd}${tIdx >= 0 ? ` -t ${tgt}` : ''}`);
+    if (cmd === 'display-message') {
+      // target =sessione -> il pane ATTIVO (prima %42, poi %43); target %N ->
+      // identita' verificata: entrambi i pane restano vivi nella sessione.
+      if (tgt.startsWith('%')) return { err: null, stdout: `cloud-T\t0\t${tgt}\n`, stderr: '', code: 0 };
+      sessionResolves += 1;
+      return { err: null, stdout: `cloud-T\t0\t${sessionResolves === 1 ? '%42' : '%43'}\n`, stderr: '', code: 0 };
+    }
+    if (cmd === 'load-buffer') {
+      loads += 1;
+      if (loads === 1) return { err: new Error('load'), stdout: '', stderr: '', code: 1 };
+    }
+    return { err: null, stdout: '', stderr: '', code: 0 };
+  };
+  const freshTargets = [];
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: exec,
+    captureImpl: async (t) => {
+      if (t !== undefined) freshTargets.push(t);
+      // dopo il primo load fallito il pane pinnato %42 NON supera la verifica
+      return t === '%42' && loads > 0 ? '⏺ working…\nesc to interrupt' : CLAUDE_READY_LIKE;
+    },
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'failed-pre-paste', 'riverifica negativa sul pinnato: nessun secondo paste');
+  assert.equal(r.attempts, 1);
+  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0, 'zero paste');
+  assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, 'zero Enter');
+  assert.ok(!freshTargets.includes('%43'), 'nessuna verifica fresca sul pane nuovo: si riverifica il pinnato');
+  assert.ok(freshTargets.length >= 2 && freshTargets[freshTargets.length - 1] === '%42',
+    'la riverifica del retry lavora sul pane pinnato %42');
+});
+
+// Il pinnato resta valido: il retry riverifica PROPRIO il pinnato e
+// paste/Enter usano QUEL target — il pane verificato e quello dell'effetto
+// coincidono, anche quando la sessione ha nel frattempo un pane attivo nuovo.
+test('fresh 22: retry con pinnato valido -> riverifica il pinnato, paste/Enter solo su quel pane', async () => {
+  const clk = virtualClock();
+  let loads = 0;
+  let sessionResolves = 0;
+  const calls = [];
+  const exec = async (bin, args) => {
+    const cmd = args[0];
+    const tIdx = args.indexOf('-t');
+    const tgt = tIdx >= 0 ? args[tIdx + 1] : cmd;
+    calls.push(`${cmd}${tIdx >= 0 ? ` -t ${tgt}` : ''}`);
+    if (cmd === 'display-message') {
+      if (tgt.startsWith('%')) return { err: null, stdout: `cloud-T\t0\t${tgt}\n`, stderr: '', code: 0 };
+      sessionResolves += 1;
+      return { err: null, stdout: `cloud-T\t0\t${sessionResolves === 1 ? '%42' : '%43'}\n`, stderr: '', code: 0 };
+    }
+    if (cmd === 'load-buffer') {
+      loads += 1;
+      if (loads === 1) return { err: new Error('load'), stdout: '', stderr: '', code: 1 };
+    }
+    return { err: null, stdout: '', stderr: '', code: 0 };
+  };
+  const freshTargets = [];
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: exec,
+    captureImpl: async (t) => { if (t !== undefined) freshTargets.push(t); return CLAUDE_READY_LIKE; },
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.state, 'submitted');
+  assert.equal(r.attempts, 2, 'un solo retry pre-paste');
+  const pastes = calls.filter((c) => c.startsWith('paste-buffer'));
+  const enters = calls.filter((c) => c.startsWith('send-keys'));
+  assert.equal(pastes.length, 1, 'un solo paste');
+  assert.equal(enters.length, 1, 'un solo Enter');
+  assert.ok(pastes.every((c) => c.includes('-t %42')), 'paste sul pane pinnato');
+  assert.ok(enters.every((c) => c.includes('-t %42')), 'Enter sul pane pinnato');
+  assert.deepStrictEqual(freshTargets, ['%42', '%42'],
+    'la riverifica del retry lavora sul pinnato, mai sul pane nuovo');
+});
+
+// Percorso senza contratto composer (client con il solo classifier del pane,
+// capture di default): stessa disciplina del pane pinnato.
+test('fresh 23: client senza contratto, retry da =sessione -> riverifica il pinnato, 0 secondo paste', async () => {
+  const clk = virtualClock();
+  let loads = 0;
+  let sessionResolves = 0;
+  const calls = [];
+  const VL_READY_LEGACY = 'vivling [o] esc quit · ^y yield';
+  const exec = async (bin, args) => {
+    const cmd = args[0];
+    const tIdx = args.indexOf('-t');
+    const tgt = tIdx >= 0 ? args[tIdx + 1] : cmd;
+    calls.push(`${cmd}${tIdx >= 0 ? ` -t ${tgt}` : ''}`);
+    if (cmd === 'display-message') {
+      if (tgt.startsWith('%')) return { err: null, stdout: `cloud-T\t0\t${tgt}\n`, stderr: '', code: 0 };
+      sessionResolves += 1;
+      return { err: null, stdout: `cloud-T\t0\t${sessionResolves === 1 ? '%42' : '%43'}\n`, stderr: '', code: 0 };
+    }
+    if (cmd === 'capture-pane') {
+      // il pane pinnato %42 non e' piu pronto dopo il primo load fallito
+      return {
+        err: null,
+        stdout: (loads > 0 && tgt === '%42') ? 'superficie non classificabile' : VL_READY_LEGACY,
+        stderr: '', code: 0,
+      };
+    }
+    if (cmd === 'load-buffer') {
+      loads += 1;
+      if (loads === 1) return { err: new Error('load'), stdout: '', stderr: '', code: 1 };
+    }
+    return { err: null, stdout: '', stderr: '', code: 0 };
+  };
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, client: 'vl', readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: exec,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'failed-pre-paste', 'riverifica negativa sul pinnato: nessun secondo paste');
+  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0, 'zero paste');
+  assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, 'zero Enter');
+  assert.equal(calls.filter((c) => c === 'capture-pane -t %42').length, 2,
+    'la verifica fresca e la riverifica catturano il pane pinnato');
+  assert.ok(!calls.includes('capture-pane -t %43'),
+    'mai un capture del pane nuovo: la riverifica non ri-risolve =sessione');
+});
+
+// ===========================================================================
 // Submit opt-in custom (C8/A7): stessa disciplina di deadline sul trasporto
 // (sleep e timeout al residuo, deadline dopo ogni await) e identita' fresca
 // del pane (binding del proprietario) ri-verificata subito prima del primo
