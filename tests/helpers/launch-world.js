@@ -188,7 +188,16 @@ if (args[0] === 'list-sessions') {
   if (esiste('nato')) process.stdout.write(NOME + '\\t1\\n');
   process.exit(0);
 }
+if (args[0] === 'display-message' && args.includes(';')) {
+  // Osservazione su UNA connessione: pid del server, poi has-session sullo stesso server.
+  if (S.nessunServer) { process.stderr.write('no server running on /tmp/fake\\n'); process.exit(1); }
+  process.stdout.write(String(S.serverOsservato != null ? S.serverOsservato : S.server) + '\\n');
+  if (esiste('nato') || S.omonima) process.exit(0);
+  process.stderr.write("can't find session: " + NOME + '\\n');
+  process.exit(1);
+}
 if (args[0] === 'has-session') {
+  if (S.nessunServer) { process.stderr.write('no server running on /tmp/fake\\n'); process.exit(1); }
   if (esiste('nato') || S.omonima) process.exit(0);
   process.stderr.write("can't find session: " + NOME + '\\n');
   process.exit(1);
@@ -268,7 +277,9 @@ function apriRuntime(d, opzioni = {}) {
       launchReadyMs: 0, filesRoot: d.filesRoot, activityHooks: false, vlLaunchCooldownMs: 0,
       log: () => {}, env: {}, ...(opzioni.cfg || {}),
     },
-    ...(d.famiglia === 'vl' ? { identityOwnerInstanceId: OWNER_INSTANCE_ID } : {}),
+    ...(d.famiglia === 'vl' || opzioni.owner ? { identityOwnerInstanceId: OWNER_INSTANCE_ID } : {}),
+    ...(opzioni.identitaProc ? { leggiIdentitaProc: opzioni.identitaProc } : {}),
+    ...(opzioni.leaseManager ? { leaseManager: opzioni.leaseManager } : {}),
     home: d.home, defsPath: d.defsPath, tmuxBin: d.tmuxBin, readonly: () => false,
     launchBroker,
     ...(opzioni.ensureProtection ? { ensureProtection: opzioni.ensureProtection } : {}),

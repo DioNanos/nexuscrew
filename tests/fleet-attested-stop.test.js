@@ -30,6 +30,17 @@ const gruppo = require('../lib/fleet/group-stop.js');
 const SESSIONE = '$7';
 const NOME = 'nc-att-prova';
 
+// Il tempo passa: una lease in grace che il valutatore unico legge come SCADUTA.
+// Le prove di morte del lancio accettano solo none o expired (grace e live
+// bloccano): questi test vogliono la sola prova «scaduta» e la danno cosi'.
+function graceScaduta(w) {
+  const stato = w.mgr.status.bind(w.mgr);
+  w.mgr.status = (id) => {
+    const r = stato(id);
+    return r && r.state === 'grace' ? { ...r, state: 'expired' } : r;
+  };
+}
+
 function hexId() { return crypto.randomBytes(8).toString('hex'); }
 
 function attendi(check, ms = 4000, passo = 20) {
@@ -427,6 +438,7 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
 
 test('down su /proc affollato: uscita provata + client morto con la sessione NON attesta, ma le tre prove chiude NELLA STESSA down (attested-recovery) e l up dopo riesce', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   assert.equal(gruppo.leggiPgrp(w.paneChild.pid), w.paneChild.pid, 'il supervisore finto deve stare in un gruppo proprio');
   await w.runtime.up('CellaAtt');
@@ -463,6 +475,7 @@ test('down su /proc affollato: uscita provata + client morto con la sessione NON
 
 test('down con censimento pulito e risposta persa: uscita provata + kill partito, le tre prove chiudono NELLA STESSA down (attested-recovery, killed)', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   fs.writeFileSync(w.marker.muoriKill, '1');
   await w.runtime.up('CellaAtt');
@@ -511,6 +524,7 @@ test('down con canale morto alla verifica e nessuna prova possibile: resta STOP_
 
 test('down con client morto alla verifica (uscita provata, censimento non dichiarabile): la morte del client non attesta, le tre prove chiudono NELLA STESSA down', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   fs.writeFileSync(w.marker.muoriHas, '1');
   await w.runtime.up('CellaAtt');
@@ -618,6 +632,7 @@ test('recupero EACCES con censimento 1: esattamente STOP_INCOMPLETE, record ince
 
 test('recupero nella stessa down con has-session CLI in timeout: il timeout non e\' una prova, resta STOP_UNKNOWN; il down successivo senza canale chiude resolved-dead', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   await w.runtime.up('CellaAtt');
   const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
@@ -674,6 +689,7 @@ test('recupero nella stessa down con lease ancora live: la prova (3) manca, rest
 
 test('recupero nella stessa down entro il budget con clock fermo: attested-recovery', async (t) => {
   const w = creaMondo(t, { cfgExtra: { monotonicNow: () => 0, groupStopBudgetMs: 4000 } });
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   await w.runtime.up('CellaAtt');
   const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });

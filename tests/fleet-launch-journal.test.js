@@ -88,6 +88,8 @@ test('duplicate session provato scioglie la claim del lancio rifiutato (vl)', as
 
 const { OWNER_INSTANCE_ID } = W;
 
+function leggiPrima(testo) { return JSON.parse(testo); }
+
 function leggiRecord(d) {
   const r = launchTarget.leggi(d.filesRoot, d.sessione);
   return r.stato === 'presente' ? r.record : r;
@@ -466,11 +468,22 @@ for (const c of CONFINI) {
     } else {
       await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
       assert.equal(leggiRecord(d).phase, c.fase, 'il record non e\' stato toccato');
-      // Il down senza prova non agisce: nessun kill e record intatto.
       const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
-      await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'IDENTITY_UNVERIFIED');
-      assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
-      assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
+      if (c.fase === 'prepared') {
+        // prepared qualificato: questo lancio non ha emesso new-session. Il down lo
+        // riconcilia (P1-b): record in quarantena, nessun kill, e l'up riparte.
+        const r = await runtime.down(d.cella);
+        assert.equal(r.outcome, 'resolved-unlaunched');
+        assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+        assert.equal(fs.readFileSync(launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, leggiPrima(prima).launchId), 'utf8'), prima);
+        assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
+        assert.equal((await runtime.up(d.cella)).ok, true);
+      } else {
+        // Il down senza prova non agisce: nessun kill e record intatto.
+        await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'IDENTITY_UNVERIFIED');
+        assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
+        assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
+      }
     }
   });
 }
@@ -486,9 +499,12 @@ test('crash al broker (vl): record prepared e claim insieme, il blocco si conser
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
-  await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'IDENTITY_UNVERIFIED');
-  assert.equal(W.lease(d).length, 1, 'il down senza prova non scioglie la claim');
-  assert.equal(leggiRecord(d).phase, 'prepared');
+  // P1-b: prepared qualificato = nessuna new-session emessa. Root ancora assente e
+  // lease none: il down riconcilia (host -> claim -> record) e libera il lancio.
+  const esitoDown = await runtime.down(d.cella);
+  assert.equal(esitoDown.outcome, 'resolved-unlaunched');
+  assert.deepStrictEqual(W.lease(d), [], 'claim rilasciata');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
 });
 
 test('crash dopo l\'abort terminale (vl): il disco dice «abortito» e la claim c\'e\' ancora', async (t) => {

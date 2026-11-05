@@ -34,6 +34,17 @@ const SESSIONE = '$9';
 const NOME = 'cloud-CellaVlBar';
 const CELLA = 'CellaVlBar';
 
+// Il tempo passa: una lease in grace che il valutatore unico legge come SCADUTA.
+// Le prove di morte del lancio accettano solo none o expired (grace e live
+// bloccano): questi test vogliono la sola prova «scaduta» e la danno cosi'.
+function graceScaduta(w) {
+  const stato = w.mgr.status.bind(w.mgr);
+  w.mgr.status = (id) => {
+    const r = stato(id);
+    return r && r.state === 'grace' ? { ...r, state: 'expired' } : r;
+  };
+}
+
 function hexId() { return crypto.randomBytes(8).toString('hex'); }
 
 function attendi(check, ms = 4000, passo = 20) {
@@ -244,6 +255,17 @@ function spiaOrdineRimozione(t, hostPid) {
     return rimuoviOriginale.apply(launchTarget, a);
   };
   t.after(() => { launchTarget.rimuovi = rimuoviOriginale; });
+  // Il record di un lancio riconciliato non si cancella: si sposta in
+  // quarantena (riconciliaRecord). Il punto di commit e' quello.
+  const riconciliaOriginale = launchTarget.riconciliaRecord;
+  launchTarget.riconciliaRecord = (...a) => {
+    const p = hostPid();
+    let vivo = false;
+    if (p > 0) { try { process.kill(p, 0); vivo = true; } catch (_) { vivo = false; } }
+    visto.rimozioni.push({ hostVivo: vivo });
+    return riconciliaOriginale.apply(launchTarget, a);
+  };
+  t.after(() => { launchTarget.riconciliaRecord = riconciliaOriginale; });
   return visto;
 }
 
@@ -257,6 +279,7 @@ const uccidiSupervisore = async (w) => {
 
 test('resolved-dead vl: tre prove + barriera host attestata -> host fermo e root rilasciata PRIMA della rimozione del record', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   await w.runtime.up(CELLA);
   const hostPrima = w.hostPid();
@@ -447,6 +470,7 @@ function attaccaSupervisore(t, w, { tieniLease = false } = {}) {
 
 test('down vl con uscita provata e canale morto col gruppo: recupero NELLA STESSA down, barriera vede l\'host gia\' fermo, attested-recovery', async (t) => {
   const w = creaMondo(t);
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   await w.runtime.up(CELLA);
   const hostPrima = w.hostPid();
@@ -478,6 +502,7 @@ test('down vl con uscita provata e canale morto col gruppo: recupero NELLA STESS
 
 test('down vl con host NUOVO nato con la morte del canale: la barriera del recupero rifiuta, record e guardia incerta restano', async (t) => {
   const w = creaMondo(t, { respawnAllaMorte: true });
+  graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
   await w.runtime.up(CELLA);
   const sup = await attaccaSupervisore(t, w);

@@ -24,6 +24,7 @@ const { atomicWrite, loadDefinitions, leggiStarttimeProc, leggiIdentitaProc } = 
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const launchTarget = require('../lib/fleet/launch-target.js');
+const { sharedTmuxSocketPath } = require('../lib/runtime/env.js');
 
 const SESSIONE = '$7';
 const NOME = 'nc-s3-prova';
@@ -52,7 +53,7 @@ test('record: paneStarttime round-trip, assente nei record vecchi, preservato da
   try {
     const launchId = hexId();
     assert.equal(launchTarget.registra(root, NOME, {
-      launchId, sessionId: SESSIONE, paneId: '%7', tmuxSocket: '/tmp/tmux-1000/default',
+      launchId, sessionId: SESSIONE, paneId: '%7', tmuxSocket: sharedTmuxSocketPath(),
       serverPid: 4242, panePid: 4243, paneStarttime: 1234567, family: 'other',
     }), true);
     let letto = launchTarget.leggi(root, NOME);
@@ -240,7 +241,7 @@ process.exit(0);
 function seminaRecord(w, { pid, nascita, senzaNascita = false } = {}) {
   const launchId = hexId();
   assert.equal(launchTarget.registra(w.filesRoot, NOME, {
-    launchId, sessionId: SESSIONE, paneId: '%7', tmuxSocket: '/tmp/tmux-1000/default',
+    launchId, sessionId: SESSIONE, paneId: '%7', tmuxSocket: sharedTmuxSocketPath(),
     serverPid: 4242, panePid: pid, ...(senzaNascita ? {} : { paneStarttime: nascita }),
     family: 'other',
   }), true, 'semina del record fallita');
