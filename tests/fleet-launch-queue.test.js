@@ -79,11 +79,11 @@ for (const [nome, stesso] of [['stesso runtime', true], ['due runtime', false]])
     t.after(() => { for (const x of [a, c]) { try { x.runtime.shutdown(); } catch (_) {} } });
     const upP = a.runtime.up(d.cella);
     const upW = insegna(upP);
-    await b.arrivato;
-    const { launchId } = fotoRecord(d);
-    assert.ok(/^[0-9a-f]{16}$/.test(launchId), 'il record prepared dell\'up in corso esiste');
     let downW = null; const downHolder = { p: null };
     try {
+      await b.arrivato;
+      const { launchId } = fotoRecord(d);
+      assert.ok(/^[0-9a-f]{16}$/.test(launchId), 'il record prepared dell\'up in corso esiste');
       const r1 = await c.runtime.reconcile(d.cella, launchId);
       assert.equal(r1.outcome, 'busy', 'catena occupata oltre il budget = busy');
       const st = await c.runtime.launchState(d.cella);
@@ -125,10 +125,10 @@ for (const [nome, stesso] of [['stesso runtime', true], ['due runtime', false]])
     t.after(() => { for (const x of [a, c]) { try { x.runtime.shutdown(); } catch (_) {} } });
     const resP = a.runtime.restart(d.cella);
     const resW = insegna(resP);
-    await b.arrivato;
-    const { launchId } = fotoRecord(d);
     let downW = null; const downHolder = { p: null };
     try {
+      await b.arrivato;
+      const { launchId } = fotoRecord(d);
       const r = await c.runtime.reconcile(d.cella, launchId);
       assert.equal(r.outcome, 'busy');
       const st = await c.runtime.launchState(d.cella);
@@ -162,13 +162,14 @@ for (const [nome, stesso] of [['stesso runtime', true], ['due runtime', false]])
     t.after(() => { for (const x of [a, c]) { try { x.runtime.shutdown(); } catch (_) {} } });
     const upP = a.runtime.up(d.cella);
     const upW = insegna(upP);
-    await b.arrivato;
-    const { launchId } = fotoRecord(d);
-    const recP = c.runtime.reconcile(d.cella, launchId);
-    await pausa(80); // il terzo entra mentre il POST sta ancora aspettando
-    const resP = a.runtime.restart(d.cella);
-    const resW = insegna(resP);
+    let recP = null; let resP = null; let resW = null;
     try {
+      await b.arrivato;
+      const { launchId } = fotoRecord(d);
+      recP = c.runtime.reconcile(d.cella, launchId);
+      await pausa(80); // il terzo entra mentre il POST sta ancora aspettando
+      resP = a.runtime.restart(d.cella);
+      resW = insegna(resP);
       const r = await recP;
       assert.equal(r.outcome, 'busy');
       const st = await c.runtime.launchState(d.cella);
@@ -178,10 +179,10 @@ for (const [nome, stesso] of [['stesso runtime', true], ['due runtime', false]])
       assert.equal(b.chiamate(), 1, 'il restart non entra prima del rilascio del broker');
       assert.equal(resW.fatto, false);
       b.libera();
-      await raccogli([upP, resP]);
+      await raccogli([upP, recP, resP]);
     } finally {
       b.libera();
-      await raccogli([upP, resP]);
+      await raccogli([upP, recP, resP].filter(Boolean));
     }
     assert.ok(upW.fatto && resW.fatto);
     assert.ok(upW.a <= resW.a, `FIFO: l\'up drena prima del restart accodato (${upW.a} vs ${resW.a})`);
@@ -199,11 +200,11 @@ for (const [nome, stesso] of [['stesso runtime', true], ['due runtime', false]])
     t.after(() => { for (const x of [a, c]) { try { x.runtime.shutdown(); } catch (_) {} } });
     const upP = a.runtime.up(d.cella);
     const upW = insegna(upP);
-    await b.arrivato;
-    const { launchId } = fotoRecord(d);
     const up2P = { p: null };
     let up2W = null;
     try {
+      await b.arrivato;
+      const { launchId } = fotoRecord(d);
       const r = await c.runtime.reconcile(d.cella, launchId);
       assert.equal(r.outcome, 'busy');
       const st = await c.runtime.launchState(d.cella);
