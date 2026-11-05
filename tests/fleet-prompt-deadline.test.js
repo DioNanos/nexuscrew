@@ -589,3 +589,104 @@ test('submit 16d: load lento dentro securePaste oltre la deadline -> 0 paste', a
   assert.equal(r.deadlineExceeded, true);
   assert.equal(pasteCount(t), 0);
 });
+
+// ===========================================================================
+// Due orologi (C7/A8, rischio R7): notBeforeMs e' CIVILE (confrontato con i
+// nomi dei log MCP su disco), deadlineMs e' MONOTONA. Seam distinti
+// (wallNowImpl / monoNowImpl) e LO STESSO monotono passato al consumer,
+// altrimenti il gate non scade piu'. Poll limitato al residuo e deadline
+// ricontrollata dopo il sonno, prima di una nuova lettura.
+// ===========================================================================
+const { startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+const { waitMcpReadiness } = require('../lib/fleet/mcp-cache-readiness.js');
+
+test('clocks 17a: buildMcpWait — notBeforeMs civile e deadlineMs monotona da DUE seam distinti, stesso monotono al consumer', async () => {
+  const t0Wall = 1_700_000_000_000;
+  const monoT0 = 12345;
+  const monoNow = () => monoT0;
+  const wallNow = () => t0Wall;
+  const waitCalls = [];
+  const s = {
+    setTimeout: (fn) => { queueMicrotask(() => { try { fn(); } catch (_) {} }); return { unref() {} }; },
+    clearTimeout: () => {},
+    waitMcpReadiness: async (args) => { waitCalls.push(args); return { state: 'ready', ready: ['a'], failed: [], pending: [] }; },
+    deliverBootstrapPrompt: async (opts) => {
+      if (opts.mcpWait) await opts.mcpWait({ isCancelled: () => false });
+      return { delivered: true, state: 'submitted', notReady: '', attempts: 1 };
+    },
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+    wallNowImpl: wallNow,
+    monoNowImpl: monoNow,
+  };
+  const ctl = startGenerationPrompt({
+    tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', client: 'claude', readyMs: 1,
+    readyWaitMs: 1000,
+    mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['nexuscrew'], budgetMs: 20000 },
+  }, 0, { exited: false }, s);
+  await ctl.settled;
+  const arg = waitCalls[0];
+  assert.ok(arg, 'il gate passa dall adattatore waitMcpReadiness');
+  assert.strictEqual(arg.params.notBeforeMs, t0Wall, 'notBeforeMs dal seam CIVILE (log MCP su disco)');
+  assert.strictEqual(arg.deadlineMs, monoT0 + 20000, 'deadlineMs dal seam MONOTONO (spawn + budget)');
+  assert.strictEqual(arg.nowImpl, monoNow, 'LO STESSO monotono passa esplicitamente al consumer');
+});
+
+test('clocks 17b: waitMcpReadiness — sleep clampato al residuo, deadline ricontrollata dopo il sonno', async () => {
+  // (a) sleep mai oltre il residuo: deadline a mono 600, pollMs 500 -> il
+  // sonno e' <= al residuo rimanente.
+  let mono = 0;
+  const sleeps = [];
+  const root = '/tmp/nc-0980-s2a/mcp-mai-pronto';
+  const rA = await waitMcpReadiness({
+    params: { cacheRoot: root, cwd: '/x', expectedServers: ['mai'] },
+    deadlineMs: 600,
+    pollMs: 500,
+    nowImpl: () => mono,
+    sleepImpl: async (ms) => { sleeps.push(ms); mono += ms; },
+  });
+  assert.strictEqual(rA.timedOut, true);
+  assert.ok(sleeps.length >= 1);
+  let t = 0;
+  for (const ms of sleeps) {
+    assert.ok(ms <= 600 - t, `sleep ${ms} > residuo ${600 - t}`);
+    t += ms;
+  }
+
+  // (b) la deadline si ricontrolla DOPO il sonno e PRIMA di una nuova
+  // lettura: un insieme che diventa ready durante un sonno che scavalca la
+  // deadline resta timedOut (il budget e' scaduto: non e' una nuova finestra).
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-s2a-clocks-'));
+  const serverDir = path.join(dir, 'mcp-logs-x');
+  fs.mkdirSync(serverDir, { recursive: true });
+  const stamp = '2026-09-22T18-00-00-000Z';
+  const START = Date.parse('2026-09-22T18:00:00.000Z');
+  fs.writeFileSync(path.join(serverDir, `${stamp}.jsonl`),
+    JSON.stringify({ debug: 'Starting connection with timeout of 30000ms' }) + '\n');
+  let monoB = 0;
+  let flips = 0;
+  const fsImpl = {
+    readdirSync: () => [`${stamp}.jsonl`],
+    readFileSync: () => {
+      // primo giro: pending; dal secondo la cache dice ready — ma la
+      // deadline scatta durante il PRIMO sonno, quindi non deve esserci un
+      // secondo giro di lettura.
+      flips += 1;
+      return flips <= 1
+        ? JSON.stringify({ debug: 'Starting connection with timeout of 30000ms' }) + '\n'
+        : JSON.stringify({ debug: 'Successfully connected (transport: stdio) in 1ms' }) + '\n';
+    },
+  };
+  const rB = await waitMcpReadiness({
+    params: { cacheRoot: dir, cwd: 'x', expectedServers: ['x'], notBeforeMs: START, fsImpl },
+    deadlineMs: 100,
+    pollMs: 500,   // il sonno clampato deve comunque restare <= residuo
+    nowImpl: () => monoB,
+    sleepImpl: async (ms) => { monoB += ms; },
+  });
+  assert.strictEqual(rB.timedOut, true, 'deadline scaduta durante il sonno: timedOut, non una lettura in piu');
+  assert.strictEqual(flips, 1, 'nessuna nuova lettura della cache dopo la deadline');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
