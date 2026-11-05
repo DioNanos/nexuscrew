@@ -9,8 +9,8 @@
 // 2a). Qualifying a real client requires a contract with verifiable
 // provenance (pinned renderer/version/theme, or authorized non-sensitive
 // samples) plus empty/placeholder/typed triples demonstrating the
-// distinction — synthetic fixtures alone never do (DevAuditor C6,
-// decision 4). The simulator contract below qualifies ONLY the simulator.
+// distinction — synthetic fixtures alone never do. The simulator contract
+// below qualifies ONLY the simulator.
 //
 // Simulator rendering contract (what these fixtures model):
 //  - prompt glyph '❯' rendered in cyan (SGR 36) then RESET;
