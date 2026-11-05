@@ -17,7 +17,7 @@ function literalResources() {
 }
 
 // The fleet family: one entry per alternative the allowlist accepts.
-const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status', 'vl-new-session-state', 'vl-legacy-inventory'];
+const FLEET_READ = ['status', 'schema', 'definitions', 'credentials/status', 'vl-new-session-state', 'launch-state', 'vl-legacy-inventory'];
 // The fleet reads whose class is NOT the plain operator one: the vl legacy
 // inventory is a photo of the NODE state, so it is whole or nothing
 // (class 'node-inventory': operator grant AND full scope).
