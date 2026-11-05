@@ -444,3 +444,22 @@ test('transizioni: generazione maggiore sostituisce, minore mai', () => {
     assert.equal(leggiGrezzo(dir).state, 'unknown');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('record: pending senza deadlineTs rifiutato in scrittura e non leggibile come pending eterno', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    const senza = pending(); delete senza.deadlineTs;
+    assert.equal(activityFiles.scriviRecordPrompt(dir, senza), false,
+      'il pending richiede il suo limite di osservabilita\'');
+    // Difesa in lettura: un file manomesso con pending senza deadline finito
+    // non resta pending per sempre.
+    fs.mkdirSync(dir, { recursive: true });
+    const { deadlineTs, ...senzaDeadline } = pending();
+    fs.writeFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), `${JSON.stringify(senzaDeadline)}\n`);
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    assert.equal(letto.state, 'unknown',
+      'mai pending eterno: senza limite di osservabilita\' il record non e\' attestabile');
+    assert.equal(letto.reason, 'record-broken',
+      'via effettiva: lo schema rifiuta il pending senza deadline, la lettura lo dichiara rotto');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
