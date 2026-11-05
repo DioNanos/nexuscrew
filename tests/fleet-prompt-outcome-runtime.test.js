@@ -440,3 +440,118 @@ test('supervisore: generazioni che non possono ricevere prompt -> terminale dire
     assert.equal(record.generation, 3);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// --- 18. Guasti di persistenza ----------------------------------------------------
+test('supervisore: pending non persistibile -> zero paste, stderr fisso, skipped-unknown, cella viva', async () => {
+  const root = tmpRoot();
+  try {
+    fs.chmodSync(root, 0o500);   // la directory privata NON puo' nascere
+    const esito = canale(root);
+    const w = harness({
+      promptOutcome: esito, unaGenerazione: true,
+      deliver: () => { throw new Error('senza pending su disco nessuna consegna'); },
+    });
+    const code = await w.run();
+    fs.chmodSync(root, 0o700);
+    assert.equal(code, 0, 'la cella NON diventa fallita');
+    assert.equal(w.deliveries.length, 0, 'zero consegna');
+    assert.equal(w.launches(), 1, 'la generazione e\' partita');
+    assert.ok(w.errs.some((m) => m.includes('prompt outcome record not persisted (delivery withheld)')),
+      'riga fissa su stderr del pending trattenuto');
+    assert.ok(w.marks.some((m) => m.includes('@nc_delivery skipped-unknown')),
+      'marcatore volatile skipped-unknown (nessun timeout silenzioso)');
+    // Zero digitazione: nessun load/paste/send-keys oltre al marcatore.
+    const digitazione = w.marks.filter((m) => /load-buffer|paste-buffer|send-keys/.test(m));
+    assert.deepEqual(digitazione, [], 'zero load/paste/Enter');
+  } finally {
+    try { fs.chmodSync(root, 0o700); } catch (_) {}
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('supervisore: terminale non persistibile dopo il paste -> stderr, esito volatile invariato, record pending', async () => {
+  const root = tmpRoot(); const esito = canale(root);
+  try {
+    const w = harness({
+      promptOutcome: esito, unaGenerazione: true,
+      restartPrompt: { client: '', reprompt: false },
+      paste: () => {
+        // Il paste riuscito, POI la directory diventa non scrivibile: il
+        // terminale non si persiste ma l'esito volatile resta quello vero.
+        fs.chmodSync(esito.dir, 0o500);
+        return { ok: true, stage: 'pasted', paneId: '%42' };
+      },
+    });
+    const code = await w.run();
+    try { fs.chmodSync(esito.dir, 0o700); } catch (_) {}
+    assert.equal(code, 0);
+    assert.equal(w.pastes.length, 1, 'il paste e\' avvenuto davvero');
+    assert.ok(w.marks.some((m) => m.includes('@nc_delivery paste-delivered')),
+      'il marcatore volatile NON viene soppresso dal guasto del record');
+    assert.ok(w.errs.some((m) => m.includes('prompt outcome record not persisted')
+      && !m.includes('withheld')), 'riga fissa su stderr del terminale non persistito');
+    const record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record && record.state, 'pending',
+      'su disco resta il pending non promosso: mai submitted per deduzione');
+  } finally {
+    try { fs.chmodSync(esito.dir, 0o700); } catch (_) {}
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// --- 20. VL: prima il settle, POI un solo terminale --------------------------------
+function claimPending(root, nome = 'claim.json', stato = 'pending') {
+  const p = path.join(root, nome);
+  fs.writeFileSync(p, JSON.stringify({ v: 1, state: stato, cell: 'cloud-T' }), { mode: 0o600 });
+  return p;
+}
+
+test('supervisore vl: submitted con claim settle riuscito -> submitted, claim aggiornata', async () => {
+  const root = tmpRoot(); const esito = canale(root);
+  const claimPath = claimPending(root);
+  try {
+    const w = harness({
+      promptOutcome: esito, unaGenerazione: true,
+      restartPrompt: { client: 'vl', vlBootstrap: { eligible: true, claimPath } },
+      deliver: () => ({ delivered: true, state: 'submitted', notReady: '' }),
+    });
+    await w.run();
+    const record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'submitted', 'claim coerente: mapping C3 normale');
+    assert.equal(record.reason, undefined);
+    const claim = JSON.parse(fs.readFileSync(claimPath, 'utf8'));
+    assert.equal(claim.state, 'submitted', 'la claim porta l\'esito del trasporto');
+    assert.equal(typeof claim.settledAt, 'number', 'settle DURATURO avvenuto una volta');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('supervisore vl: claim non aggiornata -> unknown/claim-settle-failed, claim intatta, nessun submitted', async () => {
+  const root = tmpRoot();
+  try {
+  for (const [nome, prepara] of [
+    ['gia\' settled', () => claimPending(root, 'claim.json', 'uncertain')],
+    ['assente', () => path.join(root, 'manca.json')],
+  ]) {
+    const claimPath = prepara();
+    const prima = fs.existsSync(claimPath) ? fs.readFileSync(claimPath, 'utf8') : null;
+    const esito = canale(root);
+    const w = harness({
+      promptOutcome: esito, unaGenerazione: true,
+      restartPrompt: { client: 'vl', vlBootstrap: { eligible: true, claimPath } },
+      deliver: () => ({ delivered: true, state: 'submitted', notReady: '' }),
+    });
+    await w.run();
+    const record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
+    assert.equal(record.state, 'unknown', `${nome}: mai submitted per deduzione`);
+    assert.equal(record.reason, 'claim-settle-failed', `${nome}: il canonico non e' attestato`);
+    if (prima !== null) {
+      assert.equal(fs.readFileSync(claimPath, 'utf8'), prima,
+        `${nome}: la claim non si rilascia, non si riscrive, non si ritenta`);
+    }
+    // Il marcatore volatile continua a riportare il trasporto nel suo formato.
+    assert.ok(w.marks.some((m) => m.includes('@nc_delivery submitted')),
+      `${nome}: il ramo volatile non e' la prova del record canonico`);
+    fs.rmSync(esito.dir, { recursive: true, force: true });
+  }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
