@@ -131,21 +131,28 @@ test('T80 GET: non scrive niente — record intatto, niente journal, niente clai
 test('T80 GET: catena occupata = busy con inFlight, senza attendere', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
-  let sblocca;
+  // Broker con BARRIERA DI ARRIVO: nessun ritardo fisso, il test procede
+  // quando l'up e' DENTRO issue; rilascio e raccolta nel finally, anche su
+  // rosso (il broker sospeso non resta appeso).
+  let segnala; const arrivato = new Promise((ok) => { segnala = ok; });
+  let libera; const via = new Promise((ok) => { libera = ok; });
   const { runtime } = W.apriRuntime(d, {
-    issue: () => new Promise((ok) => { sblocca = ok; }),
+    issue: () => { segnala(); return via; },
     cfg: { groupStopBudgetMs: 8000 },
   });
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const p = runtime.up(d.cella).catch(() => {});
-  await new Promise((ok) => setTimeout(ok, 120));
-  const t0 = Date.now();
-  const st = await runtime.launchState(d.cella);
-  assert.ok(Date.now() - t0 < 2000, 'la GET non aspetta la catena');
-  assert.equal(st.inFlight, true);
-  assert.equal(st.classification, 'busy');
-  sblocca({ socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) });
-  await p;
+  try {
+    await arrivato;
+    const t0 = Date.now();
+    const st = await runtime.launchState(d.cella);
+    assert.ok(Date.now() - t0 < 2000, 'la GET non aspetta la catena');
+    assert.equal(st.inFlight, true);
+    assert.equal(st.classification, 'busy');
+  } finally {
+    libera({ socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) });
+    await p;
+  }
 });
 
 test('T80 GET: la claim straniera e\' distinta dall\'assente (held-other vs none vs held)', async (t) => {
@@ -231,24 +238,54 @@ test('T81 POST: READONLY nega la mutazione, la GET resta leggibile', async (t) =
   assert.equal((await chiama(base, 'GET', `/launch-state?cell=${d.cella}`)).status, 200);
 });
 
-test('T81 POST: catena occupata oltre il budget = busy, zero azioni', async (t) => {
+test('T81 POST: catena occupata oltre il budget = busy, zero azioni, catena intatta', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
-  let sblocca;
+  // Barriera di arrivo: il POST scade con l'up DENTRO issue, non «dopo un
+  // po'»; rilascio e raccolta nel finally anche su rosso.
+  let segnala; const arrivato = new Promise((ok) => { segnala = ok; });
+  let libera; const via = new Promise((ok) => { libera = ok; });
   const { runtime } = W.apriRuntime(d, {
-    issue: () => new Promise((ok) => { sblocca = ok; }),
+    issue: () => { segnala(); return via; },
     cfg: { groupStopBudgetMs: 250 },
   });
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const p = runtime.up(d.cella).catch(() => {});
-  await new Promise((ok) => setTimeout(ok, 120));
-  const r = await runtime.reconcile(d.cella, LID);
-  assert.equal(r.outcome, 'busy');
-  // Zero azioni: il record dell'avvio in corso resta qual era.
-  const letto = launchTarget.leggi(d.filesRoot, d.sessione);
-  assert.ok(letto.stato === 'assente' || letto.stato === 'presente');
-  sblocca({ socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) });
-  await p;
+  const successore = { p: null, fatto: false };
+  try {
+    await arrivato;
+    // Fotografia del record del lancio IN CORSO: byte e launchId. Il busy
+    // deve lasciarlo IDENTICO: zero azioni si prova cosi', non «assente o
+    // presente».
+    const prima = launchTarget.leggiGrezzo(d.filesRoot, d.sessione);
+    assert.equal(prima.stato, 'presente', 'l\'up sospeso ha gia\' impegnato il suo prepared');
+    const launchId = JSON.parse(prima.bytes.toString('utf8')).launchId;
+    assert.ok(/^[0-9a-f]{16}$/.test(launchId));
+    const r = await runtime.reconcile(d.cella, launchId);
+    assert.equal(r.outcome, 'busy');
+    const dopo = launchTarget.leggiGrezzo(d.filesRoot, d.sessione);
+    assert.equal(dopo.stato, 'presente');
+    assert.ok(dopo.bytes.equals(prima.bytes), 'record byte-identico dopo il busy');
+    assert.equal(JSON.parse(dopo.bytes.toString('utf8')).launchId, launchId,
+      'stesso launchId: nessuna pratica nuova ne\' chiusa');
+    // Il busy NON ha svuotato la catena: la GET continua a vederla viva...
+    const st = await runtime.launchState(d.cella);
+    assert.equal(st.inFlight, true);
+    assert.equal(st.classification, 'busy');
+    // ...e un successore resta in attesa ben oltre il budget del POST.
+    successore.p = runtime.down(d.cella).then(
+      (v) => { successore.fatto = true; return v; },
+      (e) => { successore.fatto = true; throw e; },
+    );
+    successore.p.catch(() => {});
+    await new Promise((ok) => setTimeout(ok, 500));
+    assert.equal(successore.fatto, false,
+      'il down resta in attesa: il POST scaduto non ha eliminato l\'esclusione');
+  } finally {
+    libera({ socketPath: path.join(d.root, 'broker.sock'), nonce: 'a'.repeat(64) });
+    await p;
+    if (successore.p) await successore.p.then(() => {}, () => {});
+  }
 });
 
 test('T81 POST: budget scaduto nelle prove = outcome budget, record intatto, poi ripetibile', async (t) => {
