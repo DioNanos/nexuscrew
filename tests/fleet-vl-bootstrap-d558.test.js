@@ -12,6 +12,11 @@ const pd = require('../lib/fleet/prompt-delivery.js');
 const { decideVlBootstrap, readVlBootstrapClaim } = require('../lib/fleet/vl-bootstrap-claim.js');
 const cellExec = require('../lib/fleet/cell-exec.js');
 
+// Supervised-delivery fixture: the prompt-outcome channel is required. The
+// ephemeral dirs it creates are removed when the test process exits.
+const FX_DIRS = [];
+process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
+
 function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558-'));
 }
@@ -296,9 +301,17 @@ function supervisorSeams() {
   // Il timer del supervisore e' unref(): in un test niente altro tiene vivo il
   // loop, quindi lo shim mantiene un ref interno (unref no-op).
   const live = new Set();
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   return {
     calls,
     seams: {
+      // Supervised-delivery fixture: the prompt-outcome channel is required
+      // (fresh ephemeral dir per seams instance).
+      promptOutcome: {
+        dir: fxDir,
+        launchId: '7f8091a2b3c4d5e6',
+      },
       setTimeout: (fn, ms) => {
         const h = {};
         live.add(h);
