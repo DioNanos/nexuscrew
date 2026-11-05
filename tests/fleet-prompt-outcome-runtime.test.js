@@ -119,7 +119,7 @@ test('supervisore: esito submitted -> UN record terminale submitted, generation 
       deliver: () => ({ delivered: true, state: 'submitted', notReady: '' }),
     });
     const code = await w.run();
-    assert.equal(code, 0, 'stop dell'operatore alla prima uscita: una generazione');
+    assert.equal(code, 0, 'stop dell\'operatore alla prima uscita: una generazione');
     const record = activityFiles.leggiRecordPrompt(esito.dir, LAUNCH);
     assert.equal(record.state, 'submitted');
     assert.equal(record.generation, 0);
@@ -212,6 +212,9 @@ test('supervisore: crash prima dell\'effetto -> il lettore vede pending; il term
   try {
     const w = harness({
       promptOutcome: esito, manualExit: true,
+      // Orologio reale: budget largo, cosi' la lettura resta pending anche su
+      // una macchina lenta (il limite e' solo osservabilita' del pending).
+      restartPrompt: { readyWaitMs: 60000 },
       deliver: (opts) => new Promise((resolve) => {
         const t = setInterval(() => {
           if (opts.isCancelled()) { clearInterval(t); resolve({ delivered: false, state: 'cancelled', notReady: '' }); }
@@ -237,6 +240,9 @@ test('supervisore: crash dopo l\'effetto -> resta pending, MAI submitted dedotto
     // pending (dentro la consegna) e resta il solo marcatore volatile sul pane.
     const w = harness({
       promptOutcome: esito,
+      // Budget largo (orologio reale): la lettura deve vedere pending, non un
+      // deadline-exceeded d'ambiente.
+      restartPrompt: { readyWaitMs: 60000 },
       deliver: () => {
         fs.chmodSync(esito.dir, 0o500);
         return { delivered: true, state: 'submitted', notReady: '' };
