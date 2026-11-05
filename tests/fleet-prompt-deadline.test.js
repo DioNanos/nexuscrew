@@ -727,6 +727,90 @@ test('fresh 26: capture con attributi oltre la deadline -> skipped-unknown + dea
   }
 });
 
+// Deadline scaduta DENTRO la verifica del retry (dopo un load fallito certo
+// pre-paste): l'esito resta failed-pre-paste con attempts conservato e zero
+// effetti, ma il dettaglio bounded deadlineExceeded e la fase in cui il tempo
+// e' finito devono arrivare fino al ritorno. Prima di queste tre prove il
+// wrapper riduceva l'esito a un booleano e il dettaglio si perdeva proprio in
+// questo ramo.
+test('retry 27a: resolve oltre la deadline al retry -> failed-pre-paste + deadlineExceeded (fase resolve)', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, { loadFailsFirst: true });
+  let resolves = 0;
+  const execT = async (bin, args, opts) => {
+    if (args[0] === 'display-message') {
+      resolves += 1;
+      if (resolves === 3) clk.advanceMono(6000); // resolve della verifica del retry
+    }
+    return t.exec(bin, args, opts);
+  };
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: execT,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.state, 'failed-pre-paste');
+  assert.equal(r.deadlineExceeded, true, 'dettaglio deadline sul retry tardivo');
+  assert.equal(r.deadlinePhase, 'resolve', 'la fase del tempo esaurito arriva nel dettaglio');
+  assert.equal(r.attempts, 1, 'attempts conservato: nessun secondo tentativo');
+  assert.equal(t.count('load-buffer'), 1, 'nessun secondo load');
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+test('retry 27b: capture fresco oltre la deadline al retry -> failed-pre-paste + deadlineExceeded (fase capture)', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, { loadFailsFirst: true });
+  let captures = 0;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => {
+      captures += 1;
+      if (captures === 3) clk.advanceMono(6000); // capture della verifica del retry
+      return CLAUDE_READY_LIKE;
+    },
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.state, 'failed-pre-paste');
+  assert.equal(r.deadlineExceeded, true, 'dettaglio deadline sul retry tardivo');
+  assert.equal(r.deadlinePhase, 'capture');
+  assert.equal(r.attempts, 1);
+  assert.equal(t.count('load-buffer'), 1);
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+test('retry 27c: attributi oltre la deadline al retry -> failed-pre-paste + deadlineExceeded (fase attrs)', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk, { loadFailsFirst: true });
+  let attrs = 0;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 5000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => {
+      attrs += 1;
+      if (attrs === 2) clk.advanceMono(6000); // attrs della verifica del retry
+      return CLAUDE_ATTRS_EMPTY;
+    },
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.state, 'failed-pre-paste');
+  assert.equal(r.deadlineExceeded, true, 'dettaglio deadline sul retry tardivo');
+  assert.equal(r.deadlinePhase, 'attrs');
+  assert.equal(r.attempts, 1);
+  assert.equal(t.count('load-buffer'), 1);
+  assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
 // ===========================================================================
 // Submit opt-in custom (C8/A7): stessa disciplina di deadline sul trasporto
 // (sleep e timeout al residuo, deadline dopo ogni await) e identita' fresca
