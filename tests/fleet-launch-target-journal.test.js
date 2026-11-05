@@ -139,6 +139,27 @@ test('i campi di una fase sono chiusi: mancanti, estranei o fuori forma rifiutan
   }
 });
 
+test('attested: il PID e\' obbligatorio, la nascita opzionale, la nascita senza PID e\' incoerente', (t) => {
+  const w = mondo(t);
+  prepara(w);
+  lt.avanza(w.root, SESSIONE, { launchId: LAUNCH, da: 'prepared', a: 'creating' });
+  lt.avanza(w.root, SESSIONE, { launchId: LAUNCH, da: 'creating', a: 'created', campi: CREATED });
+  const prima = fs.readFileSync(w.file, 'utf8');
+  for (const campi of [{}, { paneStarttime: 5 }, { serverPid: 4242 }, { panePid: 0 }, { panePid: -3 }, { panePid: '22' }, { panePid: 2222, paneStarttime: 'x' }]) {
+    const r = lt.avanza(w.root, SESSIONE, { launchId: LAUNCH, da: 'created', a: 'attested', campi });
+    assert.equal(r.ok, false, JSON.stringify(campi));
+    assert.equal(r.codice, 'campi', JSON.stringify(campi));
+    assert.equal(fs.readFileSync(w.file, 'utf8'), prima, 'nessuna scrittura');
+  }
+  // Nascita assente: ammesso, ma il record non porta una prova di morte (nascita nulla).
+  assert.ok(lt.avanza(w.root, SESSIONE, { launchId: LAUNCH, da: 'created', a: 'attested', campi: { panePid: 2222 } }).ok);
+  const rec = lt.leggi(w.root, SESSIONE).record;
+  assert.equal(rec.phase, 'attested');
+  assert.equal(rec.panePid, 2222);
+  assert.equal(rec.paneStarttime, null);
+  assert.equal(rec.qualificato, true);
+});
+
 test('abort: stato terminale raggiungibile solo da prepared/creating, con motivo dichiarato', (t) => {
   const w = mondo(t);
   prepara(w);
@@ -268,6 +289,8 @@ test('dati obbligatori di una fase mancanti: presente ma NON qualificato, sempre
     ['prepared con id veri', { ...completo, phase: 'prepared', panePid: undefined, paneStarttime: undefined }],
     ['creating con falso $0', { ...completo, phase: 'creating', sessionId: '$0', paneId: '%0', windowId: undefined, panePid: undefined, paneStarttime: undefined }],
     ['attested con nascita senza pid', { ...completo, panePid: undefined }],
+    ['attested senza pid ne\' nascita', { ...completo, panePid: undefined, paneStarttime: undefined }],
+    ['attested con pid non positivo', { ...completo, panePid: 0 }],
     ['senza demone', { ...completo, daemonInc: undefined }],
     ['senza cella', { ...completo, cellId: undefined }],
     ['socket relativo', { ...completo, tmuxSocket: 'rel' }],

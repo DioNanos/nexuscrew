@@ -197,7 +197,7 @@ if (args[0] === '-C') {
       if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
       n += 1;
       if (riga.startsWith('kill-session')) fs.appendFileSync(${JSON.stringify(killPath)}, 'kill\\n');
-      process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+      process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
     }
   });
   process.stdin.on('end', () => process.exit(0));
@@ -211,6 +211,7 @@ if (args[0] === 'new-session') {
     riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
   process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0);
 }
+if (args[0] === 'display-message' && process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
 if (args[0] === 'display-message') { process.stdout.write('0\\t0\\t%3\\n'); process.exit(0); }
 process.exit(0);
 `;

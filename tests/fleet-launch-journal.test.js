@@ -148,21 +148,55 @@ test('percorso completo (other): il record e\' prepared prima degli effetti, cre
   assert.equal(finale.cellId, d.cella);
 });
 
-test('percorso completo senza identita\' leggibile: attested senza pid, mai un pid del placeholder', async (t) => {
+test('nessuna identita\' leggibile dopo il respawn: POST_RESPAWN_IDENTITY_UNKNOWN, mai attested senza pid', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
   // Ne' il placeholder ne' il supervisore rispondono con un pane_pid.
   W.impostaScenario(d, { server: '', hold: '', supervisor: '' });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'POST_RESPAWN_IDENTITY_UNKNOWN');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente',
+    'sessione nostra fermata sul canale posseduto, record chiuso con lei');
+  assert.ok(W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
+});
+
+test('nessuna identita\' leggibile (vl): lancio rifiutato, record created incerto e claim restano', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  W.impostaScenario(d, { server: '', hold: '', supervisor: '' });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'POST_RESPAWN_IDENTITY_UNKNOWN');
+  const rec = leggiRecord(d);
+  assert.equal(rec.phase, 'created', 'mai promosso a attested');
+  assert.equal(rec.incerto, true);
+  assert.equal(rec.panePid, null);
+  assert.equal(W.lease(d).length, 1, 'la barriera vl resta');
+});
+
+test('il solo pid del placeholder non diventa mai il supervisore', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { supervisor: '' } });
+  t.after(() => W.pulisci(d));
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'POST_RESPAWN_IDENTITY_UNKNOWN');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+});
+
+test('nascita non misurabile: attested con il PID e senza nascita (il solo PID non prova la morte)', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  // pid 2222 finto: /proc non ha un processo con quel numero => nascita assente nel record.
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.up(d.cella);
   assert.equal(r.ok, true);
   const rec = leggiRecord(d);
   assert.equal(rec.phase, 'attested');
-  assert.equal(rec.panePid, null);
-  assert.equal(rec.paneStarttime, null);
-  assert.equal(rec.holdPid, null);
+  assert.equal(rec.panePid, 2222);
   assert.equal(rec.qualificato, true);
+  if (rec.paneStarttime === null) assert.equal(rec.incerto, false, 'il PID c\'e\': il record e\' attestato');
 });
 
 test('supervisore illeggibile dopo il respawn con placeholder noto: il lancio fallisce e il record non sopravvive', async (t) => {
@@ -327,6 +361,10 @@ const IGNOTI = [
   ['duplicate di un\'altra sessione', { newSession: 'duplicate-other-name' }],
   ['duplicate con testo in piu\'', { newSession: 'duplicate-extra' }],
   ['frame troncato', { newSession: 'truncated' }],
+  ['successo vuoto e poi duplicate esatto (contatore diverso)', { newSession: 'empty-then-duplicate', materializza: true }],
+  ['piu\' successi vuoti e poi duplicate esatto', { newSession: 'empties-then-duplicate', materializza: true }],
+  ['frame ambiguo senza ids e poi duplicate', { newSession: 'ambiguous-then-duplicate', materializza: true }],
+  ['successo vuoto e poi ids', { newSession: 'empty-then-ids', materializza: true }],
 ];
 
 for (const [nome, scenario] of IGNOTI) {
@@ -554,4 +592,135 @@ test('cleanup pre-creazione (vl): claim esatta rilasciata, poi il record del nos
   assert.deepStrictEqual(ordine, [{ passo: 'record', claim: 0 }], 'il record si toglie DOPO la claim, una volta sola');
   assert.deepStrictEqual(W.lease(d), []);
   assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+});
+
+
+// ---------------------------------------------------------------------------
+// Barriera host nell'abort pre-creazione (vl): host -> claim esatta -> record
+// ---------------------------------------------------------------------------
+
+const { spawnaHostFinto } = require('./helpers/vl-attestato.js');
+const radiciVl = require('../lib/fleet/vl-roots.js');
+
+function rootVl(d) { return radiciVl.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella); }
+
+function statoHost(d) {
+  const { execFileSync } = require('node:child_process');
+  const out = execFileSync(path.join(d.home, '.local', 'bin', 'vl'),
+    ['host', 'status', '--server-root', rootVl(d), '--json'], { encoding: 'utf8' });
+  return JSON.parse(out).state;
+}
+
+async function fermaHostFinto(host) {
+  if (!host) return;
+  const finito = new Promise((r) => host.once('exit', r));
+  host.kill('SIGTERM');
+  await finito;
+}
+
+test('abort con root comparsa e host VIVO (sonda di audit): claim e record restano, host intatto', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  let host = null;
+  t.after(() => fermaHostFinto(host));
+  let n = 0;
+  const { runtime } = W.apriRuntime(d, {
+    ensureProtection: async () => {
+      n += 1;
+      if (n === 2) {
+        fs.mkdirSync(rootVl(d), { recursive: true });
+        host = spawnaHostFinto();
+        host.ref();
+        fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
+      }
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
+  assert.equal(statoHost(d), 'live', 'il prodotto non tocca l\'host');
+  assert.equal(W.lease(d).length, 1, 'la lease della root non e\' stata sciolta');
+  assert.equal(leggiRecord(d).phase, 'prepared', 'il record resta a dire che la barriera esiste');
+  assert.deepStrictEqual(nuoveSessioni(d), []);
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
+});
+
+test('abort con root presente e binario pinnato che risponde none: barriera sciolta (host -> claim -> record)', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+  let n = 0;
+  const { runtime } = W.apriRuntime(d, {
+    ensureProtection: async () => { n += 1; if (n === 2) throw new Error('protezione non disponibile'); },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'SHARED_SERVER_UNPROTECTED');
+  assert.equal(statoHost(d), 'none');
+  assert.deepStrictEqual(W.lease(d), [], 'claim rilasciata');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+});
+
+test('abort con root presente e probe non conclusivo (binario pinnato sparito): niente rilascio', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+  let n = 0;
+  const { runtime } = W.apriRuntime(d, {
+    ensureProtection: async () => {
+      n += 1;
+      if (n === 2) {
+        // Il pin del binario esiste: lo si rende inservibile come farebbe un pin non qualificabile.
+        for (const f of W.trova(path.join(d.home, '.nexuscrew'), '/vl').concat(W.trova(path.join(d.home, '.nexuscrew'), 'vl'))) {
+          try { fs.unlinkSync(f); } catch (_) {}
+        }
+        throw new Error('protezione non disponibile');
+      }
+    },
+  });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'SHARED_SERVER_UNPROTECTED');
+  assert.equal(W.lease(d).length, 1);
+  assert.equal(leggiRecord(d).phase, 'prepared');
+});
+
+test('abort prima del pin con root presente: nessuna prova possibile, claim e record restano', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+  // Il binario vl sparisce: il lancio fallisce PRIMA del pin e del contesto.
+  fs.unlinkSync(path.join(d.home, '.local', 'bin', 'vl'));
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella));
+  assert.equal(W.lease(d).length, 1);
+  assert.equal(leggiRecord(d).phase, 'prepared');
+});
+
+test('abort prima del pin con root ASSENTE: errore d\'utente ordinario, nessun blocco', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  fs.unlinkSync(path.join(d.home, '.local', 'bin', 'vl'));
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella));
+  assert.deepStrictEqual(W.lease(d), []);
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+});
+
+test('rifiuto duplicate provato con host vivo comparso sulla root: abortito durevole, claim conservata', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'vl' });
+  t.after(() => W.pulisci(d));
+  const host = spawnaHostFinto();
+  host.ref();
+  t.after(() => fermaHostFinto(host));
+  fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
+  // La root compare nel momento della new-session (dopo l'impronta, prima del cleanup).
+  W.impostaScenario(d, { newSession: 'duplicate', mkdirAlNewSession: rootVl(d) });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'SESSION_DUPLICATE');
+  assert.equal(W.lease(d).length, 1, 'host vivo: la claim non si scioglie');
+  const rec = leggiRecord(d);
+  assert.equal(rec.phase, 'aborted');
+  assert.equal(rec.abortReason, 'duplicate-session');
+  assert.equal(statoHost(d), 'live');
 });

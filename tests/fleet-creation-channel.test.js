@@ -60,15 +60,15 @@ if (args[0] === '-C') {
       if (riga.startsWith('kill-session')) {
         nota('owned-kill:' + nato);
         viva = false;
-        process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
         continue;
       }
       if (riga.startsWith('has-session')) {
-        if (viva) process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+        if (viva) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
         else process.stdout.write('%begin 1 ' + n + ' 1\\n%error 1 ' + n + ' 1\\n');
         continue;
       }
-      process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+      process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
     }
   });
   process.stdin.on('end', () => process.exit(0));
@@ -89,6 +89,7 @@ if (args[0] === 'kill-session') {
   process.exit(0);
 }
 if (args[0] === 'display-message') {
+  if (process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   process.stdout.write('0\\t0\\t%5\\n');
   process.exit(0);
 }

@@ -82,7 +82,7 @@ if (args[0] === '-C') {
       if (riga.startsWith('kill-session')) {
         fs.appendFileSync(KILL, 'kill\\n');
         fs.writeFileSync(STATO, '0\\n');
-        process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
         if (fs.existsSync(MUORI_SU_KILL)) {
           // La morte del canale porta con se' un host NUOVO sulla root (qui
           // lo fa nascere il tmux finto, come farebbe un altro lancio): la
@@ -100,7 +100,7 @@ if (args[0] === '-C') {
         const id = riga.split(/\\s+/).pop();
         process.stdout.write('%begin 1 ' + n + ' 1\\ncan\\'t find session: ' + id + '\\n%error 1 ' + n + ' 1\\n');
       } else {
-        process.stdout.write('%begin 1 ' + n + ' 1\\n%end 1 ' + n + ' 1\\n');
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (riga.startsWith('display-message') && riga.includes('pane_pid') ? '4242\\t2222\\n' : '') + '%end 1 ' + n + ' 1\\n');
       }
     }
   });
@@ -115,6 +115,7 @@ if (args[0] === 'new-session') {
     riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
   process.stdout.write('$3\\t@3\\t%3\\n'); process.exit(0);
 }
+if (args[0] === 'display-message' && process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
 if (args[0] === 'display-message') process.stdout.write('0\\t0\\t%3\\n');
 if (args[0] === 'kill-session') { fs.appendFileSync(KILL, 'fresh\\n'); process.exit(0); }
 if (args[0] === 'has-session') process.exit(viva() ? 0 : 1);

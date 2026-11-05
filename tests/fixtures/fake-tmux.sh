@@ -57,6 +57,7 @@ case "$1" in
     # Il lancio chiede anche il socket del server: un path nuovo per chiamata,
     # cosi' due test non condividono lo stato del canale.
     case "$*" in
+      *pane_pid*) printf '4242\t2222\n'; exit 0 ;;
       *socket_path*)
         d=$(mktemp -d /tmp/nc-fake-tmux.XXXXXX) || exit 1
         printf '%s/socket\t4242\n' "$d"

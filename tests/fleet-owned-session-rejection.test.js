@@ -51,6 +51,10 @@ const NON_PROVATI = [
   ['rifiuto generico', w('%begin 1 0 1\ncan\'t create session\n%error 1 0 1\n')],
   ['%end con lo stesso testo (non e\' un rifiuto)', w(`%begin 1 0 1\nduplicate session: ${NOME}\n%end 1 0 1\n`)],
   ['%error con t,n diversi (frame non chiuso)', w(`%begin 1 0 1\nduplicate session: ${NOME}\n%error 9 9 1\n`)],
+  ['successo vuoto e poi duplicate esatto con contatore diverso', w(`%begin 1 0 1\n%end 1 0 1\n%begin 1 1 1\nduplicate session: ${NOME}\n%error 1 1 1\n`)],
+  ['piu\' successi vuoti e poi duplicate esatto', w(`%begin 1 0 1\n%end 1 0 1\n%begin 1 1 1\n%end 1 1 1\n%begin 1 2 1\nduplicate session: ${NOME}\n%error 1 2 1\n`)],
+  ['frame completo ambiguo e poi errore con contatore diverso', w(`%begin 1 0 1\n$5\n%end 1 0 1\n%begin 1 1 1\nduplicate session: ${NOME}\n%error 1 1 1\n`)],
+  ['successo senza ids e poi ids validi', w('%begin 1 0 1\n%end 1 0 1\n%begin 1 1 1\n$5 @7 %9\n%end 1 1 1\n')],
   ['EOF senza niente', 'process.exit(0);'],
   ['id malformati', w('%begin 1 0 1\n$x @y %z\n%end 1 0 1\n')],
 ];

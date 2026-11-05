@@ -82,6 +82,7 @@ if (args[0] === 'respawn-pane') { fail('respawn-pane'); process.exit(0); }
 if (args[0] === 'display-message') {
   if (args[args.length - 1] === '#{session_id}') { process.stdout.write('$5\\n'); process.exit(0); }
   if (args[args.length - 1] === '#{pid}') { process.stdout.write('4242\\n'); process.exit(0); }
+  if (process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   fail('readiness'); process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (args[0] === 'list-sessions') { if (fs.existsSync(${JSON.stringify(natoFile)})) process.stdout.write('$5\\twork-build\\n'); process.exit(0); }

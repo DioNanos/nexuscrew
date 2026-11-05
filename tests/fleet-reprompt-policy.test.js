@@ -513,6 +513,7 @@ if (args[0] === 'display-message') {
     process.stdout.write(value + '\\n');
     process.exit(0);
   }
+  if ((typeof fmt === 'string' ? fmt : process.argv.join(' ')).includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (args[0] === 'kill-session') { try { fs.unlinkSync(nato); } catch (_) {} process.exit(0); }

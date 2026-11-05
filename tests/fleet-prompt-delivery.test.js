@@ -461,6 +461,7 @@ switch (cmd) {
     log('display-message ' + fmt);
     if (fmt.includes('@nc_delivery')) { out((cfg.delivery || '') + '\\n'); process.exit(0); }
     if (fmt.includes('session_name')) { out(sess + '\\t0\\t%42\\n'); process.exit(0); }
+    if (fmt.includes('pane_pid')) { out('4242\\t2222\\n'); process.exit(0); }
     out('0\\t\\t%42\\n');
     process.exit(0);
   case 'capture-pane':

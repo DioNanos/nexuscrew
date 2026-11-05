@@ -88,6 +88,7 @@ if (args[0] === '-C' && args.includes('new-session')) {
   };
   // Fotografia del record nel momento esatto della new-session: prova cosa
   // era GIA' sul disco quando la creazione e' stata emessa.
+  if (S.mkdirAlNewSession) { try { fs.mkdirSync(S.mkdirAlNewSession, { recursive: true, mode: 0o700 }); } catch (_) {} }
   if (S.snapshot) {
     try { fs.copyFileSync(S.snapshot.from, S.snapshot.to); } catch (_) { fs.writeFileSync(S.snapshot.to, 'ASSENTE'); }
   }
@@ -112,6 +113,25 @@ if (args[0] === '-C' && args.includes('new-session')) {
   }
   if (modo === 'duplicate-extra') {
     process.stdout.write('%begin 1 0 1\\nduplicate session: ' + NOME + '\\nsecond line\\n%error 1 0 1\\n');
+    resta(); return;
+  }
+  // Sequenze non conformi: un primo frame completo SENZA ids (successo vuoto o
+  // ambiguo) seguito da un errore con contatore diverso. Il rifiuto non puo'
+  // essere attribuito alla creazione: la materializzazione resta ignota.
+  if (modo === 'empty-then-duplicate') {
+    process.stdout.write('%begin 1 0 1\\n%end 1 0 1\\n%begin 1 1 1\\nduplicate session: ' + NOME + '\\n%error 1 1 1\\n');
+    resta(); return;
+  }
+  if (modo === 'empties-then-duplicate') {
+    process.stdout.write('%begin 1 0 1\\n%end 1 0 1\\n%begin 1 1 1\\n%end 1 1 1\\n%begin 1 2 1\\nduplicate session: ' + NOME + '\\n%error 1 2 1\\n');
+    resta(); return;
+  }
+  if (modo === 'ambiguous-then-duplicate') {
+    process.stdout.write('%begin 1 0 1\\n$5\\n%end 1 0 1\\n%begin 1 1 1\\nduplicate session: ' + NOME + '\\n%error 1 1 1\\n');
+    resta(); return;
+  }
+  if (modo === 'empty-then-ids') {
+    process.stdout.write('%begin 1 0 1\\n%end 1 0 1\\n%begin 1 1 1\\n' + S.ids + '\\n%end 1 1 1\\n');
     resta(); return;
   }
   if (modo === 'truncated') {

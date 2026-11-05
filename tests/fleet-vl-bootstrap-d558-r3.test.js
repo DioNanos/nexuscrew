@@ -120,6 +120,7 @@ if (cmd === 'display-message') {
     try { process.stdout.write(fs.readFileSync(DELIVERY, 'utf8').trim() + '\\n'); } catch (_) { process.stdout.write('\\n'); }
     process.exit(0);
   }
+  if ((typeof fmt === 'string' ? fmt : process.argv.join(' ')).includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }

@@ -133,6 +133,7 @@ if (cmd(args) === 'display-message') {
   const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
   if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
   if (fmt.includes('pane_dead')) { process.stdout.write('0\\t0\\t%9\\n'); process.exit(0); }
+  if ((typeof fmt === 'string' ? fmt : process.argv.join(' ')).includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (cmd(args) === 'capture-pane') { process.stdout.write(''); process.exit(0); }

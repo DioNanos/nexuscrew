@@ -146,6 +146,7 @@ case "$cmd" in
     last=""
     for a in "$@"; do last="$a"; done
     case "$last" in *socket_path*) printf '/tmp/nc-fake/socket\t4242\n'; exit 0 ;; esac
+    case "$last" in *pane_pid*) printf '4242\t2222\n'; exit 0 ;; esac
     for a in "$@"; do last="$a"; done
     tgt=""
     prev=""
@@ -534,7 +535,7 @@ fi
 if [ "$1" = "-S" ]; then shift 2; fi
 case "$1" in
   new-session) printf '%s\\t%s\\t%s\\n' '$1' '@1' '%9'; exit 0 ;;
-  display-message) printf '1\\t7\\t%%9\\n'; exit 0 ;;
+  display-message) case "$*" in *pane_pid*) printf '4242\\t2222\\n'; exit 0 ;; esac; printf '1\\t7\\t%%9\\n'; exit 0 ;;
   capture-pane) printf 'failed in ${w.home}/Dev\\nANTHROPIC_API_KEY=sk-x\\nBearer hidden-token\\n'; exit 0 ;;
   kill-session) echo 'kill-session' >> "$LOG"; exit 0 ;;
   *) exit 0 ;;

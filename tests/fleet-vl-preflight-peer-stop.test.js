@@ -219,6 +219,7 @@ if (cmd === 'display-message') {
   const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
   if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
   if (fmt.includes('@nc_delivery')) { process.stdout.write('submitted\\n'); process.exit(0); }
+  if ((typeof fmt === 'string' ? fmt : process.argv.join(' ')).includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
 }
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
@@ -524,9 +525,15 @@ exit 0
   assert.equal(fs.existsSync(path.join(w.base(), 'host-context.json')), false);
   assert.equal(fs.existsSync(hostRoot), true);
   const righe = fs.readFileSync(w.vlLog, 'utf8').split('\n').filter((r) => r.includes('--server-root'));
-  assert.equal(righe.length, 1);
+  // La sonda di capacita' gira SOLO su una root usa e getta; la root vera, comparsa
+  // nel frattempo, viene letta una volta sola dalla barriera dell'abort (prima di
+  // sciogliere la claim) con un `host status` e mai altro: nessun host-stop.
+  assert.equal(righe.length, 2);
   assert.ok(righe[0].includes('/tmp/nc-vl-cap-'));
   assert.equal(righe[0].includes(hostRoot), false);
+  assert.ok(righe[1].includes(' host status '), righe[1]);
+  assert.ok(righe[1].includes(hostRoot), righe[1]);
+  assert.equal(righe.some((r) => /host-stop|shutdown/.test(r)), false);
 });
 
 // --- Identita' owner del nodo PRIMA dello spawn (audit finale F1-01) --------

@@ -135,6 +135,7 @@ if (cmd === 'new-session') {
   fs.writeFileSync(STATO, vive().concat([nome]).join('\\n') + '\\n');
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
+if (cmd === 'display-message' && process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
 if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
 if (cmd === 'capture-pane') {
   // Il marcatore di pronta della TUI VL: senza questo il gate di readiness

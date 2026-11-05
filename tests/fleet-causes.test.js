@@ -362,6 +362,7 @@ switch (cmd) {
   case 'has-session':
     process.exit(cfg.alive === false ? 1 : 0);
   case 'display-message':
+    if (process.argv.join(' ').includes('pane_pid')) { out('4242\\t2222\\n'); process.exit(0); }
     out((cfg.paneDead || 0) + '\\t' + (cfg.paneStatus == null ? '' : cfg.paneStatus) + '\\t' + (cfg.paneId || '%0') + '\\n');
     process.exit(0);
   case 'capture-pane':
