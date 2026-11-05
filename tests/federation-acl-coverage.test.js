@@ -26,7 +26,7 @@ const FLEET_WRITE = [
   'credentials/set', 'credentials/remove', 'up', 'down', 'restart', 'engine', 'boot',
   'define-engine', 'edit-engine', 'remove-engine', 'define-model', 'remove-model',
   'model-test', 'define-cell', 'edit-cell', 'remove-cell', 'restore-cells', 'restore-engines',
-  'vl-new-session',
+  'vl-new-session', 'reconcile',
 ];
 
 // One sample path per branch of the allowlist: the literals, plus an example for
