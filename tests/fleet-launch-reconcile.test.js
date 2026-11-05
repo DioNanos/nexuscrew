@@ -16,6 +16,7 @@ const { sharedTmuxSocketPath } = require('../lib/runtime/env.js');
 const W = require('./helpers/launch-world.js');
 
 const { OWNER_INSTANCE_ID } = W;
+const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const LID = 'ab'.repeat(8);
 const BOOT_ORA = '11111111-1111-4111-8111-111111111111';
 const BOOT_PRIMA = '22222222-2222-4222-8222-222222222222';
@@ -123,12 +124,7 @@ test('prepared con sessione omonima viva: nessuna prova di assenza, record intat
 });
 
 test('prepared (vl) con root assente: host -> claim -> record, nell\'ordine', async (t) => {
-  const d = W.scriviMondo({ famiglia: 'vl' });
-  t.after(() => W.pulisci(d));
-  const root = radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella);
-  const claim = await radici.riserva({ home: d.home, root, launchId: LID, ownerInstanceId: OWNER_INSTANCE_ID, cellId: d.cella, budgetMs: 4000 });
-  assert.equal(claim.ok, true);
-  scrivi(d, 'prepared');
+  const d = mondoVlCrashato(t);
   const ordine = [];
   const origCommit = launchTarget.riconciliaRecord;
   launchTarget.riconciliaRecord = (...a) => { ordine.push(`record(claim=${W.lease(d).length})`); return origCommit.apply(launchTarget, a); };
@@ -158,12 +154,11 @@ test('prepared (vl) con root preesistente e nessun contesto: «prepared» non pr
 });
 
 test('prepared (vl) con claim di un ALTRO lancio (mismatch): niente rilascio, niente quarantena', async (t) => {
-  const d = W.scriviMondo({ famiglia: 'vl' });
-  t.after(() => W.pulisci(d));
-  const root = radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella);
-  await radici.riserva({ home: d.home, root, launchId: 'ee'.repeat(8), ownerInstanceId: OWNER_INSTANCE_ID, cellId: d.cella, budgetMs: 4000 });
-  scrivi(d, 'prepared');
+  const d = mondoVlCrashato(t);
   const leaseFile = W.lease(d)[0];
+  const dl = JSON.parse(fs.readFileSync(leaseFile, 'utf8'));
+  dl.launchId = 'ee'.repeat(8);
+  fs.writeFileSync(leaseFile, `${JSON.stringify(dl)}\n`);
   const prima = fs.readFileSync(leaseFile, 'utf8');
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
@@ -808,3 +803,139 @@ test('vl: la root del record non e\' quella canonica del nodo e della cella => b
   await assert.rejects(() => runtime.down(d.cella), BLOCCO);
   assert.equal(W.lease(d).length, 1);
 });
+
+
+// ---------------------------------------------------------------------------
+// R2 / P1B-02: la base della cella scomparsa non prova l'assenza dell'host
+// ---------------------------------------------------------------------------
+
+function baseVl(d) {
+  return vlCellBaseDir(d.home, OWNER_INSTANCE_ID, d.cella);
+}
+
+function avviaHostVivo(t, d) {
+  fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+  const host = spawnaHostFinto();
+  host.ref();
+  t.after(async () => { if (host.exitCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
+  fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
+  return host;
+}
+
+async function bloccatoSenzaEffetti(t, d, host) {
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
+  assert.equal(W.lease(d).length, 1, 'claim intatta');
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'record intatto');
+  assert.equal(fs.existsSync(quarantena(d)), false);
+  if (host) assert.equal(host.exitCode, null, 'l\'host non e\' stato toccato');
+}
+
+test('R2/P1B-02: base qualificata SPOSTATA con host vivo => claim, record e host intatti', async (t) => {
+  const d = mondoVlCrashato(t);
+  const host = avviaHostVivo(t, d);
+  fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`);
+  await bloccatoSenzaEffetti(t, d, host);
+});
+
+test('R2/P1B-02: base RIMOSSA con host vivo => claim, record e host intatti', async (t) => {
+  const d = mondoVlCrashato(t);
+  const host = avviaHostVivo(t, d);
+  fs.rmSync(baseVl(d), { recursive: true, force: true });
+  await bloccatoSenzaEffetti(t, d, host);
+});
+
+test('R2/P1B-02: base SOSTITUITA da una directory nuova (senza il contesto del lancio) con host vivo => blocco', async (t) => {
+  const d = mondoVlCrashato(t);
+  const host = avviaHostVivo(t, d);
+  fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`);
+  fs.mkdirSync(baseVl(d), { recursive: true, mode: 0o700 });
+  await bloccatoSenzaEffetti(t, d, host);
+});
+
+test('R2/P1B-02: il positivo resta — root assente dentro una base qualificata con il contesto del lancio', async (t) => {
+  const d = mondoVlCrashato(t);
+  assert.equal(fs.existsSync(baseVl(d)), true);
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'root-absent');
+  assert.deepStrictEqual(W.lease(d), []);
+});
+
+// ---------------------------------------------------------------------------
+// R2 / P1B-03: il record cambiato durante le prove blocca OGNI azione correlata
+// ---------------------------------------------------------------------------
+
+test('R2/P1B-03: il record avanza a creating durante le prove => claim, host e record intatti', async (t) => {
+  const d = mondoVlCrashato(t);
+  let avanzato = false;
+  const lm = {
+    status: () => {
+      if (!avanzato) {
+        avanzato = true;
+        const av = launchTarget.avanza(d.filesRoot, d.sessione, { launchId: LID_REALE(d), da: 'prepared', a: 'creating', campi: {} });
+        assert.equal(av.ok, true, JSON.stringify(av));
+      }
+      return { state: 'none' };
+    },
+    revokeControl: () => {},
+  };
+  const { runtime } = W.apriRuntime(d, { leaseManager: lm });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
+  assert.equal(avanzato, true);
+  assert.equal(W.lease(d).length, 1, 'la claim NON si rilascia sulla prova vecchia');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).record.phase, 'creating');
+  assert.equal(fs.existsSync(quarantena(d, LID_REALE(d))), false);
+  assert.equal(fs.existsSync(launchTarget.percorsoJournal(d.filesRoot, d.sessione)), false);
+});
+
+test('R2/P1B-03: stessa fase ma byte diversi durante le prove => nessuna azione', async (t) => {
+  const d = mondoVlCrashato(t);
+  let toccato = false;
+  const lm = {
+    status: () => {
+      if (!toccato) {
+        toccato = true;
+        const dato = JSON.parse(fs.readFileSync(W.fileRecord(d), 'utf8'));
+        fs.writeFileSync(W.fileRecord(d), `${JSON.stringify(dato)}\n\n`);
+      }
+      return { state: 'none' };
+    },
+    revokeControl: () => {},
+  };
+  const { runtime } = W.apriRuntime(d, { leaseManager: lm });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
+  assert.equal(W.lease(d).length, 1);
+  assert.equal(fs.existsSync(quarantena(d, LID_REALE(d))), false);
+});
+
+test('R2/P1B-03: il record cambia DOPO la barriera host, prima del rilascio della claim => claim intatta', async (t) => {
+  const d = mondoVlCrashato(t);
+  const orig = launchTarget.leggiGrezzo;
+  let letture = 0;
+  launchTarget.leggiGrezzo = (...a) => {
+    letture += 1;
+    // 1a: fotografia; 2a: prima della barriera; poi la barriera passiva legge solo
+    // contesto/pin/root: alla 3a lettura (prima del rilascio) il record e' cambiato.
+    if (letture === 3) {
+      const dato = JSON.parse(fs.readFileSync(W.fileRecord(d), 'utf8'));
+      fs.writeFileSync(W.fileRecord(d), `${JSON.stringify(dato)}\n\n`);
+    }
+    return orig.apply(launchTarget, a);
+  };
+  t.after(() => { launchTarget.leggiGrezzo = orig; });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
+  assert.equal(W.lease(d).length, 1, 'rilascio condizionato al confronto');
+});
+
+function LID_REALE(d) {
+  return launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
+}

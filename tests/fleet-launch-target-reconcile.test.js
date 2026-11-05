@@ -225,16 +225,20 @@ test('il prefisso del nome della quarantena include launchId e sessione: due lan
 
 // --- lock di scrittore -------------------------------------------------------
 
-test('lock di scrittore: acquisizione, rientro dello stesso processo, rilascio col token', (t) => {
+test('lock di scrittore: acquisizione, rientro dello stesso processo contato, rilascio col token', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'launch-targets', lock.NOME);
   const a = lock.acquisisci(root);
   assert.equal(a.ok, true);
   const b = lock.acquisisci(root);
   assert.equal(b.ok, true, 'lo stesso processo puo\' tenere piu\' runtime sulla radice');
   assert.equal(lock.rilascia(root, 'token-sbagliato'), false);
   assert.equal(lock.rilascia(root, a.token), true);
-  assert.equal(fs.existsSync(path.join(root, 'launch-targets', lock.NOME)), false);
+  assert.equal(fs.existsSync(file), true, 'finche\' resta un possessore il file resta');
+  assert.equal(lock.verifica(root, a.token), true);
+  assert.equal(lock.rilascia(root, b.token), true);
+  assert.equal(fs.existsSync(file), false);
 });
 
 test('lock di scrittore: file illeggibile o di un processo VIVO e diverso => conflitto; di un processo morto => ripreso', (t) => {
@@ -242,14 +246,220 @@ test('lock di scrittore: file illeggibile o di un processo VIVO e diverso => con
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const file = path.join(root, 'launch-targets', lock.NOME);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, '{ non json');
+  fs.writeFileSync(file, '{ non json', { mode: 0o600 });
   assert.equal(lock.acquisisci(root).codice, 'illeggibile');
   // pid 1 (init) e' vivo e non e' il nostro processo
-  fs.writeFileSync(file, JSON.stringify({ v: 1, pid: 1, starttime: null, token: 'x' }));
+  fs.writeFileSync(file, JSON.stringify({ v: 1, pid: 1, starttime: null, token: 'x' }), { mode: 0o600 });
   const vivo = lock.acquisisci(root);
   assert.equal(vivo.ok, false);
   assert.equal(vivo.codice, 'altro-scrittore');
   // un pid inesistente: ripreso
-  fs.writeFileSync(file, JSON.stringify({ v: 1, pid: 2 ** 22 - 3, starttime: 5, token: 'x' }));
+  fs.writeFileSync(file, JSON.stringify({ v: 1, pid: 2 ** 22 - 3, starttime: 5, token: 'x' }), { mode: 0o600 });
   assert.equal(lock.acquisisci(root).ok, true);
+});
+
+
+// --- P1B-01: esclusione vera ------------------------------------------------
+
+const { spawn } = require('node:child_process');
+const CHILD_LOCK = path.join(__dirname, 'helpers', 'lock-race-child.cjs');
+
+function avviaFiglioLock(spec) {
+  const proc = spawn(process.execPath, [CHILD_LOCK, JSON.stringify(spec)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  proc.stdout.on('data', (d) => { out += d; });
+  const esito = new Promise((resolve) => proc.on('close', () => resolve(out)));
+  const primaRiga = () => new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (out.includes('\n')) { clearInterval(iv); resolve(JSON.parse(out.split('\n')[0])); }
+      else if (Date.now() - t0 > 20000) { clearInterval(iv); reject(new Error('figlio lock senza risposta')); }
+    }, 10);
+  });
+  return { proc, esito, primaRiga };
+}
+async function aspetta(cond, ms = 20000) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error('attesa scaduta');
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+test('lock di scrittore: due processi fermati PRIMA della pubblicazione sul primo avvio => uno solo ottiene ok', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+  const bar = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-bar-'));
+  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(bar, { recursive: true, force: true }); });
+  const spec = { root, tieni: true, barriera: { dir: bar, bersaglio: lock.NOME } };
+  const f = [avviaFiglioLock(spec), avviaFiglioLock(spec)];
+  try {
+    await aspetta(() => fs.readdirSync(bar).filter((n) => n.startsWith('pronto.')).length === 2);
+    fs.writeFileSync(path.join(bar, 'via'), '');
+    const esiti = [await f[0].primaRiga(), await f[1].primaRiga()];
+    assert.equal(esiti.filter((e) => e.ok).length, 1, JSON.stringify(esiti));
+    assert.equal(esiti.filter((e) => !e.ok && e.codice === 'altro-scrittore').length, 1, JSON.stringify(esiti));
+  } finally {
+    for (const x of f) { try { process.kill(x.proc.pid, 'SIGKILL'); } catch (_) { /* gia' uscito */ } }
+    await Promise.all(f.map((x) => x.esito));
+  }
+});
+
+test('lock di scrittore: recupero SIMULTANEO di un lock morto => uno solo ottiene ok', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+  const bar = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-bar-'));
+  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(bar, { recursive: true, force: true }); });
+  const file = path.join(root, 'launch-targets', lock.NOME);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ v: 1, pid: 2 ** 22 - 3, starttime: 5, token: 'morto' }), { mode: 0o600 });
+  const spec = { root, tieni: true, barriera: { dir: bar, bersaglio: lock.NOME_MUTEX } };
+  const f = [avviaFiglioLock(spec), avviaFiglioLock(spec)];
+  try {
+    await aspetta(() => fs.readdirSync(bar).filter((n) => n.startsWith('pronto.')).length === 2);
+    fs.writeFileSync(path.join(bar, 'via'), '');
+    const esiti = [await f[0].primaRiga(), await f[1].primaRiga()];
+    assert.equal(esiti.filter((e) => e.ok).length, 1, JSON.stringify(esiti));
+    const d = JSON.parse(fs.readFileSync(file, 'utf8'));
+    assert.notEqual(d.token, 'morto');
+    assert.ok([f[0].proc.pid, f[1].proc.pid].includes(d.pid), 'il lock sul disco e\' del vincitore');
+  } finally {
+    for (const x of f) { try { process.kill(x.proc.pid, 'SIGKILL'); } catch (_) { /* gia' uscito */ } }
+    await Promise.all(f.map((x) => x.esito));
+  }
+});
+
+test('lock di scrittore: due possessori nello stesso processo, il primo rilascia => un terzo processo resta escluso', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const a = lock.acquisisci(root);
+  const b = lock.acquisisci(root);
+  assert.equal(a.ok && b.ok, true);
+  assert.equal(lock.rilascia(root, a.token), true);
+  const terzo = avviaFiglioLock({ root });
+  const out1 = JSON.parse((await terzo.esito).split('\n')[0]);
+  assert.equal(out1.ok, false, 'il secondo possessore non ha rilasciato: il lock tiene');
+  assert.equal(out1.codice, 'altro-scrittore');
+  assert.equal(lock.rilascia(root, b.token), true);
+  const quarto = avviaFiglioLock({ root });
+  assert.equal(JSON.parse((await quarto.esito).split('\n')[0]).ok, true);
+});
+
+test('lock di scrittore: file non regolare, link o di modo diverso da 0600 => illeggibile, mai ripreso', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, 'launch-targets', lock.NOME);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const contenuto = JSON.stringify({ v: 1, pid: 2 ** 22 - 3, starttime: 5, token: 'x' });
+  fs.writeFileSync(file, contenuto, { mode: 0o644 });
+  assert.equal(lock.acquisisci(root).codice, 'illeggibile');
+  fs.unlinkSync(file);
+  const fuori = path.join(root, 'fuori.json');
+  fs.writeFileSync(fuori, contenuto, { mode: 0o600 });
+  fs.symlinkSync(fuori, file);
+  assert.equal(lock.acquisisci(root).codice, 'illeggibile');
+  assert.equal(fs.lstatSync(file).isSymbolicLink(), true, 'il link estraneo non si tocca');
+});
+
+test('lock di scrittore: il mutex di takeover rimasto di un processo morto non si scavalca (fallisce chiuso)', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'launch-targets');
+  fs.mkdirSync(dir, { recursive: true });
+  const morto = JSON.stringify({ v: 1, pid: 2 ** 22 - 3, starttime: 5, token: 'x' });
+  fs.writeFileSync(path.join(dir, lock.NOME), morto, { mode: 0o600 });
+  fs.writeFileSync(path.join(dir, lock.NOME_MUTEX), morto, { mode: 0o600 });
+  const r = lock.acquisisci(root);
+  assert.equal(r.ok, false);
+  assert.equal(r.codice, 'takeover');
+});
+
+// --- P1B-04: quarantena qualificata e padre sincronizzato -------------------
+
+test('EEXIST: backup identico ma 0644 => bloccato, record e backup intatti', (t) => {
+  const w = mondo(t);
+  fs.mkdirSync(path.dirname(w.quarantena), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(w.quarantena, w.bytes, { mode: 0o644 });
+  fs.chmodSync(w.quarantena, 0o644);
+  const r = lt.riconciliaRecord(w.root, SESSIONE, w.atteso);
+  assert.equal(r.ok, false);
+  assert.equal(r.codice, 'quarantena-non-qualificata');
+  assert.deepStrictEqual(fs.readFileSync(w.file), w.bytes);
+  assert.equal(fs.statSync(w.quarantena).mode & 0o777, 0o644, 'l\'estraneo non si modifica');
+});
+
+test('EEXIST: backup identico ma symlink => bloccato, record intatto, link intatto', (t) => {
+  const w = mondo(t);
+  fs.mkdirSync(path.dirname(w.quarantena), { recursive: true, mode: 0o700 });
+  const fuori = path.join(w.root, 'esterno.json');
+  fs.writeFileSync(fuori, w.bytes, { mode: 0o600 });
+  fs.symlinkSync(fuori, w.quarantena);
+  const r = lt.riconciliaRecord(w.root, SESSIONE, w.atteso);
+  assert.equal(r.ok, false);
+  assert.equal(r.codice, 'quarantena-non-qualificata');
+  assert.deepStrictEqual(fs.readFileSync(w.file), w.bytes);
+  assert.equal(fs.lstatSync(w.quarantena).isSymbolicLink(), true);
+});
+
+test('ripresa dopo l\'unlink con backup non qualificato (0644 o symlink) => bloccato', (t) => {
+  for (const tipo of ['0644', 'symlink', 'hardlink']) {
+    const w = mondo(t);
+    fs.mkdirSync(path.dirname(w.quarantena), { recursive: true, mode: 0o700 });
+    if (tipo === '0644') { fs.writeFileSync(w.quarantena, w.bytes); fs.chmodSync(w.quarantena, 0o644); }
+    if (tipo === 'symlink') {
+      const fuori = path.join(w.root, 'esterno.json');
+      fs.writeFileSync(fuori, w.bytes, { mode: 0o600 });
+      fs.symlinkSync(fuori, w.quarantena);
+    }
+    if (tipo === 'hardlink') {
+      const fuori = path.join(w.root, 'esterno.json');
+      fs.writeFileSync(fuori, w.bytes, { mode: 0o600 });
+      fs.linkSync(fuori, w.quarantena);
+    }
+    const journal = { v: 1, sessione: SESSIONE, launchId: LID, sha256: w.sha, quarantena: path.relative(path.join(w.root, 'launch-targets'), w.quarantena) };
+    fs.writeFileSync(w.journal, JSON.stringify(journal));
+    fs.unlinkSync(w.file);
+    const r = lt.completaCommit(w.root, SESSIONE);
+    assert.equal(r.stato, 'bloccato', tipo);
+    assert.equal(r.codice, 'quarantena-non-qualificata', tipo);
+    assert.ok(fs.existsSync(w.journal), `${tipo}: la barriera resta`);
+  }
+});
+
+test('ordine fs: il padre della directory di backup nuova e\' sincronizzato PRIMA dell\'unlink del record', (t) => {
+  const w = mondo(t);
+  const dirRecord = path.join(w.root, 'launch-targets');
+  const eventi = [];
+  const aperti = new Map();
+  const oOpen = fs.openSync; const oFsync = fs.fsyncSync; const oUnlink = fs.unlinkSync; const oMkdir = fs.mkdirSync;
+  fs.openSync = function (...a) { const fd = oOpen.apply(this, a); aperti.set(fd, String(a[0])); return fd; };
+  fs.fsyncSync = function (fd) { eventi.push(`fsync:${aperti.get(fd)}`); return oFsync.call(this, fd); };
+  fs.unlinkSync = function (...a) { eventi.push(`unlink:${a[0]}`); return oUnlink.apply(this, a); };
+  fs.mkdirSync = function (...a) { eventi.push(`mkdir:${a[0]}`); return oMkdir.apply(this, a); };
+  try {
+    assert.equal(lt.riconciliaRecord(w.root, SESSIONE, w.atteso).ok, true);
+  } finally { fs.openSync = oOpen; fs.fsyncSync = oFsync; fs.unlinkSync = oUnlink; fs.mkdirSync = oMkdir; }
+  const iMk = eventi.indexOf(`mkdir:${path.dirname(w.quarantena)}`);
+  const iUn = eventi.indexOf(`unlink:${w.file}`);
+  assert.ok(iMk >= 0 && iUn > iMk, JSON.stringify(eventi));
+  const fsyncPadre = eventi.slice(iMk, iUn).filter((e) => e === `fsync:${dirRecord}`);
+  assert.ok(fsyncPadre.length >= 1, `nessun fsync del padre fra mkdir e unlink: ${JSON.stringify(eventi)}`);
+});
+
+test('fsync del padre della directory nuova fallito => il record resta, nessuna quarantena accettata', (t) => {
+  const w = mondo(t);
+  const dirRecord = path.join(w.root, 'launch-targets');
+  const aperti = new Map();
+  const oOpen = fs.openSync; const oFsync = fs.fsyncSync;
+  let nelPadre = 0;
+  fs.openSync = function (...a) { const fd = oOpen.apply(this, a); aperti.set(fd, String(a[0])); return fd; };
+  fs.fsyncSync = function (fd) {
+    if (aperti.get(fd) === dirRecord) {
+      nelPadre += 1;
+      if (nelPadre >= 2) throw Object.assign(new Error('guasto'), { code: 'EIO' }); // il 1o e' del journal
+    }
+    return oFsync.call(this, fd);
+  };
+  let r;
+  try { r = lt.riconciliaRecord(w.root, SESSIONE, w.atteso); } finally { fs.openSync = oOpen; fs.fsyncSync = oFsync; }
+  assert.equal(r.ok, false);
+  assert.deepStrictEqual(fs.readFileSync(w.file), w.bytes, 'il record non si tocca');
 });
