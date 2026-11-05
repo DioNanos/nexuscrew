@@ -154,6 +154,8 @@ test('deadline 10: salto civile +/-1h non sposta il budget monotono', async () =
     },
     tmuxExecImpl: tA.exec,
     captureImpl: async () => (clkA.now() >= 5000 ? CLAUDE_READY_LIKE : 'loading…\n'),
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(rA.state, 'submitted', '+1h/-1h civile: budget monotono intatto');
   assert.equal(pasteCount(tA), 1);
@@ -205,6 +207,8 @@ test('deadline 12a: load fallito pre-paste a residuo esaurito -> failed-pre-past
     nowImpl: clk.now, sleepImpl: clk.sleep,
     tmuxExecImpl: t.exec,
     captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'failed-pre-paste');
   assert.equal(r.deadlineExceeded, true, 'dettaglio deadline sul fallimento certo pre-paste');
@@ -218,17 +222,19 @@ test('deadline 12a: load fallito pre-paste a residuo esaurito -> failed-pre-past
 test('deadline 12b: riverifica negativa al retry -> failed-pre-paste, 0 paste', async () => {
   const clk = virtualClock();
   const t = mkTmux(clk, { loadFailsFirst: true });
-  let first = true;
+  let calls = 0;
   const r = await deliverBootstrapPrompt({
     ...OPTS, readyWaitMs: 30000, pollMs: 500,
     nowImpl: clk.now, sleepImpl: clk.sleep,
     tmuxExecImpl: t.exec,
     captureImpl: async () => {
-      const ready = first;
-      first = false;
-      // readiness: pronto; riverifica al retry: non piu' pronto
-      return ready ? CLAUDE_READY_LIKE : '❯ \nNot logged in · Run /login\n';
+      calls += 1;
+      // readiness (1) e verifica fresca pre-paste (2): pronto; riverifica al
+      // retry (3+): non piu' pronto
+      return calls <= 2 ? CLAUDE_READY_LIKE : '❯ \nNot logged in · Run /login\n';
     },
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'failed-pre-paste');
   assert.equal(pasteCount(t), 0);

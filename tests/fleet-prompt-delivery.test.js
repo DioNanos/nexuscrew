@@ -139,10 +139,19 @@ const READY_CAPTURE = () => async () => CLAUDE_READY;
 // fixture usano 1000 e iniettano il clock virtuale dove la finestra si esaurisce.
 const BASE = { tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', client: 'claude', readyWaitMs: 1000 };
 
+// 0.9.80 s2a: la verifica fresca pre-paste richiede anche il capture con
+// attributi e il contratto qualificato del SIMULATORE dei test (provenienza
+// dichiarata in tests/helpers/composer-fixtures.js: NON qualifica alcun
+// cliente reale — nel prodotto il registro resta vuoto e una consegna con
+// composer non qualificato e' saltata, guardia conservativa dello strato).
+const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
+const ATTRS_EMPTY = async () => CLAUDE_ATTRS_EMPTY;
+
 test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async () => {
   const { calls, exec } = fakeTmux();
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.delivered, true);
   assert.equal(r.state, 'submitted');
@@ -207,6 +216,7 @@ test('delivery: busy -> attesa poi ready -> submitted (transizione)', async () =
     ...BASE, readyWaitMs: 1000, pollMs: 200,
     tmuxExecImpl: exec, captureImpl: async () => screens.shift() || CLAUDE_READY,
     nowImpl: () => clock, sleepImpl: async (ms) => { clock += ms; },
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'submitted');
 });
@@ -215,6 +225,7 @@ test('delivery: fallimento certo PRE-paste (load) -> UN retry, poi submitted', a
   const { calls, exec } = fakeTmux({ loadFailsFirst: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'submitted');
   assert.equal(r.attempts, 2);
@@ -227,6 +238,7 @@ test('delivery: load sempre fallito -> failed-pre-paste dopo 1 retry, zero paste
   const { calls, exec } = fakeTmux({ loadFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'failed-pre-paste');
   assert.equal(r.attempts, 2);
@@ -238,6 +250,7 @@ test('delivery: paste-buffer fallito -> delivery-unknown, MAI retry post-paste (
   const { calls, exec } = fakeTmux({ pasteFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(r.attempts, 1);
@@ -249,6 +262,7 @@ test('delivery: Enter fallito dopo paste ok -> staged-not-submitted, zero replay
   const { calls, exec } = fakeTmux({ enterFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'staged-not-submitted');
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1);
@@ -262,12 +276,16 @@ test('delivery: pane cambiato dopo il paste -> delivery-unknown prima di Enter',
   const exec2 = async (bin, args) => {
     if (args[0] === 'display-message') {
       displayCount += 1;
-      return { err: null, stdout: `cloud-T\t0\t%${displayCount === 1 ? 42 : 99}\n`, stderr: '', code: 0 };
+      // 0.9.80 s2a: la verifica fresca consuma la prima risoluzione (pinning);
+      // il paste usa il %N pinnato (2a); il pane cambia ALLA riverifica
+      // pre-Enter (3a), che e' il punto che questo test vuole esercitare.
+      return { err: null, stdout: `cloud-T\t0\t%${displayCount <= 2 ? 42 : 99}\n`, stderr: '', code: 0 };
     }
     return exec(bin, args);
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec2, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length + 1, 1, 'mai Enter su pane diverso');
@@ -300,6 +318,7 @@ test('delivery R4: throw durante paste-buffer -> delivery-unknown, MAI retry (un
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(r.attempts, 1, 'nessun retry dopo throw post-paste');
@@ -333,6 +352,7 @@ test('delivery R3: cancel dopo il paste -> delivery-unknown, MAI Enter, MAI seco
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(), isCancelled: () => cancelled,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1);
@@ -773,6 +793,7 @@ test('delivery R3: cancel dopo Enter in volo -> delivery-unknown (R9), mai submi
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(), isCancelled: () => cancelled,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown', 'Enter partito + generazione morta = incerto, non submitted');
   assert.equal(r.delivered, false);

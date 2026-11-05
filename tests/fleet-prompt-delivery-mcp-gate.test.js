@@ -8,6 +8,11 @@ const assert = require('node:assert');
 
 const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
 const { startGenerationPrompt, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
+// 0.9.80 s2a: la verifica fresca pre-paste legge il composer con attributi e
+// richiede il contratto qualificato del SIMULATORE (provenienza dichiarata in
+// tests/helpers/composer-fixtures.js; NON qualifica alcun cliente reale).
+const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
+const ATTRS_EMPTY = async () => CLAUDE_ATTRS_EMPTY;
 
 function seams({ captures, pasteOk = true, enterOk = true } = {}) {
   const order = [];
@@ -39,6 +44,7 @@ test('MCP ready subito: consegna submitted con mcp ready (contratto P3 del Gate 
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
     readyWaitMs: 100, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'ready', ready: ['a', 'b'], failed: [], pending: [] }),
   });
   assert.strictEqual(result.delivered, true);
@@ -53,6 +59,7 @@ test('budget esaurito con pending: consegna DEGRADATO VISIBILE con elenco bounde
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
     readyWaitMs: 100, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'pending', ready: ['a'], failed: [], pending: ['lento', 'ko-server'] }),
   });
   assert.strictEqual(result.delivered, true);

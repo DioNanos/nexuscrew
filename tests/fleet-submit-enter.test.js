@@ -294,6 +294,7 @@ test('cancellazione durante il cleanup (delete-buffer) -> nessun Enter, incerto'
 
 test('il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', async () => {
   const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+  const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
   const { calls, exec } = fakeTmux({});
   let cancelled = false;
   const exec2 = async (bin, args) => {
@@ -305,6 +306,7 @@ test('il bootstrap riceve lo stesso predicato (paste non parte dopo il load)', a
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
     readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     captureImpl: async () => '❯\n', isCancelled: () => cancelled,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'cancelled');
   assert.equal(count(calls, 'paste-buffer'), 0, 'bootstrap: nessun paste dopo l invalidazione');
@@ -506,6 +508,7 @@ test('R02: cancellazione durante il load -> il buffer tmux viene comunque cancel
 
 test('R02: il bootstrap cancella il buffer dopo una cancellazione durante il load', async () => {
   const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
+  const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
   const { calls, exec } = fakeTmux({});
   let cancelled = false;
   const exec2 = async (bin, args) => {
@@ -517,6 +520,7 @@ test('R02: il bootstrap cancella il buffer dopo una cancellazione durante il loa
     tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot', client: 'claude',
     readyWaitMs: 1000, tmuxExecImpl: exec2, sleepImpl: async () => {},
     captureImpl: async () => '❯\n', isCancelled: () => cancelled,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'cancelled');
   assert.equal(count(calls, 'paste-buffer'), 0);
