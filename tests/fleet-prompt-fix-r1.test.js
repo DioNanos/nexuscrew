@@ -129,9 +129,9 @@ test('R1 02: la stessa definizione mutata, su una NUOVA istanza dopo il restart,
     fs.writeFileSync(w.defsPath, JSON.stringify(defs));
     const l = lease(); l.status = () => ({ state: 'none' });
     assert.deepEqual((await cell(w, l)).promptDelivery, { state: 'unknown', launchId: L });
-    // un lancio senza alcun record di consegna e con definizione non applicabile: nulla da mostrare
+    // record assente: NON e' una negativa qualificata (puo' essere mai scritto)
     fs.rmSync(path.join(w.dirSessione, `prompt-${L}.json`));
-    assert.equal((await cell(w, l)).promptDelivery, undefined);
+    assert.deepEqual((await cell(w, l)).promptDelivery, { state: 'unknown', launchId: L });
   } finally { clean(w); }
 });
 
@@ -163,4 +163,50 @@ test('R1 03: dentro la finestra effettiva l\'evento terminale c\'e\' ed e\' uno 
     await delay(100);
     assert.equal(d.logs().records.filter((x) => x.code === 'PROMPT_DELIVERY_TERMINAL').length, 1);
   } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+// ── Fix R2 (R2-02): con un lancio noto nel registro nessuna negativa si deduce ──
+function mutata(w, conRecord) {
+  registro(w);
+  if (conRecord) assert.equal(activity.scriviRecordPrompt(w.dirSessione, { version: 1, event: 'prompt-delivery', launchId: L, generation: 0, state: 'submitted', ts: Date.now() }), true);
+  const defs = JSON.parse(fs.readFileSync(w.defsPath, 'utf8')); defs.cells[0].prompt = '';
+  fs.writeFileSync(w.defsPath, JSON.stringify(defs));
+}
+const senzaAutorita = async (w) => { const rt = w.apri(); try { return (await rt.cellStatus()).cells[0].promptDelivery; } finally { rt.shutdown(); } };
+
+test('R2 CONTROL: record leggibile, definizione mutata, nessuna autorita\' -> unknown col launchId', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  try { mutata(w, true); assert.deepEqual(await senzaAutorita(w), { state: 'unknown', launchId: L }); } finally { clean(w); }
+});
+
+test('R2 CP09: record non ispezionabile (stat EACCES) non prova la non applicabilita\'', async () => {
+  assert.notEqual(process.getuid(), 0, 'la fixture di permessi richiede un processo non privilegiato');
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  try {
+    mutata(w, true);
+    const target = path.join(w.dirSessione, `prompt-${L}.json`);
+    fs.chmodSync(w.dirSessione, 0o400);
+    let codice; try { fs.statSync(target); } catch (e) { codice = e.code; }
+    assert.equal(codice, 'EACCES', 'il guasto di permesso e\' reale');
+    assert.deepEqual(await senzaAutorita(w), { state: 'unknown', launchId: L });
+  } finally { try { fs.chmodSync(w.dirSessione, 0o700); } catch (_) {} clean(w); }
+});
+
+test('R2 CP10: lancio selezionato con primo record mai scritto: l\'assenza non e\' una negativa immutabile', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  try {
+    mutata(w, false);
+    assert.equal(fs.existsSync(path.join(w.dirSessione, `prompt-${L}.json`)), false);
+    const out = await senzaAutorita(w);
+    assert.deepEqual(out, { state: 'unknown', launchId: L }, 'nessuna generazione ne\' timestamp inventati');
+  } finally { clean(w); }
+});
+
+test('R2: la negativa qualificata resta l\'unica che omette (fotografia del proprietario non applicabile)', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  try {
+    registro(w);
+    const l = lease(); l.readPromptSnapshot = async () => ({ ok: true, launchId: L, applicable: false, generation: 0, epoch: 1, leaseId: 'x' });
+    assert.equal((await cell(w, l)).promptDelivery, undefined);
+  } finally { clean(w); }
 });

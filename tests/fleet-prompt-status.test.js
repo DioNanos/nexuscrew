@@ -230,7 +230,9 @@ test('cellStatus: fotografia di un altro lancio o connessione non piu\' legata: 
 test('cellStatus: campo omesso se non applicabile; unknown senza id se manca il registro e la consegna e\' possibile', async () => {
   const legacy = mondoStato();                         // send-keys senza opt-in
   registraLancioCorrente(legacy.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
-  assert.equal(Object.hasOwn(await statoCella(legacy, undefined), 'promptDelivery'), false);
+  // lancio noto nel registro ma nessuna negativa qualificata (nuova istanza):
+  // la definizione non basta, unknown col solo launchId
+  assert.deepEqual((await statoCella(legacy, undefined)).promptDelivery, { state: 'unknown', launchId: L1 });
   // snapshot attesta che la consegna NON e' posseduta: omesso
   const c2 = await statoCella(legacy, leaseFinto({ applicable: false }));
   assert.equal(Object.hasOwn(c2, 'promptDelivery'), false);
