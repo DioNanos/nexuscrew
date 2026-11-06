@@ -939,6 +939,75 @@ test('supervisore: l\'osservazione MCP resta in memoria, per generazione, con no
   assert.deepEqual(promptMcp.mcp.pending, ['ok-1']);
 });
 
+// ── Fix R3: un'eccezione del task di consegna DOPO l'ammissione non resta muta ──
+const { leggiRecordPrompt: leggiStoria } = require('../lib/files/activity.js');
+
+async function consegnaConGuasto({ extra, gate = { ultimaGenerazioneAmmessa: -1 }, generation = 0 }) {
+  const fx = fxPromptOutcome('7a8b9cadbecfd0e1');
+  const righe = [];
+  const seams = {
+    promptOutcome: fx, promptGate: gate,
+    setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {},
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+    writeError: (m) => righe.push(String(m)),
+  };
+  // I descrittori si copiano com'e': un getter che lancia resta un getter.
+  Object.defineProperties(seams, Object.getOwnPropertyDescriptors(extra));
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'ciao', readyMs: 0, readyWaitMs: 1000, client: 'kimi' },
+    generation, { exited: false }, seams,
+  );
+  const valore = await ctl.settled;
+  return { valore, righe, fx, record: leggiStoria(fx.dir, fx.launchId) };
+}
+
+test('R3: eccezione PRIMA di ogni effetto -> terminale skipped/failed-pre-paste, nessun pending eterno, nessun testo d\'errore', async () => {
+  const { valore, righe, record } = await consegnaConGuasto({
+    extra: { get deliverBootstrapPrompt() { throw new Error("Cannot find module 'smol-toml' SEGRETO"); } },
+  });
+  assert.equal(valore, null, 'fallimento certo pre-paste: nessuna incertezza da recintare');
+  assert.equal(record.state, 'skipped');
+  assert.equal(record.reason, 'failed-pre-paste');
+  assert.notEqual(record.state, 'pending');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'), 'una riga fissa per l\'operatore');
+  const blob = JSON.stringify(record) + righe.join('');
+  assert.ok(!blob.includes('SEGRETO') && !blob.includes('smol-toml'), 'nessun messaggio d\'errore nel record o su stderr');
+});
+
+test('R3: eccezione DURANTE la consegna -> unknown/delivery-unknown, generazione fermata bounded, mai submitted, nessun retry', async () => {
+  let chiamate = 0;
+  const { valore, righe, record } = await consegnaConGuasto({
+    extra: { deliverBootstrapPrompt: async () => { chiamate += 1; throw new Error('boom SEGRETO'); } },
+  });
+  assert.equal(chiamate, 1, 'nessun retry');
+  assert.deepEqual(valore, { state: 'delivery-unknown' });
+  assert.equal(record.state, 'unknown');
+  assert.equal(record.reason, 'delivery-unknown');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'));
+  assert.ok(!(JSON.stringify(record) + righe.join('')).includes('SEGRETO'));
+});
+
+test('R3: eccezione dopo la risposta di deliver (pubblicazione del terminale) -> comunque un terminale, non un pending', async () => {
+  const { record } = await consegnaConGuasto({
+    extra: {
+      deliverBootstrapPrompt: async () => ({ delivered: true, state: 'submitted', notReady: '', get mcp() { throw new Error('x'); } }),
+    },
+  });
+  assert.notEqual(record.state, 'pending');
+  assert.equal(record.state, 'unknown');
+});
+
+test('R3: generazione superata dal fence -> il guasto non scrive sulla nuova generazione (tace) ma lo stderr fisso resta', async () => {
+  const gate = { ultimaGenerazioneAmmessa: -1 };
+  const { record, righe } = await consegnaConGuasto({
+    gate,
+    extra: { deliverBootstrapPrompt: async () => { gate.ultimaGenerazioneAmmessa = 5; throw new Error('boom'); } },
+  });
+  assert.equal(record.generation, 0);
+  assert.equal(record.state, 'pending', 'la generazione 0 non riscrive: il fence ha gia\' ammesso la 5');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'));
+});
+
 test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', async () => {
   const { waitDeliveryReport } = require('../lib/fleet/prompt-delivery.js');
   const mk = (out) => async () => ({ err: null, stdout: out, stderr: '', code: 0 });
