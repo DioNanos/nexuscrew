@@ -574,6 +574,57 @@ test('fence: il record cambiato durante l\'attesa host non viene cancellato', as
   assert.notEqual(dopo.record.incerto, true, 'nessuna marcatura sul lancio nuovo');
 });
 
+test('fence anche sul percorso eccezionale: il fallimento tardivo non marca il record nuovo', async (t) => {
+  // Come CP05, ma l'attesa host/lease FALLISCE (scadenza) dopo la sostituzione:
+  // il catch non deve marcare il lancio nuovo.
+  let w = null;
+  let expire = false;
+  const leggiOriginale = launchTarget.leggi;
+  let cambiato = false;
+  t.after(() => { launchTarget.leggi = leggiOriginale; });
+  w = creaMondo(t, {
+    cfgExtra: { monotonicNow: () => Number(process.hrtime.bigint() / 1000000n) + (expire ? 10000 : 0) },
+    attestaNuova: async () => {
+      launchTarget.leggi = (...args) => {
+        const r = leggiOriginale(...args);
+        launchTarget.leggi = leggiOriginale;
+        queueMicrotask(() => {
+          const rec = r.record;
+          launchTarget.registra(w.filesRoot, NOME, {
+            launchId: 'abcdef0123456789',
+            sessionId: rec.sessionId,
+            paneId: rec.paneId,
+            tmuxSocket: rec.tmuxSocket,
+            serverPid: rec.serverPid,
+            panePid: rec.panePid,
+            paneStarttime: rec.paneStarttime,
+            family: rec.family,
+          });
+          cambiato = true;
+          expire = true;
+        });
+        return r;
+      };
+      return { attestato: true, motivo: 'incarnazione-morta' };
+    },
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.equal(cambiato, true);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'IDENTITY_UNVERIFIED');
+  const dopo = leggiOriginale(w.filesRoot, NOME);
+  assert.equal(dopo.stato, 'presente');
+  assert.equal(dopo.record.launchId, 'abcdef0123456789');
+  assert.notEqual(dopo.record.incerto, true, 'il fallimento tardivo non deve marcare il lancio nuovo');
+});
+
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
 
 test('down su /proc affollato: uscita provata + client morto con la sessione NON attesta, ma le tre prove chiude NELLA STESSA down (attested-recovery) e l up dopo riesce', async (t) => {
