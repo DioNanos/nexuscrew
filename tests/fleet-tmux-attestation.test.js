@@ -345,7 +345,10 @@ test('errore generico del server: non e\' il verdetto di assenza', async (t) => 
   const socket = await socketInAscolto(t);
   const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, { bin: finto.bin }));
   assert.equal(r.attestato, false);
-  assert.equal(r.motivo, 'verdetto');
+  // L'enumerazione viene prima: se fallisce, la sequenza si ferma li' e il
+  // verdetto non arriva. Nessuna attestazione, e il motivo e' la fine della
+  // connessione, non un verdetto generico.
+  assert.equal(r.motivo, 'eof');
 });
 
 test('deadline gia\' spesa: nessun client', async (t) => {
