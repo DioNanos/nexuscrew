@@ -562,6 +562,26 @@ test('workcodes: a numeric work-order code fails the verifier, in content and in
   }
 });
 
+// Il ramo con il PREFISSO (`nc`, `sentinella`) prende il codice anche quando
+// e' attaccato a cio' che segue: il prefisso e' gia' identitario, quindi non
+// serve un confine finale. Il ramo del solo `dNNN` invece lo tiene: senza,
+// un hash di asset (`chunk-d123abc4`) diventerebbe un falso positivo e
+// bloccherebbe build legittime. E' un compromesso dichiarato, non una svista.
+test('workcodes: a prefixed code glued to the following text fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-gluedafter-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: '// fixture nc-d582runtime e nc-0952abc\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /nc-d582runtime/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Il positivo: i nomi neutri non sono codici e non devono accendere il gate.
 test('workcodes: neutral fixture and file names pass', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-neutral-'));
