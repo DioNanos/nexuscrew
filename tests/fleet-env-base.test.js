@@ -1,5 +1,5 @@
 'use strict';
-// C17 — base ereditata delle celle interattive (client e shell).
+// Base ereditata delle celle interattive (client e shell).
 //
 // Una funzione PURA trasforma la sola base che finisce nel payload della cella:
 // un TERM inutilizzabile diventa il ripiego, NO_COLOR e FORCE_COLOR spariscono
@@ -68,7 +68,7 @@ test('ingressi non validi non fanno esplodere niente', () => {
 });
 
 test('minimalRuntimeEnv NON cambia per gli altri client: TERM dumb resta dumb', () => {
-  // La regola C17 vive nella funzione nuova, non nel minimal env condiviso.
+  // La regola vive nella funzione nuova, non nel minimal env condiviso.
   const m = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/tester', TERM: 'dumb' }, { home: '/home/tester' });
   assert.equal(m.TERM, 'dumb');
   const u = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/tester', TERM: 'unknown' }, { home: '/home/tester' });

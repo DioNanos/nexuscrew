@@ -717,7 +717,7 @@ test('data del rifiuto: il taglio esterno della deadline produce sempre «scadut
   assert.equal(err.data.motivoUscita, 'scaduta');
 });
 
-// --- C17: ambiente del payload -------------------------------------------------
+// --- ambiente del payload ------------------------------------------------------
 
 function conEnv(t, valori) {
   const prima = {};
