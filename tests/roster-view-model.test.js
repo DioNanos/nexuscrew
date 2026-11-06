@@ -188,7 +188,7 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
     subtitle: `${t('cell-unknown')} · Implement activity UI`,
     // la consegna del prompt e' una riga ACCOSTATA allo stato della cella:
     // senza campo dal nodo resta «non disponibile», mai un invito dedotto
-    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null },
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
     searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
@@ -253,7 +253,7 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
     live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-unknown'),
-    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null },
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
     searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.
