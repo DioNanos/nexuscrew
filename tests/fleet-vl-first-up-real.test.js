@@ -167,6 +167,7 @@ exec ${TMUX} "$@"
     },
     platform: 'linux', env: {},
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
+    cellLeaseEnabled: true,
     now: () => Date.now(), monotonicNow: () => Date.now(),
     identityOwnerInstanceId: OWNER_INSTANCE_ID,
   });
@@ -214,9 +215,30 @@ exec ${TMUX} "$@"
   assert.equal(String(ctx1.serverRoot).includes('nc-vl-cap-'), false);
   assert.equal(ctx1.hostIdentity && ctx1.hostIdentity.state, 'live');
   assert.equal(tickets.length, 1, 'un solo ticket al primo up');
-  // Strato 2c: `up` risponde subito dal record canonico, senza attendere il
-  // report: lo stato e' uno dei quattro, la consegna completa si osserva dopo.
+  // Strato 2c: `up` risponde subito dal record canonico; la consegna completa
+  // si osserva dopo, con attesa BOUNDED del terminale `submitted` della STESSA
+  // tupla (launchId del payload, generazione 0) e prova che il bootstrap e'
+  // arrivato UNA sola volta al modello controllato — tutto PRIMA del down.
   assert.ok(up1.prompt && ['pending', 'submitted', 'unknown'].includes(up1.prompt.state), `prompt: ${JSON.stringify(up1.prompt)}`);
+  const lancio1 = tickets[0].promptOutcome.launchId;
+  assert.equal(up1.prompt.launchId, lancio1, 'la tupla di up e\' del lancio del payload');
+  const attesaFino = Date.now() + 60000;
+  let tupla = null;
+  while (Date.now() < attesaFino) {
+    const st = await fleet.status();
+    const cella = (st.cells || []).find((c) => c.cell === 'Mai');
+    if (cella && cella.promptDelivery && cella.promptDelivery.state === 'submitted') { tupla = cella.promptDelivery; break; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.ok(tupla, 'terminale submitted non osservato entro il limite');
+  assert.equal(tupla.launchId, lancio1);
+  assert.equal(tupla.generation, 0);
+  const chat = () => richieste.filter((u) => String(u).includes('/chat/completions')).length;
+  const finoChat = Date.now() + 30000;
+  while (Date.now() < finoChat && chat() < 1) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(chat(), 1, 'il bootstrap arriva al modello controllato una sola volta');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(chat(), 1, 'nessun reinvio dopo il terminale');
 
   const down1 = await fleet.down('Mai');
   assert.equal(down1.ok, true, `down: ${JSON.stringify(down1)}`);
