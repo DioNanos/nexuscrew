@@ -725,3 +725,28 @@ describe('foglio azioni, bollino LIVE, striscia, riordino a modalità', () => {
     expect(screen.queryByRole('button', { name: 'reorder Off Cell' })).toBeNull();
   });
 });
+
+describe('prompt delivery badge in the mobile roster', () => {
+  it('shows the delivery state next to the cell row without touching it', async () => {
+    fixture.cells = [
+      { ...cell('Live Cell', 'local-live', true), promptDelivery: { state: 'pending', launchId: 'abcdef0123456789', generation: 1 } },
+      { ...cell('Off Cell', 'local-off', false), promptDelivery: { state: 'skipped', reason: 'prompt-rejected', launchId: 'abcdef0123456789' } },
+    ];
+    renderRoster();
+    expect(await screen.findByText('delivering')).toBeTruthy();
+    expect(screen.getByText('a response is needed')).toBeTruthy();
+    // la riga della cella resta la sua: il badge non riscrive lo stato
+    expect(screen.getByText('Live Cell')).toBeTruthy();
+  });
+
+  it('says nothing where the delivery is normal, and nothing old as current', async () => {
+    fixture.cells = [
+      { ...cell('Live Cell', 'local-live', true), promptDelivery: { state: 'skipped', reason: 'vl-bootstrap-generation', launchId: 'abcdef0123456789' } },
+      { ...cell('Off Cell', 'local-off', false), promptDelivery: { state: 'submitted', launchId: 'aaaaaaaaaaaaaaaa' }, launchId: 'bbbbbbbbbbbbbbbb' },
+    ];
+    renderRoster();
+    await screen.findByText('Off Cell');
+    expect(screen.queryByText('delivered')).toBeNull();
+    expect(screen.getByText('earlier launch')).toBeTruthy();
+  });
+});

@@ -128,6 +128,60 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
   return session.outbox.latest > seen;
 }
 
+// La consegna del prompt e' una riga SUA, accanto allo stato della cella e mai
+// al posto suo: un prompt in attesa non rende la cella «attiva», un prompt
+// inviato non la rende «incarico accettato», e una ragione terminale resta la
+// riga principale. Il badge parla solo degli stati dell'enum chiuso del
+// proprietario e delle chiavi di traduzione: nessun testo libero.
+const PRIORITA_CONSEGNA = Object.freeze({
+  action: 3, problem: 2, pending: 1, submitted: 0, stale: -1, unavailable: -1, none: -2,
+});
+
+// I kind di non-pronta che chiedono una risposta dell'operatore: permesso,
+// consenso, onboarding. Sono gli unici che meritano il gradino piu' alto.
+const NOT_READY_CHE_CHIEDONO_AZIONE = Object.freeze([
+  'not-ready-auth', 'not-ready-consent', 'not-ready-onboarding',
+]);
+
+// Lo skip di generation del bootstrap VL e' l'esito NORMALE di un lancio che ha
+// gia' la sua generazione: non e' un guasto e non merita un allarme.
+const SKIP_NORMALE = 'vl-bootstrap-generation';
+
+// promptDeliveryBadge(cell, { currentLaunchId }) -> { badge, priorita, key, reason, launchId }
+// badge: 'action' | 'problem' | 'pending' | 'submitted' | 'stale' | 'unavailable' | 'none'
+export function promptDeliveryBadge(cell, { currentLaunchId = null } = {}) {
+  const c = cell || {};
+  const d = c.promptDelivery;
+  const vuoto = (badge, key) => ({ badge, priorita: PRIORITA_CONSEGNA[badge], key, reason: null, launchId: null });
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return vuoto('unavailable', 'prompt-badge-unavailable');
+
+  const reason = typeof d.reason === 'string' ? d.reason : null;
+  const launchId = typeof d.launchId === 'string' ? d.launchId : null;
+  // Il record di un lancio sostituito non si mostra come se fosse quello in
+  // corso: senza il lancio corrente non c'e' confronto possibile, e in quel
+  // caso vale cio' che il backend ha gia' degradato a unknown.
+  const corrente = currentLaunchId || c.launchId || null;
+  if (launchId && corrente && launchId !== corrente) return vuoto('stale', 'prompt-badge-stale');
+
+  const esito = (badge) => ({
+    badge, priorita: PRIORITA_CONSEGNA[badge], key: `prompt-badge-${badge}`, reason, launchId,
+  });
+  switch (d.state) {
+    case 'pending': return esito('pending');
+    case 'submitted': return esito('submitted');
+    case 'skipped':
+      if (reason === SKIP_NORMALE) {
+        return { badge: 'none', priorita: PRIORITA_CONSEGNA.none, key: null, reason, launchId };
+      }
+      if (reason === 'prompt-rejected' || NOT_READY_CHE_CHIEDONO_AZIONE.includes(d.notReady)) {
+        return esito('action');
+      }
+      return esito('problem');
+    case 'unknown': return esito('problem');
+    default: return vuoto('unavailable', 'prompt-badge-unavailable');
+  }
+}
+
 // Riga di stato condivisa da mobile e desktop. Da spenta mostra il modello
 // configurato (con fallback all'engine); da accesa usa lo stato che la cella
 // PUBBLICA (gli hook), e solo in mancanza di quello il segnale derivato dal
@@ -252,6 +306,9 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || 0,
         working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
+        // La consegna del prompt viaggia ACCANTO allo stato: la riga della cella
+        // resta quella che era, e nessuna delle due riscrive l'altra.
+        prompt: promptDeliveryBadge(c, { currentLaunchId: c.launchId || null }),
         searchText: cellSearchText(c, session),
       };
     }),
@@ -289,6 +346,9 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux && !c.preserved,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
         working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
+        // La consegna del prompt viaggia ACCANTO allo stato: la riga della cella
+        // resta quella che era, e nessuna delle due riscrive l'altra.
+        prompt: promptDeliveryBadge(c, { currentLaunchId: c.launchId || null }),
         searchText: cellSearchText(c, session),
       };
     }),

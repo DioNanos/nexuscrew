@@ -1,0 +1,24 @@
+/* La consegna del prompt: un badge piccolo, accanto allo stato della cella.
+   I colori distinguono i gradini dell'avviso; nessuno di essi allarma per uno
+   skip normale, che qui non arriva nemmeno (la funzione non gli da' una chiave). */
+.nc-prompt-badge {
+  display: inline-block;
+  margin-top: 2px;
+  max-width: 100%;
+  border-radius: 10px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 16px;
+  background: #2b3a44;
+  color: #cfe3ee;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.nc-prompt-badge-action { background: #7a4a00; color: #ffe2b0; }
+.nc-prompt-badge-problem { background: #6d1f1f; color: #ffd6d6; }
+.nc-prompt-badge-pending { background: #26404d; color: #bfe0f0; }
+.nc-prompt-badge-submitted { background: #1f4a32; color: #c9f0d8; }
+.nc-prompt-badge-stale,
+.nc-prompt-badge-unavailable { background: #333; color: #aaa; }

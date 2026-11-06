@@ -4,6 +4,7 @@ import {
 } from '../lib/api.js';
 import { subscribeFleetRoute, refreshFleetRoute } from '../lib/fleet-poll.js';
 import Icon from './Icon.jsx';
+import PromptBadge from './PromptBadge.jsx';
 import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { panelPortForRoute } from '../lib/panel-port.js';
@@ -460,6 +461,7 @@ export default function SessionList({
                 {azioni.isLive && <span className="nc-m-live">LIVE</span>}
               </span>
               <small title={item.subtitle}>{item.subtitle}</small>
+              <PromptBadge prompt={item.prompt} />
             </span>
           </button>
           {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
