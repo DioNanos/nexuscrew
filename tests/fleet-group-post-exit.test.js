@@ -82,11 +82,36 @@ async function osserva(root, extra = {}) {
   });
 }
 
-test('capo zombie e nessun altro membro: NON e\' un residuo, il gruppo e\' pulito', async (t) => {
+test('capo zombie e nessun altro membro: nessun residuo eseguibile, ma NON e\' un pulito', async (t) => {
   const root = proc(t, { membri: [{ pid: PGRP, stato: 'Z' }] });
   const sonda = sondaChe(null);
   const foto = await osserva(root, { sonda });
-  assert.deepEqual(foto, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' });
+  // Uno zombie tiene vivo il PGID: la sonda resta positiva. Un censimento che
+  // vede solo zombie non prova che non ci siano altri membri (vista parziale),
+  // quindi non si dichiara il vuoto: si resta ignoti.
+  assert.notEqual(foto.qualita, 'noti');
+  assert.equal(foto.qualita, 'ignoti');
+});
+
+test('EPERM con capo zombie: la sonda non si trasforma in una prova negativa', async (t) => {
+  const root = proc(t, { membri: [{ pid: PGRP, stato: 'Z' }] });
+  // La sonda risponde EPERM: c'e' un membro che non possiamo segnalare. Il
+  // censimento vede solo lo zombie, ma questo NON basta: EPERM non diventa mai
+  // pulito tramite una vista parziale.
+  const sonda = sondaChe('EPERM');
+  const foto = await osserva(root, { sonda });
+  assert.notEqual(foto.qualita, 'noti');
+});
+
+test('vista parziale con zombie visibile e membro vivo nascosto: mai pulito', async (t) => {
+  // La sonda sente il gruppo; il censimento vede lo zombie ma NON il membro
+  // vivo che il kernel conta. Vedere uno zombie non dimostra di aver visto
+  // tutti gli altri.
+  const root = proc(t, { membri: [{ pid: PGRP, stato: 'Z' }] });
+  const sonda = sondaChe(null);
+  const foto = await osserva(root, { sonda });
+  assert.notEqual(foto.qualita, 'noti');
+  assert.equal(foto.inGruppo, 0);
 });
 
 test('capo zombie PIU\' un membro vivo: e\' un residuo, e nessuno lo ignora', async (t) => {
@@ -276,5 +301,8 @@ test('kernel vero: un capo zombie non raccolto tiene il PGID ma non e\' un resid
     monoNow: () => Date.now(),
     attesa: async () => {},
   });
-  assert.deepEqual(foto, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' });
+  // Il PGID resta vivo finche' lo zombie non e' raccolto: la sonda non arriva
+  // a ESRCH, quindi il gruppo non si dichiara vuoto.
+  assert.notEqual(foto.qualita, 'noti');
+  assert.equal(foto.inGruppo, 0);
 });

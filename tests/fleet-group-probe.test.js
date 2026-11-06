@@ -64,7 +64,9 @@ test('sonda: ESRCH e\' gruppo vuoto (noti, zero membri)', (t) => {
     inviaSegnaleZero: () => { throw errore('ESRCH'); },
     leggiIdentita: () => ({ esito: 'assente', nascita: null }),
   });
-  assert.deepEqual(foto, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' });
+  assert.equal(foto.inGruppo, 0);
+  assert.equal(foto.qualita, 'noti');
+  assert.equal(foto.motivo, 'esrch');
 });
 
 test('sonda: successo e\' almeno un membro, mai un pulito', (t) => {
@@ -102,7 +104,9 @@ test('sonda: errore diverso da ESRCH/EPERM e\' ignoto, senza messaggi nel record
     inviaSegnaleZero: () => { throw errore('EINVAL'); },
     leggiIdentita: () => ({ esito: 'assente', nascita: null }),
   });
-  assert.deepEqual(foto, { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti' });
+  assert.equal(foto.inGruppo, 0);
+  assert.equal(foto.qualita, 'ignoti');
+  assert.equal(foto.motivo, 'errore');
   assert.equal(JSON.stringify(foto).includes('sintetico'), false, 'nessun errore grezzo nel record');
 });
 
@@ -226,7 +230,9 @@ test('sonda reale: capo vivo -> almeno; dopo la morte del gruppo -> noti/0', asy
   figlio.kill('SIGKILL');
   await new Promise((resolve) => { figlio.once('exit', resolve); });
   const dopo = gruppo.sondaGruppo({ pgrp, identita: id });
-  assert.deepEqual(dopo, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' });
+  assert.equal(dopo.inGruppo, 0);
+  assert.equal(dopo.qualita, 'noti');
+  assert.equal(dopo.motivo, 'esrch');
 });
 
 test('sonda reale: capo morto con un altro membro vivo -> almeno, non pulito', async (t) => {
