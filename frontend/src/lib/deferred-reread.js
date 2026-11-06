@@ -15,12 +15,17 @@ export function createDeferredReread({ delayMs = RILETTURA_DIFFERITA_MS, onError
   const arma = typeof setTimer === 'function' ? setTimer : ((fn, ms) => setTimeout(fn, ms));
   const disarma = typeof clearTimer === 'function' ? clearTimer : ((id) => clearTimeout(id));
   const pendenti = new Map();
+  let chiuso = false;
 
   const programma = (chiave, esegui) => {
+    // Chiusa la vista, una risposta che arriva tardi non deve armare nulla: la
+    // richiesta è di un contesto che non c'è più.
+    if (chiuso) return false;
     if (typeof chiave !== 'string' || !chiave || typeof esegui !== 'function') return false;
     if (pendenti.has(chiave)) return false;
     const timer = arma(() => {
       pendenti.delete(chiave);
+      if (chiuso) return;
       // La lettura parte una volta sola: se rigetta, la si riporta e si chiude.
       Promise.resolve().then(esegui).catch((e) => {
         if (typeof onError === 'function') onError(e);
@@ -42,5 +47,11 @@ export function createDeferredReread({ delayMs = RILETTURA_DIFFERITA_MS, onError
     pendenti.clear();
   };
 
-  return { programma, annulla, annullaTutto, pendenti: () => [...pendenti.keys()] };
+  // Chiude la vista: annulla cio' che pende e impedisce che ne nascan altre.
+  const chiudi = () => {
+    chiuso = true;
+    annullaTutto();
+  };
+
+  return { programma, annulla, annullaTutto, chiudi, chiuso: () => chiuso, pendenti: () => [...pendenti.keys()] };
 }

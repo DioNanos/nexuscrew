@@ -193,3 +193,52 @@ describe('esito noto: nessuna lettura differita', () => {
     expect(mocks.refreshFleetRoute.mock.calls.length, 'an outcome that is known is not a lost response').toBe(prima);
   });
 });
+
+// La differita non deve nascere dopo la chiusura della vista, e non deve
+// sopravvivere a un contesto che non è più quello che l'ha chiesta: un'altra
+// credenziale, un altro owner della stessa route, una ragione terminale già
+// arrivata. Sono i casi in cui la lettura non riguarda più questa vista.
+describe('contesto cambiato: la lettura differita non parte', () => {
+  const peerTimeout = () => {
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504;
+    e.data = { error: 'peer non risponde entro il timeout', reason: 'federation-peer-timeout' };
+    return e;
+  };
+
+  it('una risposta arrivata dopo la chiusura della vista non arma nulla', async () => {
+    let rigetta;
+    mocks.fleetUp.mockImplementation(() => new Promise((resolve, reject) => { rigetta = reject; }));
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(1));
+    vi.useFakeTimers();
+    vista.unmount();
+    await act(async () => {
+      rigetta(peerTimeout());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'a deferred read survived the closed view').toBe(prima);
+  });
+
+  it('una ragione terminale già arrivata toglie senso alla lettura', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    mocks.readFleetRoute.mockReturnValue({
+      available: true,
+      cells: [{ cell: 'TestCell', tmuxSession: 'cloud-TestCell', terminal: { reason: 'lease-lost', ts: 1 } }],
+    });
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'a cell with a terminal reason needed no reread').toBe(prima);
+  });
+});

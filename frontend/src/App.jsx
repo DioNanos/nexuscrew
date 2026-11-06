@@ -34,6 +34,7 @@ import {
 import { isValidLabel } from './lib/settings-model.js';
 import { runFleetPowerAction } from './lib/fleet-action-notice.js';
 import { createDeferredReread } from './lib/deferred-reread.js';
+import { puoRileggere } from './lib/reread-guard.js';
 import useActionNotice from './hooks/useActionNotice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
@@ -1011,7 +1012,15 @@ export default function App() {
   // alla volta per tupla, e nessuna che sopravviva alla pagina.
   const rilettureDifferite = useRef(null);
   if (!rilettureDifferite.current) rilettureDifferite.current = createDeferredReread();
-  useEffect(() => () => { if (rilettureDifferite.current) rilettureDifferite.current.annullaTutto(); }, []);
+  // Il contesto che una lettura differita deve poter ancora vedere: la
+  // credenziale e l'owner della route. Se cambiano fra la richiesta e la
+  // scadenza, la lettura non riguarda più questa vista.
+  const contestoRiletture = useRef({ token: null, owners: new Map() });
+  contestoRiletture.current = {
+    token,
+    owners: new Map((deckOwners || []).map((o) => [JSON.stringify(o.route || []), o.instanceId])),
+  };
+  useEffect(() => () => { if (rilettureDifferite.current) rilettureDifferite.current.chiudi(); }, []);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
@@ -1414,9 +1423,19 @@ export default function App() {
     // risposta persa: la sessione c'era già e la lettura immediata la vede.
     // Il codice lo restituisce l'helper come `benign.benign`, non `benign.code`.
     if (benign && benign.benign !== 'FLEET_SESSION_DUPLICATE') {
+      const routeKey = JSON.stringify(route);
+      const atteso = {
+        token,
+        owner: contestoRiletture.current.owners.get(routeKey) || null,
+      };
       rilettureDifferite.current.programma(
         `${route.length ? route.join('/') : 'local'}|${cell}`,
-        () => refreshFleetRoute(route, token),
+        () => {
+          const ora = contestoRiletture.current;
+          const contesto = { token: ora.token, owner: ora.owners.get(routeKey) || null };
+          if (!puoRileggere({ atteso, contesto, snapshot: readFleetRoute(route, token), cell })) return;
+          refreshFleetRoute(route, token);
+        },
       );
     }
     if (!benign) {
