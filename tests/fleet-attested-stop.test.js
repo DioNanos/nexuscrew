@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const { atomicWrite, loadDefinitions, leggiIdentitaProc } = require('../lib/fleet/definitions.js');
+const { atomicWrite, loadDefinitions, leggiIdentitaProc, leggiStarttimeProc } = require('../lib/fleet/definitions.js');
 const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { startLeaseClient } = require('../lib/fleet/lease-client.js');
@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, serverPid = 99999 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -197,6 +197,7 @@ const BLOCCA_HAS = ${JSON.stringify(markerBloccaHas)};
 const BLOCCA_HAS_CLI = ${JSON.stringify(markerBloccaHasCli)};
 const RITARDA_HAS_CLI = ${JSON.stringify(markerRitardaHasCli)};
 const PANE_PID = ${paneChild.pid};
+const SERVER_PID = String(${serverPid});
 const leggi = () => { try { return JSON.parse(fs.readFileSync(STATO, 'utf8')); } catch (_) { return []; } };
 const scrivi = (l) => fs.writeFileSync(STATO, JSON.stringify(l));
 const nota = (c) => fs.appendFileSync(LOG, c + '\\n');
@@ -284,7 +285,7 @@ if (cmd(args) === 'display-message') {
   const iF = args.indexOf('-F');
   const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
   if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
-  if (fmt.includes('pane_pid')) { process.stdout.write('99999\\t' + PANE_PID + '\\n'); process.exit(0); }
+  if (fmt.includes('pane_pid')) { process.stdout.write(SERVER_PID + '\\t' + PANE_PID + '\\n'); process.exit(0); }
   if (fmt.includes('pane_dead')) { process.stdout.write('0\\t0\\t%7\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%7\\n'); process.exit(0);
 }
@@ -321,6 +322,7 @@ process.exit(0);
     boot: loadDefinitions(defsPath),
     ...(seamIdentita ? { leggiIdentitaProc: seamIdentita } : {}),
     ...(typeof attestaNuova === 'function' ? { attestaAssenzaNuovaConnessione: attestaNuova } : {}),
+    ...(typeof leggiStarttime === 'function' ? { leggiStarttimeProc: leggiStarttime } : {}),
   });
   t.after(() => {
     try { runtime.shutdown(); } catch (_) {}
@@ -434,6 +436,34 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
     });
   });
 }
+
+// --- cablaggio del seam numerico verso l'attestazione ----------------------
+
+test('cablaggio: l\'attestazione riceve il seam NUMERICO dello starttime, non la lettura ternaria', async (t) => {
+  // Si inietta SOLO il lettore numerico: la funzione di attestazione e' quella
+  // vera. Se il runtime le passa la lettura ternaria ({esito, nascita}) invece
+  // del numero, il confronto d'identita' fallisce sempre e l'attestazione non
+  // arriva nemmeno al socket.
+  const chiamate = [];
+  const w = creaMondo(t, {
+    serverPid: process.pid,
+    leggiStarttime: (pid) => { chiamate.push(pid); return leggiStarttimeProc(pid); },
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.ok(chiamate.length > 0,
+    'il seam numerico non e\' stato interrogato: il cablaggio passa ancora la lettura ternaria');
+  assert.equal(err.data.attestazione, 'socket',
+    'superata l\'identita\' ci si ferma al socket assente, non su «identita»');
+});
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
 
