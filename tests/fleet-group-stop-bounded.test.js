@@ -179,6 +179,37 @@ test('scansione a tempo: il ciclo cede l\'event loop mentre enumera (battito)', 
   assert.equal(battitoDurante, true, 'un timer deve poter scattare durante la scansione');
 });
 
+test('cancellazione: il budget scaduto abortisce la lettura e nessun risultato tardivo', async (t) => {
+  const root = procSintetica(t, vociEstranee(10));
+  const segnali = [];
+  let completate = 0;
+  const inizio = Date.now();
+  const foto = await gruppo.osservaProduzioneLimitata({
+    noti: [], pgrpTarget: PGRP_BERSAGLIO, procRoot: root,
+    limite: Date.now() + 25,
+    monoNow: () => Date.now(),
+    leggiStat: (percorso, opts) => new Promise((resolve, reject) => {
+      segnali.push(opts && opts.signal);
+      const timer = setTimeout(() => { completate += 1; resolve('1 (syn) S 1 1 1'); }, 100);
+      if (opts && opts.signal) {
+        opts.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          const e = new Error('aborted');
+          e.name = 'AbortError';
+          reject(e);
+        }, { once: true });
+      }
+    }),
+  });
+  assert.notEqual(foto.qualita, 'noti');
+  assert.ok(Date.now() - inizio < 500, 'il chiamante deve rientrare dal budget');
+  assert.ok(segnali.length > 0, 'il lettore deve ricevere un signal di cancellazione');
+  assert.ok(segnali.some((sig) => sig && sig.aborted === true),
+    'il signal deve essere abortito alla scadenza');
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(completate, 0, 'nessuna lettura deve completarsi dopo il ritorno');
+});
+
 // --- i siti di osservazione nel coordinatore --------------------------------
 
 function ctxStop({ osserva, deadlineMs = 400, monoNow = () => Date.now() }) {
