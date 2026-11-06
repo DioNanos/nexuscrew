@@ -225,13 +225,25 @@ exec ${TMUX} "$@"
   assert.equal(up1.prompt.launchId, lancio1, 'la tupla di up e\' del lancio del payload');
   const attesaFino = Date.now() + 60000;
   let tupla = null;
+  let ultimaTupla = null;
   while (Date.now() < attesaFino) {
     const st = await fleet.status();
     const cella = (st.cells || []).find((c) => c.cell === 'Mai');
+    if (cella) ultimaTupla = cella.promptDelivery === undefined ? null : cella.promptDelivery;
     if (cella && cella.promptDelivery && cella.promptDelivery.state === 'submitted') { tupla = cella.promptDelivery; break; }
     await new Promise((r) => setTimeout(r, 250));
   }
-  assert.ok(tupla, 'terminale submitted non osservato entro il limite');
+  if (!tupla) {
+    // Diagnostica del timeout: l'ultima tupla osservata e il testo del pane
+    // (solo testo, nessun segreto) dicono se il client TUI non accetta il
+    // prompt (onboarding, dialogo) o se lo stato non si propaga.
+    const cattura = spawnSync(TMUX, ['capture-pane', '-p', '-t', '=cloud-Mai'], {
+      encoding: 'utf8', timeout: 5000, env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },
+    });
+    process.stderr.write(`[diagnostica first-up] ultimo promptDelivery: ${JSON.stringify(ultimaTupla)}\n`);
+    process.stderr.write(`[diagnostica first-up] pane cloud-Mai (exit ${cattura.status}):\n${String(cattura.stdout || cattura.stderr || '').slice(0, 4000)}\n`);
+  }
+  assert.ok(tupla, `terminale submitted non osservato entro il limite; ultimo promptDelivery: ${JSON.stringify(ultimaTupla)}`);
   assert.equal(tupla.launchId, lancio1);
   assert.equal(tupla.generation, 0);
   const chat = () => richieste.filter((u) => String(u).includes('/chat/completions')).length;
