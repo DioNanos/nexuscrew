@@ -22,7 +22,8 @@ const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-
 // Il binario pinnato e' il client TUI: la build headless esce subito e non
 // apre il layout. Assente = fallimento, mai uno skip.
 const REALE = process.env.NEXUSCREW_VL_REAL_BIN || '';
-const SHA_LANCIO = 'fcf9e75f1537a72c61af0a7a1ce47f9899c5a1ac3c5c35838ab37c7ab82a645a';
+// VL 0.4.2, build x86_64 completa con TUI (release): il client delle celle VL.
+const SHA_LANCIO = '52a6862d5b01607ab3988df56aa10a59c1e051ae22a7e1ca92d5af64866a1fc9';
 const TMUX = '/usr/bin/tmux';
 const LIVE = 6083;
 const PROMPT = 'Leggi CLAUDE.md e parti';
