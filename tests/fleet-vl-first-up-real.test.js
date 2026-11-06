@@ -176,6 +176,17 @@ exec ${TMUX} "$@"
   let serverPid = null;
   t.after(async () => {
     try { await fleet.down('Mai'); } catch (_) { /* gia' giu' */ }
+    // Cleanup anche sul rosso: se il test fallisce prima del down resterebbe un
+    // host VL orfano. Dopo il down del fleet si ferma comunque l'host sul server
+    // root di QUESTO test (best-effort, tetto 10 s, solo il root del test).
+    try {
+      if (fs.existsSync(hostRoot)) {
+        spawnSync(REALE, ['shutdown', '--server-root', hostRoot], {
+          encoding: 'utf8', timeout: 10000, shell: false,
+          env: { HOME: home, PATH: '/usr/bin:/bin', LC_CTYPE: 'C.UTF-8' },
+        });
+      }
+    } catch (_) { /* nessun host da fermare */ }
     try { await fleet.close(); } catch (_) { /* chiuso */ }
     try { await broker.close(); } catch (_) { /* chiuso */ }
     server.close();
