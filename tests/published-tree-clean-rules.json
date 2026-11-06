@@ -72,7 +72,7 @@
       "reason": "marcatore di debug lasciato nel sorgente o nel bundle (DBG-, DBG-M2, ...)"
     },
     {
-      "source": "\\bNC_(?!(?:SUPERVISOR_OPT|SEND|TELE_SESSIONE)\\b)[A-Z0-9][A-Z0-9_]*\\b",
+      "source": "\\bNC_(?!(?:SUPERVISOR_OPT|SEND|TELE_SESSIONE|VL_REAL_BIN|VL_REAL_BIN_SHA256|VL_OLD_REAL_BIN|VL_STATUS_BIN|CHILD_TRACE)\\b)[A-Z0-9][A-Z0-9_]*\\b",
       "flags": "",
       "reason": "internal work-order code"
     },
