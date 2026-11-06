@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const args = process.argv.slice(2);
 const st = JSON.parse(fs.readFileSync(${JSON.stringify(stato)}, 'utf8'));
 if (args.includes('list-sessions')) {
-  if (st.errore) { process.stderr.write(st.errore + '\\n'); process.exit(1); }
+  if (st.errore) { process.stderr.write(st.errore + '\\n'); process.exit(st.codice || 1); }
   if (st.viva) process.stdout.write(${JSON.stringify(SESSIONE)} + '\\t1\\n');
   process.exit(0);
 }

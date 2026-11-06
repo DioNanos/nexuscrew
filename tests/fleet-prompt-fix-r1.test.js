@@ -104,3 +104,33 @@ test('R1 CP08: shutdown during the immediate consultation must not create a new 
  try{const up=w.runtime.up('Dev');await entered;w.runtime.shutdown();release();await up;await delay(80);const ev=d.logs().records.filter(x=>x.code==='PROMPT_DELIVERY_TERMINAL');assert.equal(ev.length,0,'observer was created only after shutdown had already aborted all cycles');}
  finally{if(release)release();w.runtime.shutdown();w.cleanup();}
 });
+
+test('R1 01: uscita anomala o lettura interrotta non provano la chiusura, nemmeno con il messaggio di assenza', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } }); registro(w);
+  try {
+    // il messaggio di assenza ma con uscita diversa da 1 (processo interrotto)
+    w.imposta({ viva: false, errore: 'no server running on /tmp/fixture', codice: 137 });
+    assert.deepEqual((await cell(w, lease())).promptDelivery, { state: 'unknown', launchId: L });
+    // assenza vera per socket mancante
+    w.imposta({ viva: false, errore: 'error connecting to /tmp/fixture/default (No such file or directory)', codice: 1 });
+    assert.equal((await cell(w, lease())).promptDelivery, undefined);
+    // timeout / errore di esecuzione senza messaggio
+    w.imposta({ viva: false, errore: 'terminated', codice: 124 });
+    assert.deepEqual((await cell(w, lease())).promptDelivery, { state: 'unknown', launchId: L });
+  } finally { clean(w); }
+});
+
+test('R1 02: la stessa definizione mutata, su una NUOVA istanza dopo il restart, non nasconde la consegna ammessa', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } }); registro(w);
+  try {
+    assert.equal(activity.scriviRecordPrompt(w.dirSessione, { version: 1, event: 'prompt-delivery', launchId: L, generation: 0, state: 'submitted', ts: Date.now() }), true);
+    const defs = JSON.parse(fs.readFileSync(w.defsPath, 'utf8'));
+    defs.cells[0].prompt = '';
+    fs.writeFileSync(w.defsPath, JSON.stringify(defs));
+    const l = lease(); l.status = () => ({ state: 'none' });
+    assert.deepEqual((await cell(w, l)).promptDelivery, { state: 'unknown', launchId: L });
+    // un lancio senza alcun record di consegna e con definizione non applicabile: nulla da mostrare
+    fs.rmSync(path.join(w.dirSessione, `prompt-${L}.json`));
+    assert.equal((await cell(w, l)).promptDelivery, undefined);
+  } finally { clean(w); }
+});
