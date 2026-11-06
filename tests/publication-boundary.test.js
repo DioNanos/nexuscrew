@@ -504,6 +504,43 @@ test('workcodes: a code in the file name fails the verifier with clean content',
   }
 });
 
+// Il confine conta: un codice attaccato a un separatore (`_`, come in
+// `fixture_nc-...`) non ha un confine di parola davanti, quindi la versione a
+// `\b` lo lasciava passare. Il confine ora e' `[a-z0-9]`, come nel test
+// dell'albero versionato.
+test('workcodes: a code right after an underscore in the file name fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-underscore-'));
+  try {
+    const files = [
+      { rel: 'tests/fixture_nc-d582.test.js', data: 'const x = 1;\n' },
+      { rel: 'docs/notes_sentinella-d582.md', data: 'nota neutra\n' },
+    ];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /internal work-order code in a file name/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: a code glued to another word in the file name fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-glued-'));
+  try {
+    const files = [{ rel: 'lib/xfleet-d558.js', data: 'module.exports = {};\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /xfleet-d558/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Il positivo: i nomi neutri non sono codici e non devono accendere il gate.
 test('workcodes: neutral fixture and file names pass', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-neutral-'));

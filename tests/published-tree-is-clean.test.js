@@ -405,6 +405,9 @@ test('i divieti sui percorsi mordono i casi giusti e solo quelli', () => {
     ['tests/fleet-vl-bootstrap-claim-runtime.test.js', false, 'nome neutro dopo il rename'],
     ['tests/nc-claim-outcome.test.js', false, 'nome neutro dopo il rename'],
     ['lib/chat/chat-routes.js', false, 'codice'],
+    ['tests/fixture_nc-d582.test.js', true, 'codice dopo un underscore'],
+    ['docs/notes_sentinella-d582.md', true, 'codice dopo un underscore'],
+    ['lib/xfleet-d558.js', true, 'codice attaccato a un altra parola'],
   ];
   const sbagliati = casi
     .filter(([rel, atteso]) => morde(rel) !== atteso)

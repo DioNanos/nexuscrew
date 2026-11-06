@@ -87,7 +87,7 @@
       "reason": "internal layer finding marker in the published payload"
     },
     {
-      "source": "\\b(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}[a-z0-9_-]*|fleet-(?:[a-z0-9_-]*-)?d[0-9]{3,4}[a-z0-9_-]*)",
+      "source": "(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}|(?:[a-z0-9]+-)+d[0-9]{3,4})[a-z0-9_-]*",
       "flags": "i",
       "reason": "internal work-order code in a fixture or file name"
     }
