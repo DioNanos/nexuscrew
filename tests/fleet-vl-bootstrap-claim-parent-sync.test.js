@@ -1,11 +1,11 @@
 'use strict';
-// D-558 FIX2a (F3 / residuo R2, audit finale DevAuditor) — la catena dei
+// La catena dei
 // parent della claim è durevole a OGNI acquisizione, non solo quando
 // l'anello è appena stato creato. L'esistenza della directory da sola non
 // attesta il fsync precedente: un tentativo incompleto (creazione riuscita,
 // fsync del parent fallito) lascia la catena sul disco e il tentativo
 // successivo deve comunque dimostrare la barriera di durabilità.
-// Controprova dell'audit: EIO persistente su ogni fsync del parent HOME;
+// Controprova: EIO persistente su ogni fsync del parent HOME;
 // primo launch → claim-unavailable; secondo launch → oggi eligible:true (il
 // difetto), con la correzione di nuovo claim-unavailable.
 
@@ -21,7 +21,7 @@ function tmpHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558f3-'));
 }
 
-// EIO selettivo sui fsync (stesso trucco della suite D-558): i descriptor
+// EIO selettivo sui fsync (stesso trucco di questa suite): i descriptor
 // vengono tracciati all'open, `colpa(path)` decide quali path falliscono.
 // Conta anche i fsync RIUSCITI per path, così un test può pretendere che la
 // barriera sia stata rifatta davvero (non solo dichiarata).

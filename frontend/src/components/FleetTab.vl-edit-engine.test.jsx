@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event';
 
 // An EDITED vl.native engine: the list a saved engine carries was read for ITS
 // binary, catalog and fixed profile. While the form changes any of them the
-// datalist must not keep offering that list (the audit's R2: the old profile
+// datalist must not keep offering that list (the old profile
 // ids stayed visible through the modelOptions fallback). Back at the saved
 // values, the node's own list is the datalist again. Other clients keep the
 // plain model list they have always had.

@@ -1,5 +1,5 @@
 'use strict';
-// D-558 pezzo 3 — il DOWN con stop protetto. Il comando amministrativo porta
+// Il DOWN con stop protetto. Il comando amministrativo porta
 // `--expected <tuple>` con la tuple REGISTRATA NEL CONTESTO ALL'UP (pezzo 2):
 // il down ferma solo l'host che il lancio ha attestato. I rifiuti protetti
 // (peer_mismatch, peer_unknown, expected_invalid) sono un NO assoluto: zero

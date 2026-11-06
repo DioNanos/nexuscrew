@@ -1,5 +1,5 @@
 'use strict';
-// D-558 FIX2a (F2, audit finale DevAuditor) — un esito `host-stopped-clean`
+// Un esito `host-stopped-clean`
 // del modulo host è uno stop PULITO: il controllo preliminare del down deve
 // accettarlo come accetta `not-vl` e `host-already-stopped`, e il lancio deve
 // proseguire fino alla chiusure durevole (barriere, teardown, record) così

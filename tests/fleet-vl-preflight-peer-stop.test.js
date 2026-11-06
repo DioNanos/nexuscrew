@@ -1,5 +1,5 @@
 'use strict';
-// Preflight di capacità peer/stop PRIMA dello spawn (D-558 F1 §3, pezzo 1).
+// Preflight di capacità peer/stop PRIMA dello spawn.
 // Lo status del binario PINNATO deve dichiarare ENTRAMBE le capacità versionate
 // del ciclo peer/stop (host_peer_identity_v1 e host_stop_expected_v1) E
 // peer_identity_support uguale a "supported": sono fatti del binario, esposti
@@ -265,7 +265,7 @@ process.exit(0);
     now: () => 0, monotonicNow: () => Date.now(),
     // Owner hex32 della tuple attestata: con `local` la tuple non e' valida
     // e l'up e' rifiutato per contratto. I test di identita' del nodo
-    // (audit finale F1-01) lo sostituiscono con null / 'local' / funzione.
+    // (controprova) lo sostituiscono con null / 'local' / funzione.
     identityOwnerInstanceId: owner === undefined ? OWNER_INSTANCE_ID : owner,
   };
   const base = () => vlCellBaseDir(home, OWNER_INSTANCE_ID, 'CellaPre');
@@ -536,7 +536,7 @@ exit 0
   assert.equal(righe.some((r) => /host-stop|shutdown/.test(r)), false);
 });
 
-// --- Identita' owner del nodo PRIMA dello spawn (audit finale F1-01) --------
+// --- Identita' owner del nodo PRIMA dello spawn (controprova) ---------------
 // Owner assente o di forma non valida: il rifiuto e' un PREFLIGHT visibile,
 // prima di riserva/contesto/broker/new-session — zero effetti. Prima del fix
 // il fallback `local` portava il lancio fino a sessione creata e ticket

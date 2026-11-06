@@ -1,5 +1,5 @@
 'use strict';
-// D-558 FIX1b — R3 dell'audit, con la regola PER AVVIO di FIX1a: esito
+// Esito della consegna per OGNI avvio (la regola vale a ogni up): stato
 // PERSISTENTE della claim per avvio (pending/submitted/failed/uncertain),
 // motivo (notReady compreso) nel risultato di up(), skip normale distinto dal
 // primo prompt non consegnato in questo avvio. Runtime REALE con fixture

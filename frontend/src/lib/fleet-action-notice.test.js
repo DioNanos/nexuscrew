@@ -118,12 +118,12 @@ describe('upActionNotice — avvio degradato MCP (claude gestite)', () => {
   });
 });
 
-// D-558 FIX1b (R3): l'esito della consegna del prompt iniziale vl di un
+// L'esito della consegna del prompt iniziale vl di un
 // avvio viaggia in vlBootstrap (closed enum). failed / uncertain /
 // not-delivered generano l'avviso; lo skip NORMALE (respawn/riattacco nello
 // stesso avvio) e submitted mai. Il recupero detto nel testo è riavviare la
 // cella: nessun reinvio automatico nello stesso avvio.
-describe('upActionNotice — esito bootstrap vl per avvio (D-558 FIX1b)', () => {
+describe('upActionNotice — esito bootstrap vl per avvio', () => {
   it('failed -> avviso i18n locale con recovery = riavvio della cella', () => {
     const n = upActionNotice({
       ok: true, cell: 'Dev', session: 'work-vl',

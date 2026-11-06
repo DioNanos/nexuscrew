@@ -376,7 +376,7 @@ test('unit: fsync della DIRECTORY che fallisce (EIO) — l\'errore sale, nessuna
   assert.throws(() => host.scriviContesto(stateDir, baseRecord(root, '/pin/vl'), impl), (e) => e.code === 'EIO');
 });
 
-// --- La catena si RIQUALIFICA a ogni scrittura (audit finale F1-02) --------
+// --- La catena si RIQUALIFICA a ogni scrittura (controprova) ----------------
 // L'esistenza di una directory non attesta un fsync riuscito: una catena
 // superstite a un EIO (o creata a meta' da un'istanza precedente) si
 // ri-sincronizza per intero, dal confine `.nexuscrew` al stateDir, e il

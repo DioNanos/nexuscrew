@@ -3,7 +3,7 @@
 // e la rotta HTTP di prodotto (POST /api/fleet/down), su un server condiviso
 // DI TEST: TMUX_TMPDIR privato di questo file, mai il server della flotta.
 //
-// Che cosa dimostra, nell'ordine (design del server condiviso, §5):
+// Che cosa dimostra, nell'ordine (comportamento del server condiviso):
 //   1. up() nasce sul socket condiviso e la cella resta raggiungibile da
 //      OGNI superficie senza -S: has-session, il paste di produzione e il
 //      listing di flotta vedono cloud-X;

@@ -1,5 +1,5 @@
 'use strict';
-// D-558 FIX2c — contratto di `vl host status --json` contro il BINARIO VERO.
+// Contratto di `vl host status --json` contro il BINARIO VERO.
 //
 // Perche' esiste: la qualifica d'isolamento legge dal JSON due campi
 // (`declared_pid`, `pid_number_in_use`). Il test di FIX2b usava un `vl` finto con

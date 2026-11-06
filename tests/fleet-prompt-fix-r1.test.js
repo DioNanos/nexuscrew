@@ -1,5 +1,5 @@
 'use strict';
-// 0.9.80 strato 2c, fix R1: le otto controprove dell'audit come test del
+// Le otto controprove della consegna del prompt come test del
 // repo (stesso comportamento osservato, nessuna correzione al prodotto qui).
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),net=require('node:net'),Module=require('node:module');
 const os=require('node:os');

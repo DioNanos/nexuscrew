@@ -1,9 +1,9 @@
 'use strict';
-// D-558 FIX1a — consegna del prompt a OGNI avvio, provata sul runtime REALE.
+// Consegna del prompt a OGNI avvio, provata sul runtime REALE.
 // Fixture fleet-vl-session (fake vl + fake tmux a stato vero + broker che
 // cattura il payload): la decisione per avvio attraversa preflight, riserva
 // della root, claim e payload. Il paste è del supervisore (single-owner,
-// provato con seam in fleet-vl-bootstrap-d558.test.js): qui "un paste" è
+// provato con seam in fleet-vl-bootstrap-claim.test.js): qui "un paste" è
 // l'incarico che il runtime consegna al supervisore — UN payload con
 // eligible:true per avvio — e il report del supervisore torna al chiamante.
 // Nessun tmux/vl/cella vera: HOME isolata in /tmp.

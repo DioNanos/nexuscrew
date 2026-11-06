@@ -1,5 +1,5 @@
 'use strict';
-// D-549 S4b — lo stop dell'host passa da `vl internal host-stop` quando lo
+// Lo stop dell'host passa da `vl internal host-stop` quando lo
 // status dichiara `host_stop_v1`; `vl shutdown` resta solo per chi non la
 // dichiara. Il binario è un finto: nessun segnale a un host vero, il timeout
 // uccide solo il CLI creato dal test.

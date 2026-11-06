@@ -1,5 +1,5 @@
 'use strict';
-// D-549 S4b — lo stop con il VL VERO: `vl server --foreground` come host reale,
+// Lo stop con il VL VERO: `vl server --foreground` come host reale,
 // `fermaHost` sul binario pinnato, `host status` e `internal host-stop` reali.
 //
 // Il binario non e' di questo repo: lo dà NC_VL_REAL_BIN (costruito dal commit di

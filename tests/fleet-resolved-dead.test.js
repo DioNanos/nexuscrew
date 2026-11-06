@@ -193,7 +193,7 @@ process.exit(0);
   const mgr = leaseManager || createLeaseManager({ home });
   // faultStatSupervisore: seam che guasta la lettura dello stat SOLO per il
   // pid del supervisore (EACCES, EIO, stat malformato) — gli altri pid si
-  // leggono per davvero. E' la controprova dell'audit: senza lettura ternaria
+  // leggono per davvero. E' la controprova: senza lettura ternaria
   // un qualunque errore di lettura veniva promosso a morte provata.
   const leggiIdentitaSeam = typeof faultStatSupervisore === 'function'
     ? (pid) => leggiIdentitaProc(pid, pid === paneChild.pid
@@ -353,7 +353,7 @@ const errConCodice = (code) => { const e = new Error(code); e.code = code; retur
 // In questi tre negativi il supervisore e' DAVVERO morto (senza fault il
 // recupero chiuderebbe con resolved-dead), e la lettura del suo stat e'
 // guastata nel modo indicato: la congiunzione delle tre prove NON si
-// completa e il record non si tocca. E' la controprova dell'audit: prima
+// completa e il record non si tocca. E' la controprova: prima
 // della lettura ternaria un errore di lettura qualsiasi valeva «morto
 // provato» e il record veniva rimosso.
 const letturaGuastaNonProva = async (t, faultStat, motivo) => {

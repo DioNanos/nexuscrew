@@ -20,7 +20,7 @@ const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-
 // un broker senza listener faceva uscire cell-exec subito: spento il
 // remain-on-exit diagnostico, tmux chiudeva la sessione prima del secondo up()
 // e il 409 dipendeva dall'istante in cui il canale registrava la morte del
-// proprio server (referto DevAuditor 2026-10-27: 3-4 fail su 15,
+// proprio server (osservato in una corsa precedente: 3-4 fallimenti su 15,
 // «Missing expected rejection»).
 function createHarness(options = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dup-'));

@@ -1,5 +1,5 @@
 'use strict';
-// D-558 FIX2b (F1, audit finale DevAuditor) — il RUNTIME calcola l'isolamento
+// Il RUNTIME calcola l'isolamento
 // dell'host VL del lancio: probe dello stato sul binario pinnato, osservazione
 // KERNEL del peer dichiarato, confronto con la tuple registrata nel contesto v2
 // al primo sguardo, giudizio ternario (isolato / nel-gruppo / ignoto) passato a
@@ -300,7 +300,7 @@ const conta = (file, cosa) => fs.readFileSync(file, 'utf8').split('\n').filter((
 const stops = (w) => conta(w.vllog, 'stop:internal') + conta(w.vllog, 'stop:legacy');
 const sessioniVive = (w) => fs.readFileSync(w.statoPath, 'utf8').split('\n').filter(Boolean);
 
-// 1. Il ciclo promesso dal recupero D-558: host vivo e ISOLATO (kernel vero,
+// 1. Il ciclo promesso dal recupero: host vivo e ISOLATO (kernel vero,
 //    nessun seam) → down pulito → l'host esce davvero → nuovo up ammesso.
 test('F1: host vivo isolato → down pulito, host uscito, up riammesso', async (t) => {
   const w = mondo(t);

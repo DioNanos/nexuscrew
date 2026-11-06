@@ -1,5 +1,5 @@
 'use strict';
-// D-558 — prove minime del bootstrap vl: classifier VL 0.4, claim persistente,
+// Prove minime del bootstrap vl: classifier VL 0.4, claim persistente,
 // consegna single-owner a generation 0, skip espliciti, regressioni kimi/claude.
 // Tutto con seam iniettati: nessun tmux vero, HOME isolata in /tmp.
 
@@ -95,14 +95,14 @@ test('vlPaneReadiness riconosce idle e degrada a timeout senza attendere per sem
 
 // ---------------------------------------------------------------- (a/R4) candidata corrente
 
-test('R4: riga corrente non riconosciuta — la ready PRECEDENTE non vince (controprova audit 1)', () => {
+test('R4: riga corrente non riconosciuta — la ready PRECEDENTE non vince (controprova 1)', () => {
   // 'ask' non e' parola di faccia ('asking' troncata): la superficie corrente
   // non e' interpretabile -> unknown, MAI la ready vecchia del transcript.
   assert.equal(pd.vlCurrentFace('VL (•‿•) ready\nrisposta\nVL [?_?] ask\n'), 'unknown');
   assert.equal(pd.classifyPane('VL (•‿•) ready\nrisposta\nVL [?_?] ask\n', 'vl'), 'unknown');
 });
 
-test('R4: candidata 0.4 presente ma non riconosciuta — MAI fallback legacy 0.3 (controprova audit 2)', () => {
+test('R4: candidata 0.4 presente ma non riconosciuta — MAI fallback legacy 0.3 (controprova 2)', () => {
   const text = 'vivling [o] e12 ↑3 esc quit · ^y yield\nVL [?_?] ask\n';
   assert.equal(pd.classifyPane(text, 'vl'), 'unknown', 'nessun ready via legacy con candidata 0.4 sopra');
   assert.equal(pd.vlPaneIdle(text), false);
@@ -218,7 +218,7 @@ test('claim: catena NC non materializzabile — claim-unavailable, fail-closed, 
 
 // Inietta EIO selettivo sui fsync: `colpa(path)` decide quali path falliscono.
 // I descriptor restano tracciati all'open, cosi' il fault colpisce file,
-// directory o parent in modo mirato (controprova R2 dell'audit).
+// directory o parent in modo mirato (controprova).
 function injectFsyncFailure(t, colpa) {
   const realOpen = fs.openSync;
   const realFsync = fs.fsyncSync;
@@ -258,8 +258,8 @@ test('R2: EIO sul fsync del FILE della claim — fail-closed claim-unavailable, 
 test('R2: EIO sul fsync della DIRECTORY che contiene la claim — fail-closed, nessun paste, claim NON cancellata', (t) => {
   const home = tmpHome();
   const base = { home, ownerInstanceId: 'local', cellId: 'C' };
-  // la catena esiste GIA\' (materializzata da un avvio precedente). D-558
-  // FIX2a (F3): l'anello `nc` viene sincronizzato a OGNI acquisizione, anche
+  // la catena esiste GIA\' (materializzata da un avvio precedente).
+  // La regola: l'anello `nc` viene sincronizzato a OGNI acquisizione, anche
   // PRIMA di aprire il file — il fault quindi scatta SOLO quando la claim e'
   // gia' sul disco (fsync della directory DOPO la creazione del file).
   assert.equal(decideVlBootstrap({ ...base, launchId: '0000000000000000' }).eligible, true);
