@@ -242,6 +242,9 @@ test('supervisore: crash dopo l\'effetto -> resta pending, MAI submitted dedotto
     // pending (dentro la consegna) e resta il solo marcatore volatile sul pane.
     const w = harness({
       promptOutcome: esito,
+      // UNA sola generazione: un riavvio ammetterebbe la gen1, e il lettore
+      // dichiara (giustamente) unknown/generation-not-recorded.
+      unaGenerazione: true,
       // Budget largo (orologio reale): la lettura deve vedere pending, non un
       // deadline-exceeded d'ambiente.
       restartPrompt: { readyWaitMs: 60000 },
@@ -626,4 +629,86 @@ test('supervisore: una scrittura corta del pending si completa e la consegna pro
     await a.fire(); await a.ctl.settled;
     assert.equal(a.consegne.length, 1);
   } finally { fs.writeSync = originale; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- Fix R2: ammissione fallita di una generazione nuova -------------------------
+// Il lettore non restituisce MAI il successo della generazione precedente come
+// esito corrente dopo che il proprietario ha ammesso la generazione successiva.
+function rotturaApertura(dirPrefisso) {
+  const originale = fs.openSync;
+  fs.openSync = (p, flags, ...a) => {
+    if (flags === 'wx' && String(p).startsWith(dirPrefisso + path.sep)) throw new Error('inject open');
+    return originale(p, flags, ...a);
+  };
+  return () => { fs.openSync = originale; };
+}
+function terminaleGen(generation, over = {}) {
+  return {
+    version: 1, event: 'prompt-delivery', launchId: LAUNCH, generation,
+    state: 'submitted', ts: Date.now(), ...over,
+  };
+}
+
+test('lettore: gen0 submitted + ammissione gen1 con pending fallito -> unknown, mai il vecchio submitted', async () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(0)), true);
+    const gate = { ultimaGenerazioneAmmessa: 0 };
+    const ripristina = rotturaApertura(dir);
+    let a;
+    try { a = ammissione(root, { generation: 1, gate }); } finally { ripristina(); }
+    assert.equal(gate.ultimaGenerazioneAmmessa, 1, 'il fence e\' a 1');
+    assert.ok(a.errs.some((m) => m.includes('delivery withheld')));
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    assert.deepEqual(letto, { state: 'unknown', reason: 'generation-not-recorded', launchId: LAUNCH, generation: 1 });
+    await a.fire(); await a.ctl.settled;
+    assert.equal(a.consegne.length, 0, 'zero paste');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore: stesso caso per il terminale diretto di una generazione esclusa dalla policy', () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(0)), true);
+    const ripristina = rotturaApertura(dir);
+    try {
+      ammissione(root, { generation: 1, config: { reprompt: false, client: '' } });
+    } finally { ripristina(); }
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    assert.equal(letto.state, 'unknown');
+    assert.equal(letto.reason, 'generation-not-recorded');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore: ammissione gen1 riuscita -> il record della gen1 e\' quello corrente (pending, poi terminale)', async () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(0)), true);
+    const a = ammissione(root, { generation: 1, gate: { ultimaGenerazioneAmmessa: 0 } });
+    const pending = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    assert.equal(pending.state, 'pending');
+    assert.equal(pending.generation, 1);
+    await a.fire(); await a.ctl.settled;
+    const finale = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    assert.equal(finale.state, 'submitted');
+    assert.equal(finale.generation, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore: l\'autorita\' puo\' arrivare anche dal chiamante (altro processo): lancio.generation', () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(0)), true);
+    const leggi = (lancio) => activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', lancio);
+    assert.equal(leggi({ launchId: LAUNCH, generation: 0 }).state, 'submitted', 'generazione coincidente');
+    assert.deepEqual(leggi({ launchId: LAUNCH, generation: 1 }),
+      { state: 'unknown', reason: 'generation-not-recorded', launchId: LAUNCH, generation: 1 });
+    // Un record PIU' NUOVO del contesto del chiamante non e' contraddetto da esso.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(2, { state: 'unknown', reason: 'delivery-unknown' })), true);
+    assert.equal(leggi({ launchId: LAUNCH, generation: 1 }).generation, 2);
+    // Una generazione dichiarata non valida e' un input invalido, non un'assenza.
+    for (const generation of [-1, 1.5, '1', NaN]) {
+      assert.equal(leggi({ launchId: LAUNCH, generation }), null, String(generation));
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
