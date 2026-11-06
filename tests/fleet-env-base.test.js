@@ -45,7 +45,7 @@ test('tutto il resto resta com\'e\': COLORTERM, locale, shell, percorsi Termux e
     TMPDIR: '/data/data/com.termux/files/usr/tmp',
     TMUX_TMPDIR: '/data/data/com.termux/files/usr/var/run',
     PATH: '/usr/bin:/bin',
-    HOME: '/home/dag',
+    HOME: '/home/tester',
   };
   assert.deepEqual(env.baseEreditataCella(base), base);
 });
@@ -69,8 +69,8 @@ test('ingressi non validi non fanno esplodere niente', () => {
 
 test('minimalRuntimeEnv NON cambia per gli altri client: TERM dumb resta dumb', () => {
   // La regola C17 vive nella funzione nuova, non nel minimal env condiviso.
-  const m = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/dag', TERM: 'dumb' }, { home: '/home/dag' });
+  const m = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/tester', TERM: 'dumb' }, { home: '/home/tester' });
   assert.equal(m.TERM, 'dumb');
-  const u = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/dag', TERM: 'unknown' }, { home: '/home/dag' });
+  const u = env.minimalRuntimeEnv({ PATH: '/bin', HOME: '/home/tester', TERM: 'unknown' }, { home: '/home/tester' });
   assert.equal(u.TERM, 'unknown');
 });
