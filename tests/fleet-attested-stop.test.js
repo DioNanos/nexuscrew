@@ -454,7 +454,12 @@ test('down su /proc affollato: uscita provata + client morto con la sessione NON
   const recupero = await w.runtime.down('CellaAtt');
   assert.equal(recupero.ok, true);
   assert.equal(recupero.outcome, 'attested-recovery');
-  assert.equal(recupero.killed, false);
+  // Con l'osservazione post-uscita a sonda (kill(-pgrp, 0)) il censimento non
+  // dipende piu' dal numero di voci estranee: il gruppo risulta vuoto, il down
+  // arriva al teardown e il comando kill-session parte. La risposta si perde
+  // con il client morto, quindi il recupero chiude nella stessa down e
+  // `killed` resta true — il comando era partito.
+  assert.equal(recupero.killed, true);
   assert.equal(recupero.host, 'not-vl');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
   assert.equal(w.sessioni().length, 0);
@@ -644,9 +649,15 @@ test('recupero nella stessa down con has-session CLI in timeout: il timeout non 
   // vale assenza (prova 1 mancante): il recupero nella stessa down non
   // chiude e il rifiuto resta quello del giudizio del gruppo.
   fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  // Con la sonda il censimento del gruppo dichiara il vuoto anche con /proc
+  // affollato: il rifiuto non nasce piu' dal giudizio del gruppo ma dal
+  // teardown, il cui comando parte e la cui risposta si perde con il client
+  // morto. Stesso codice (STOP_UNKNOWN), stesso record trattenuto, stessa
+  // assenza di prove: cambia solo il punto in cui la catena si ferma.
   await assert.rejects(
     () => w.runtime.down('CellaAtt'),
-    (e) => e.fleetCode === 'STOP_UNKNOWN' && /stop del gruppo stop-unknown/.test(e.message),
+    (e) => e.fleetCode === 'STOP_UNKNOWN'
+      && /down non dichiarabile.*connessione di controllo persa/.test(e.message),
   );
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
