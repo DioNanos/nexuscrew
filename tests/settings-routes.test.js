@@ -985,3 +985,16 @@ test('attesa: due POST concorrenti -> persist e apply nell\'ordine, senza diverg
   const suDisco = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   assert.equal(suDisco.bootstrapReadyWaitMs, 120000, 'disco e ultimo applicato coincidono');
 });
+
+test('attesa: setter ASINCRONO che rigetta -> 200, salvato, applied null, restart-required', async (t) => {
+  const fleet = fleetFinto({ applica: async () => { throw new Error('synthetic-setter-failure'); } });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200, 'un setter che rigetta non e\' un errore del salvataggio');
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
