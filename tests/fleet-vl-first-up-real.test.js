@@ -233,8 +233,26 @@ exec ${TMUX} "$@"
     f.sessioni = `exit ${ls.status}: ${String(ls.stdout || ls.stderr || '').trim().slice(0, 600)}`;
     const lp = tmuxTest(['list-panes', '-a', '-F', '#{session_name} pane=#{pane_id} dead=#{pane_dead} status=#{pane_dead_status} cmd=#{pane_current_command}']);
     f.panes = `exit ${lp.status}: ${String(lp.stdout || lp.stderr || '').trim().slice(0, 600)}`;
-    const cap = tmuxTest(['capture-pane', '-p', '-t', '=cloud-Mai']);
+    // Il target di un pane e' il suo %N (o `=sessione:`): `=sessione` senza i due
+    // punti non si risolve in tmux 3.4. Il %N e il pid del pane vengono dal
+    // listing della sessione del test.
+    const lpm = tmuxTest(['list-panes', '-s', '-t', '=cloud-Mai:', '-F', '#{pane_id}\t#{pane_pid}']);
+    const [paneId, panePid] = String(lpm.stdout || '').trim().split('\n')[0].split('\t');
+    f.paneId = paneId || null;
+    f.panePid = panePid || null;
+    const cap = paneId ? tmuxTest(['capture-pane', '-p', '-t', paneId]) : { status: 1, stderr: 'nessun pane nel listing' };
     f.pane = cap.status === 0 ? ultime(cap.stdout, 30) : `<assente: ${String(cap.stderr || '').trim().slice(0, 120)}>`;
+    if (panePid && /^[0-9]+$/.test(panePid)) {
+      // Il pane esegue il supervisore: i suoi figli dicono se il client vl e'
+      // partito, e l'ambiente (solo il NOME TMUX_PANE, mai valori altrui) se il
+      // supervisore sa in quale pane vive.
+      const ps = spawnSync('ps', ['-o', 'pid,ppid,stat,etimes,cmd', '-p', panePid, '--ppid', panePid], { encoding: 'utf8', timeout: 5000 });
+      f.processi = String(ps.stdout || ps.stderr || '').trim().split('\n').map((r) => r.slice(0, 200)).slice(0, 12);
+      try {
+        const env = fs.readFileSync(`/proc/${panePid}/environ`, 'utf8').split('\0');
+        f.supervisoreTMUX_PANE = env.find((e) => e.startsWith('TMUX_PANE=')) || '<assente>';
+      } catch (e) { f.supervisoreTMUX_PANE = `<${e.code || 'illeggibile'}>`; }
+    }
     try { f.launchState = JSON.stringify(await fleet.launchState('Mai')).slice(0, 1500); } catch (e) { f.launchState = `<errore ${String((e && e.message) || e).slice(0, 200)}>`; }
     f.recordLancio = leggiPiccolo(path.join(home, 'NexusFiles', 'launch-targets', 'cloud-Mai.json'));
     const dirAtt = path.join(home, 'NexusFiles', 'cloud-Mai');
@@ -280,7 +298,7 @@ exec ${TMUX} "$@"
     // Diagnostica del timeout: l'ultima tupla osservata e il testo del pane
     // (solo testo, nessun segreto) dicono se il client TUI non accetta il
     // prompt (onboarding, dialogo) o se lo stato non si propaga.
-    const cattura = spawnSync(TMUX, ['capture-pane', '-p', '-t', '=cloud-Mai'], {
+    const cattura = spawnSync(TMUX, ['capture-pane', '-p', '-t', '=cloud-Mai:'], {
       encoding: 'utf8', timeout: 5000, env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },
     });
     await fotografa('al timeout');
