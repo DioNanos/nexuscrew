@@ -175,7 +175,7 @@ async function startHarness(t, { required = true, authorityAlive = true, fixture
       PATH: process.env.PATH || '/usr/bin:/bin',
       CODEX_HOME: codexHome,
       CODEX_APP_SERVER_DISABLE_MANAGED_CONFIG: '1',
-      ...(fixture ? { D174_IDENTITY_CHALLENGE_FILE: path.join(home, 'identity-challenges.jsonl') } : {}),
+      ...(fixture ? { IDENTITY_CHALLENGE_FILE: path.join(home, 'identity-challenges.jsonl') } : {}),
       RUST_LOG: 'warn',
       ...(required ? { CODEX_APP_SERVER_IDENTITY_REQUIRED: '1' } : {}),
     },
@@ -252,7 +252,7 @@ function proofFor(harness, options = {}) {
 }
 
 // These six negative cases deliberately use the production challenge
-// from InitializeResponse. They must not depend on D174_IDENTITY_CHALLENGE_FILE.
+// from InitializeResponse. They must not depend on IDENTITY_CHALLENGE_FILE.
 test('case 2 forged HMAC is rejected on production path', async (t) => {
   const harness = await startHarness(t, { fixture: false });
   if (!harness) return;

@@ -990,7 +990,7 @@ test('clocks 17b: waitMcpReadiness — sleep clampato al residuo, deadline ricon
   // sonno e' <= al residuo rimanente.
   let mono = 0;
   const sleeps = [];
-  const root = '/tmp/nc-0980-s2a/mcp-mai-pronto';
+  const root = '/tmp/nc-deadline-mcp/mcp-mai-pronto';
   const rA = await waitMcpReadiness({
     params: { cacheRoot: root, cwd: '/x', expectedServers: ['mai'] },
     deadlineMs: 600,
