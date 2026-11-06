@@ -471,11 +471,44 @@ test('workcodes: an old test file name carrying a work order fails the verifier'
   }
 });
 
+test('workcodes: a code without the separator in a fixture name fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-nosep-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: "const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncd6home-'));\n" }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /ncd6home-/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Il codice puo' stare nel NOME del file invece che nel contenuto: un nome si
+// legge dall'indice senza aprire nulla, e il filtro sul testo non lo vede.
+test('workcodes: a code in the file name fails the verifier with clean content', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-pathname-'));
+  try {
+    const files = [{ rel: 'tests/nc-d582-clean.test.js', data: 'const x = 1;\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /internal work-order code in a file name/);
+    assert.match(result.stderr, /nc-d582-clean\.test\.js/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Il positivo: i nomi neutri non sono codici e non devono accendere il gate.
 test('workcodes: neutral fixture and file names pass', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-neutral-'));
   try {
-    const files = [{ rel: 'tests/demo.test.js', data: "const a = 'nc-group-post-';\\nconst b = 'nc-claim-outcome-';\\nconst c = 'nc-sentinel';\\n// provato con seam in fleet-vl-bootstrap-claim-runtime.test.js\\n" }];
+    const files = [{ rel: 'tests/demo.test.js', data: "const a = 'nc-group-post-';\\nconst b = 'nc-claim-outcome-';\\nconst c = 'nc-sentinel';\nconst d = 'ncdemo-';\\n// provato con seam in fleet-vl-bootstrap-claim-runtime.test.js\\n" }];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),

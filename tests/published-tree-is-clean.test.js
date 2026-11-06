@@ -366,6 +366,12 @@ const PERCORSI_VIETATI_NEL_MIRROR = [
   // la rete sotto, per il caso «file interno finito fuori dalle sue cartelle».
   { re: /(?<![a-z0-9])(vps\d+|mac[_-]?air|pixel\d*pro|novalnx|asusrp\d*|notpg)(?![a-z0-9])/i,
     perche: 'nome di una nostra macchina nel percorso (elenco noto, non esaustivo)' },
+  // Un codice di lavoro nel NOME del file si legge dall'indice senza aprire
+  // nulla, e il nome non passa dal filtro sul contenuto: la classe va
+  // esercitata anche qui. Confini `[a-z0-9]` come sopra: nei percorsi `-` e `_`
+  // sono separatori normali e non devono tagliare il match.
+  { re: /(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}[a-z0-9_-]*|fleet-(?:[a-z0-9_-]*-)?d[0-9]{3,4}[a-z0-9_-]*)/i,
+    perche: 'codice di lavoro nel nome del file' },
 ];
 
 // Il test qui sotto e' verde anche se i pattern non mordono NULLA: guarda un
@@ -393,6 +399,12 @@ test('i divieti sui percorsi mordono i casi giusti e solo quelli', () => {
     ['docs/CONFIGURATION.md', false, 'documento legittimo'],
     ['lib/proxy/panel-proxy.js', false, 'codice'],
     ['frontend/src/lib/api.js', false, 'codice'],
+    ['tests/nc-d582-fixture.test.js', true, 'codice di lavoro nel nome del file'],
+    ['tests/ncd6-home.test.js', true, 'codice senza separatore nel nome del file'],
+    ['tests/fleet-d558-x.test.js', true, 'codice nel nome, senza segmenti intermedi'],
+    ['tests/fleet-vl-bootstrap-claim-runtime.test.js', false, 'nome neutro dopo il rename'],
+    ['tests/nc-claim-outcome.test.js', false, 'nome neutro dopo il rename'],
+    ['lib/chat/chat-routes.js', false, 'codice'],
   ];
   const sbagliati = casi
     .filter(([rel, atteso]) => morde(rel) !== atteso)
