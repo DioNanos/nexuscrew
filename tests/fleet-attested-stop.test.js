@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999, engineEnv = null } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999, engineEnv = null, diagnosticaAttesa = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -328,6 +328,7 @@ process.exit(0);
     ...(typeof attestaNuova === 'function' ? { attestaAssenzaNuovaConnessione: attestaNuova } : {}),
     ...(typeof leggiStarttime === 'function' ? { leggiStarttimeProc: leggiStarttime } : {}),
     ...(typeof leggiIdentita === 'function' ? { leggiIdentitaProc: leggiIdentita } : {}),
+    ...(typeof diagnosticaAttesa === 'function' ? { diagnosticaAttesa } : {}),
   });
   t.after(() => {
     try { runtime.shutdown(); } catch (_) {}
@@ -715,6 +716,28 @@ test('data del rifiuto: il taglio esterno della deadline produce sempre «scadut
   const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
   assert.ok(err);
   assert.equal(err.data.motivoUscita, 'scaduta');
+});
+
+test('attesa di prontezza: un valore legacy invalido produce UNA voce diagnostica al boot', async (t) => {
+  const voci = [];
+  const w = creaMondo(t, {
+    cfgExtra: { bootstrapReadyWaitMs: 'abc' },
+    diagnosticaAttesa: (codice) => voci.push(codice),
+  });
+  assert.ok(w, 'il mondo si costruisce anche con un valore legacy invalido');
+  assert.deepEqual(voci, ['BOOTSTRAP_WAIT_INVALID'], 'una voce, al boot, con il codice fisso');
+});
+
+test('attesa di prontezza: un valore valido non produce alcuna voce', async (t) => {
+  const voci = [];
+  creaMondo(t, { cfgExtra: { bootstrapReadyWaitMs: 15000 }, diagnosticaAttesa: (codice) => voci.push(codice) });
+  assert.deepEqual(voci, []);
+});
+
+test('attesa di prontezza: assente non produce alcuna voce', async (t) => {
+  const voci = [];
+  creaMondo(t, { diagnosticaAttesa: (codice) => voci.push(codice) });
+  assert.deepEqual(voci, []);
 });
 
 // --- ambiente del payload ------------------------------------------------------
