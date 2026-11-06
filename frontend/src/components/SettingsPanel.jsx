@@ -982,8 +982,11 @@ const MOTIVI_ATTESA = {
   range: 'bootstrap-wait-reason-range',
 };
 
-function BootstrapWaitField({ token, settings, readonly, refresh }) {
-  const disponibile = !!settings && Object.prototype.hasOwnProperty.call(settings, 'bootstrapReadyWaitMs');
+function BootstrapWaitField({ token, settings, readonly, refresh, stale = false }) {
+  // La disponibilita' chiede TRE cose: che il nodo esponga il campo, che la
+  // lettura che lo ha portato sia corrente, e che non si sia in sola lettura.
+  const esposto = !!settings && Object.prototype.hasOwnProperty.call(settings, 'bootstrapReadyWaitMs');
+  const disponibile = esposto && !stale;
   const salvato = settings && Number.isSafeInteger(settings.savedBootstrapReadyWaitMs)
     ? settings.savedBootstrapReadyWaitMs : null;
   const inUso = settings && Number.isSafeInteger(settings.bootstrapReadyWaitMs)
@@ -1051,7 +1054,8 @@ function BootstrapWaitField({ token, settings, readonly, refresh }) {
           onClick={salva}>{t('bootstrap-wait-save')}</button>
       </div>
       <small className="nc-set-hint">{t('bootstrap-wait-help')}</small>
-      {!disponibile && <small className="nc-set-hint">{t('bootstrap-wait-unavailable')}</small>}
+      {!esposto && <small className="nc-set-hint">{t('bootstrap-wait-unavailable')}</small>}
+      {esposto && stale && <small className="nc-set-hint">{t('bootstrap-wait-stale')}</small>}
       {disponibile && fonte !== 'saved' && (
         <small className="nc-set-hint">
           {fonte === 'effective' ? t('bootstrap-wait-notsaved-effective') : t('bootstrap-wait-notsaved-default')}
@@ -1066,7 +1070,7 @@ function BootstrapWaitField({ token, settings, readonly, refresh }) {
   );
 }
 
-function SystemTab({ token, settings, readonly, refresh, roster, section, setSection }) {
+function SystemTab({ token, settings, readonly, refresh, settingsStale = false, roster, section, setSection }) {
   const [rendererPreference, setRendererPreference] = useState(readRendererPreference);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
@@ -1302,7 +1306,7 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
               onChange={(event) => toggleAlternateScreen(event.target.checked)} />
             <span><b>{t('alternate-screen')}</b><small>{t('alternate-screen-help')}</small></span>
           </label>
-          <BootstrapWaitField token={token} settings={settings} readonly={readonly} refresh={refresh} />
+          <BootstrapWaitField token={token} settings={settings} readonly={readonly} refresh={refresh} stale={settingsStale} />
         </div>
         <PreferencesBackup token={token} />
         <PreferencesJournal />
@@ -1348,6 +1352,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
+  // La freschezza e' della LETTURA, non dell'oggetto conservato: quando la GET
+  // dei settings fallisce si tiene l'ultimo valore noto per mostrarlo, ma non
+  // lo si spaccia per corrente e non ci si scrive sopra.
+  const [settingsStale, setSettingsStale] = useState(false);
   const [aliasRevision, setAliasRevision] = useState(0);
   const roster = useNodes(token, true, aliasRevision);
 
@@ -1429,10 +1437,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
       // peer si pubblicano al LORO arrivo, senza aspettare le settings.
       const settingsTask = getSettings(token, opts).then((s) => {
         if (!guard.isCurrent(round)) return;
-        setSettings(s); setLoadErr(null);
+        setSettings(s); setLoadErr(null); setSettingsStale(false);
       }).catch((e) => {
         if (!guard.isCurrent(round)) return;
-        setLoadErr(String(e?.message || e));
+        setLoadErr(String(e?.message || e)); setSettingsStale(true);
       });
       const peersTask = getPeers(token, opts).then((j) => {
         if (!guard.isCurrent(round)) return;
@@ -1583,7 +1591,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'audio' && <AudioTab token={token} readonly={readonly} nodes={nodes} settings={settings} />}
           {tab === 'input' && <InputTab />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh}
-            roster={roster} section={systemSection} setSection={setSystemSection} />}
+            settingsStale={settingsStale} roster={roster} section={systemSection} setSection={setSystemSection} />}
         </div>
       </div>
     </div>

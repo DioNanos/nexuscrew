@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const mocks = vi.hoisted(() => ({
   setNodeShare: vi.fn(),
@@ -207,7 +207,7 @@ describe('attesa di prontezza: il campo nella sezione Terminale', () => {
       'bootstrap-wait-label', 'bootstrap-wait-help', 'bootstrap-wait-save',
       'bootstrap-wait-state-applied', 'bootstrap-wait-state-restart', 'bootstrap-wait-state-notapplied',
       'bootstrap-wait-unavailable', 'bootstrap-wait-notsaved-default', 'bootstrap-wait-notsaved-effective',
-      'bootstrap-wait-effective', 'bootstrap-wait-invalid',
+      'bootstrap-wait-effective', 'bootstrap-wait-invalid', 'bootstrap-wait-stale',
       'bootstrap-wait-reason-empty', 'bootstrap-wait-reason-text', 'bootstrap-wait-reason-separators',
       'bootstrap-wait-reason-precision', 'bootstrap-wait-reason-range',
     ];
@@ -219,5 +219,44 @@ describe('attesa di prontezza: il campo nella sezione Terminale', () => {
     expect(DICTS.it['bootstrap-wait-effective']).toContain('{value}');
     expect(DICTS.en['bootstrap-wait-invalid']).toContain('{reason}');
     expect(DICTS.es['bootstrap-wait-invalid']).toContain('{reason}');
+  });
+});
+
+// La freschezza è della LETTURA, non dell'oggetto conservato: se la GET dei
+// settings fallisce dopo una riuscita, il valore che si vede è l'ultimo noto e
+// non si scrive. Un guasto della GET peer non c'entra: sono esiti indipendenti.
+describe('freschezza della lettura settings', () => {
+  it('una GET fallita dopo una valida disabilita campo e salvataggio', async () => {
+    vi.useFakeTimers();
+    apri();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const campo = screen.getByLabelText(LABEL);
+    expect(campo.value).toBe('15');
+    expect(campo.disabled).toBe(false);
+    mocks.getSettings.mockRejectedValue(new Error('settings unavailable'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5001); });
+    vi.useRealTimers();
+    expect(screen.getByText('settings unavailable')).toBeTruthy();
+    expect(campo.disabled, 'stale settings must not remain writable').toBe(true);
+    expect(screen.getByRole('button', { name: /^save$/i }).disabled).toBe(true);
+    expect(mocks.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it('al ritorno della lettura il campo torna scrivibile e si riallinea', async () => {
+    vi.useFakeTimers();
+    apri();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const campo = screen.getByLabelText(LABEL);
+    mocks.getSettings.mockRejectedValue(new Error('settings unavailable'));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5001); });
+    expect(campo.disabled).toBe(true);
+    mocks.getSettings.mockResolvedValue({
+      ...base, bootstrapReadyWaitMs: 30000, savedBootstrapReadyWaitMs: 30000,
+      applyState: 'applied', restartRequired: false,
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5001); });
+    vi.useRealTimers();
+    expect(campo.disabled).toBe(false);
+    expect(campo.value).toBe('30');
   });
 });
