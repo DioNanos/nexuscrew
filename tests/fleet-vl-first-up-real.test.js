@@ -215,8 +215,38 @@ exec ${TMUX} "$@"
     fs.rmSync(rt, { recursive: true, force: true });
   });
 
+  // Diagnostica del client della cella (solo testo, nessun segreto): dopo l'up e
+  // ogni 2 s fino al timeout si registra lo stato del tmux isolato del test, il
+  // pane se esiste e cio' che il runtime e NexusCrew conservano del lancio
+  // (launch-state, record del lancio, file di attivita' della sessione).
+  const fotografie = [];
+  const tmuxTest = (args) => spawnSync(TMUX, args, {
+    encoding: 'utf8', timeout: 5000, env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },
+  });
+  const ultime = (testo, n = 12) => String(testo || '').split('\n').slice(-n).join('\n').slice(0, 1500);
+  const leggiPiccolo = (file) => {
+    try { return fs.readFileSync(file, 'utf8').slice(0, 2000); } catch (e) { return `<${e.code || 'illeggibile'}>`; }
+  };
+  const fotografa = async (etichetta) => {
+    const f = { etichetta, t: Date.now() };
+    const ls = tmuxTest(['list-sessions', '-F', '#{session_name} windows=#{session_windows}']);
+    f.sessioni = `exit ${ls.status}: ${String(ls.stdout || ls.stderr || '').trim().slice(0, 600)}`;
+    const lp = tmuxTest(['list-panes', '-a', '-F', '#{session_name} pane=#{pane_id} dead=#{pane_dead} status=#{pane_dead_status} cmd=#{pane_current_command}']);
+    f.panes = `exit ${lp.status}: ${String(lp.stdout || lp.stderr || '').trim().slice(0, 600)}`;
+    const cap = tmuxTest(['capture-pane', '-p', '-t', '=cloud-Mai']);
+    f.pane = cap.status === 0 ? ultime(cap.stdout, 30) : `<assente: ${String(cap.stderr || '').trim().slice(0, 120)}>`;
+    try { f.launchState = JSON.stringify(await fleet.launchState('Mai')).slice(0, 1500); } catch (e) { f.launchState = `<errore ${String((e && e.message) || e).slice(0, 200)}>`; }
+    f.recordLancio = leggiPiccolo(path.join(home, 'NexusFiles', 'launch-targets', 'cloud-Mai.json'));
+    const dirAtt = path.join(home, 'NexusFiles', 'cloud-Mai');
+    try {
+      f.attivita = fs.readdirSync(dirAtt).slice(0, 12).map((n) => `${n}: ${leggiPiccolo(path.join(dirAtt, n)).replace(/\s+/g, ' ').slice(0, 400)}`);
+    } catch (e) { f.attivita = `<${e.code || 'illeggibile'}>`; }
+    fotografie.push(f);
+  };
+
   const up1 = await fleet.up('Mai');
   assert.equal(up1.ok, true, `primo up: ${JSON.stringify(up1)}`);
+  await fotografa('subito dopo l\'up');
   const primaRiga = fs.readFileSync(marca, 'utf8').split('\n').filter(Boolean)[0];
   assert.equal(primaRiga, 'assente', 'host-v1 ancora assente subito prima dello spawn');
   const st = fs.lstatSync(hostRoot);
@@ -237,7 +267,9 @@ exec ${TMUX} "$@"
   const attesaFino = Date.now() + 60000;
   let tupla = null;
   let ultimaTupla = null;
+  let ultimaFoto = Date.now();
   while (Date.now() < attesaFino) {
+    if (Date.now() - ultimaFoto >= 2000) { ultimaFoto = Date.now(); await fotografa(`+${60000 - (attesaFino - Date.now())} ms`); }
     const st = await fleet.status();
     const cella = (st.cells || []).find((c) => c.cell === 'Mai');
     if (cella) ultimaTupla = cella.promptDelivery === undefined ? null : cella.promptDelivery;
@@ -251,6 +283,8 @@ exec ${TMUX} "$@"
     const cattura = spawnSync(TMUX, ['capture-pane', '-p', '-t', '=cloud-Mai'], {
       encoding: 'utf8', timeout: 5000, env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },
     });
+    await fotografa('al timeout');
+    for (const f of fotografie) process.stderr.write(`[diagnostica first-up] ${JSON.stringify(f)}\n`);
     process.stderr.write(`[diagnostica first-up] ultimo promptDelivery: ${JSON.stringify(ultimaTupla)}\n`);
     process.stderr.write(`[diagnostica first-up] pane cloud-Mai (exit ${cattura.status}):\n${String(cattura.stdout || cattura.stderr || '').slice(0, 4000)}\n`);
   }
