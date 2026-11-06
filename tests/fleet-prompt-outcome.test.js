@@ -351,8 +351,11 @@ test('C3: tabella esaustiva, nessun submitted fuori da submitted', () => {
     [{ state: 'paste-failed', stage: 'validate' }, { state: 'skipped', reason: 'failed-pre-paste-validate' }, NA],
     [{ state: 'paste-failed', stage: 'resolve' }, { state: 'skipped', reason: 'failed-pre-paste-resolve' }, NA],
     [{ state: 'paste-failed', stage: 'load' }, { state: 'skipped', reason: 'failed-pre-paste-load' }, NA],
-    [{ state: 'paste-failed' }, { state: 'skipped', reason: 'failed-pre-paste' }, NA],
-    [{ state: 'paste-failed', stage: 'garbage' }, { state: 'skipped', reason: 'failed-pre-paste' }, NA],
+    // Stage assente, ignoto o post-paste: nessun «zero paste» attestato -> unknown.
+    [{ state: 'paste-failed' }, { state: 'unknown' }, NA],
+    [{ state: 'paste-failed', stage: 'garbage' }, { state: 'unknown' }, NA],
+    [{ state: 'paste-failed', stage: 'paste' }, { state: 'unknown' }, NA],
+    [{ state: 'paste-failed', stage: 'pasted' }, { state: 'unknown' }, NA],
     // Valore non riconosciuto: unknown, mai un successo per deduzione.
     [{ state: 'delivered' }, { state: 'unknown' }, NA],
     [{ state: '' }, { state: 'unknown' }, NA],
