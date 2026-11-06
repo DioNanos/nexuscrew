@@ -195,6 +195,27 @@ test('deadline 11: budget valido e pane che non diventa pronto -> mai paste, ski
   assert.equal(enterCount(t), 0, 'zero Enter');
 });
 
+// 11b. Un budget fuori contratto non viene corretto ne' osservato: il
+// consumatore diretto usa la stessa regola non coercitiva del contratto.
+test('attesa 11b: budget fuori contratto -> nessuna osservazione, nessun paste', async () => {
+  for (const v of ['1234', 1234.9, 0, 999, 120001, -1]) {
+    const clk = virtualClock();
+    const t = mkTmux(clk);
+    const r = await deliverBootstrapPrompt({
+      ...OPTS, readyWaitMs: v, pollMs: 100,
+      nowImpl: clk.now, sleepImpl: clk.sleep,
+      tmuxExecImpl: t.exec,
+      captureImpl: async () => CLAUDE_READY_LIKE,
+    });
+    assert.equal(r.delivered, false, `valore ${JSON.stringify(v)}`);
+    assert.equal(pasteCount(t), 0, `valore ${JSON.stringify(v)}: nessun paste`);
+    assert.equal(t.count('capture-pane'), 0, `valore ${JSON.stringify(v)}: nessuna osservazione`);
+  }
+  // I valori validi del contratto (1000, 1234, 15000, 60000, 120000) sono
+  // coperti dalla tabella del contratto e dai test dell'API; qui si prova che
+  // il consumatore diretto NON corregge quelli fuori contratto.
+});
+
 // 12. Retry oltre il bound: primo load PROVATAMENTE fallito pre-paste con
 // residuo esaurito -> failed-pre-paste con dettaglio deadline, NESSUN secondo
 // paste, attempts conservato.
