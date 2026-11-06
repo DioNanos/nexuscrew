@@ -29,7 +29,7 @@ const SESSIONE = 'cloud-CellaProva';
 const PROMPT = 'Leggi CLAUDE.md e parti';
 
 function mondo(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558rt-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-claim-runtime-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });

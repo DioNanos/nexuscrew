@@ -34,7 +34,7 @@ const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('.
 const SESSIONE = 'cloud-CellaProva';
 
 function mondo(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558f2-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-host-stopped-clean-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });

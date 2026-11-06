@@ -28,7 +28,7 @@ function errore(codice) {
 
 // /proc sintetica: `voci` e' una lista [pid, pgrp]. Nessun processo reale.
 function procSintetica(t, voci) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-scan-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-scan-'));
   fs.mkdirSync(path.join(root, 'self'));
   fs.writeFileSync(path.join(root, 'cpuinfo'), 'processor\t: 0\n');
   for (const [pid, pgrp] of voci) {

@@ -33,7 +33,7 @@ function errore(codice) {
 // /proc sintetica con il SOLO processo del test: serve a far leggere al helper
 // un gruppo proprio noto in positivo, senza toccare /proc vera.
 function procConProprio(t, gruppoProprio = PGRP_PROPRIO) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-proc-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-probe-'));
   fs.mkdirSync(path.join(root, String(process.pid)));
   fs.writeFileSync(path.join(root, String(process.pid), 'stat'),
     `${process.pid} (probe) S 1 ${gruppoProprio} ${gruppoProprio} 0 0 -1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0\n`);
@@ -126,7 +126,7 @@ test('sonda: pgrp 0, 1, negativo, NaN, non intero o stringa non viene MAI sondat
 });
 
 test('sonda: gruppo proprio non leggibile -> nessuna sonda (non si indovina)', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-vuota-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-probe-empty-'));
   t.after(() => { fs.rmSync(root, { recursive: true, force: true }); });
   const spia = sondaSpia();
   const foto = gruppo.sondaGruppo({
@@ -236,7 +236,7 @@ test('sonda reale: capo vivo -> almeno; dopo la morte del gruppo -> noti/0', asy
 });
 
 test('sonda reale: capo morto con un altro membro vivo -> almeno, non pulito', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-due-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-probe-pair-'));
   const pidFile = path.join(dir, 'figlio.pid');
   const capo = path.join(dir, 'capo.js');
   fs.writeFileSync(capo, `'use strict';

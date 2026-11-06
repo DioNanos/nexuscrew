@@ -18,7 +18,7 @@ const FX_DIRS = [];
 process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-claim-'));
 }
 
 // ---------------------------------------------------------------- (a) classifier

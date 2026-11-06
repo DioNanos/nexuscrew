@@ -141,7 +141,7 @@ exit 0
 }
 
 function mondo(t, { caps, owner } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558pf-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-preflight-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaPre');
   fs.mkdirSync(cwd, { recursive: true });
@@ -166,7 +166,7 @@ function mondo(t, { caps, owner } = {}) {
   const statoPath = path.join(root, 'sessions.txt');
   fs.writeFileSync(statoPath, '');
   const tmuxBin = path.join(root, 'fake-tmux.cjs');
-  // Fake tmux a stato vero (come fleet-vl-bootstrap-d558-runtime.test.js): la
+  // Fake tmux a stato vero (come fleet-vl-bootstrap-claim-runtime.test.js): la
   // risposta al report @nc_delivery sblocca up() senza attendere timeout.
   const script = `#!${process.execPath}
 'use strict';

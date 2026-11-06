@@ -33,7 +33,7 @@ const SESSIONE = 'cloud-CellaProva';
 const PROMPT = 'Leggi CLAUDE.md e parti';
 
 function mondo(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558r3-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-claim-outcome-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
@@ -324,7 +324,7 @@ test('claim: vocabulary bounded e settle fail-safe', () => {
   assert.equal(vlClaimOutcomeFor('cancelled'), null, 'niente esito del supervisore: resta pending (si legge incerto)');
   assert.equal(vlClaimOutcomeFor('report-timeout'), null);
   // Claim assente: non si inventa un esito e non si crea nessun file.
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558r3-unit-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-claim-outcome-unit-'));
   const missing = path.join(dir, 'bootstrap-0000000000000000.json');
   const r = settleVlBootstrapClaim({ claimPath: missing, state: 'failed', detail: 'failed-pre-paste' });
   assert.equal(r.updated, false);

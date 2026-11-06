@@ -633,7 +633,7 @@ test('validatore unico presidiato: backend (validPanelUrl) e backup (validBackup
 test('cellStatus: panelUrl dell\'engine MANAGED raggiunge la cella (fallback engine->cella vale per entrambi)', async () => {
   const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
   const dir = tmpDir();
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d8-home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-definitions-home-'));
   const defsPath = path.join(dir, 'fleet.json');
   atomicWrite(defsPath, {
     schemaVersion: 1,

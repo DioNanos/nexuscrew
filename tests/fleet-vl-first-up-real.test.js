@@ -369,7 +369,7 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   // resterebbe solo e uscirebbe comunque alla kill-session.
   const sentinella = spawnSync(TMUX, [
     '-S', sharedTmuxSocketPath(),
-    'new-session', '-d', '-s', 'sentinella-d582', 'sleep', '3600',
+    'new-session', '-d', '-s', 'nc-sentinel', 'sleep', '3600',
   ], {
     encoding: 'utf8', timeout: 5000,
     env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },

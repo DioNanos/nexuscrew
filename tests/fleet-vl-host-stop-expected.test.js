@@ -50,7 +50,7 @@ const attendiVivo = async (figlio) => {
 };
 
 function mondo(t, extraCfg = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558p3-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-host-stop-expected-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaExp');
   fs.mkdirSync(cwd, { recursive: true });

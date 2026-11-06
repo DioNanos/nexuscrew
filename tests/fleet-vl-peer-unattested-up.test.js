@@ -158,7 +158,7 @@ if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown
 }
 
 function mondo(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558un-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-unattested-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
@@ -183,7 +183,7 @@ function mondo(t) {
   const statoPath = path.join(root, 'sessions.txt');
   fs.writeFileSync(statoPath, '');
   const tmuxBin = path.join(root, 'fake-tmux.cjs');
-  // Fake tmux a stato vero (come fleet-vl-bootstrap-d558-runtime) con il
+  // Fake tmux a stato vero (come fleet-vl-bootstrap-claim-runtime) con il
   // ciclo di vita dell'host: new-session fa nascere un host nuovo, e la
   // kill-session DELLA PROPRIA SESSIONE ferma l'host per PID ESATTO dal
   // pidfile — l'host di questo lancio muore con la sua sessione.

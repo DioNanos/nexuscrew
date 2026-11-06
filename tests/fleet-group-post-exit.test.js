@@ -31,7 +31,7 @@ const MIO_PID = process.pid;
 // dello stat, quello che il kernel mette a 'Z' per un processo uscito e non
 // ancora raccolto.
 function proc(t, { membri = [] } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-post-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-post-'));
   const scrivi = (pid, pgrp, stato) => {
     fs.mkdirSync(path.join(root, String(pid)));
     fs.writeFileSync(path.join(root, String(pid), 'stat'),

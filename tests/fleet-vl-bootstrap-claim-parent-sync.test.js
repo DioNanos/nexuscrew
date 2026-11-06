@@ -18,7 +18,7 @@ const { decideVlBootstrap, readVlBootstrapClaim } = require('../lib/fleet/vl-boo
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 
 function tmpHome() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d558f3-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'nc-claim-parent-sync-'));
 }
 
 // EIO selettivo sui fsync (stesso trucco di questa suite): i descriptor
