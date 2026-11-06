@@ -206,3 +206,154 @@ test('cella senza lease: non attestabile, nessuna scrittura', async () => {
     assert.deepEqual(await mgr.readPromptSnapshot('../x'), { ok: false, reason: 'invalid-cell' });
   } finally { mgr.close(); }
 });
+
+// ── Supervisore REALE in un processo distinto + runtime reale ────────────────
+// Il processo figlio esegue cell-exec main() (lease-client, fence di
+// generazione e scrittura del record veri); il padre e' il daemon: lease
+// manager vero e runtime vero. Niente autorita' iniettata: la generazione
+// arriva dal proprietario sul canale lease. Ogni prova ha timeout e cleanup
+// anche sul rosso.
+const { spawn } = require('node:child_process');
+const { mondoStato, SESSIONE } = require('./helpers/prompt-stato-world.js');
+const { registraLancioCorrente, leggiRecordPrompt } = require('../lib/files/activity.js');
+const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+const { loadDefinitions } = require('../lib/fleet/definitions.js');
+
+const CHILD = path.join(__dirname, 'helpers', 'prompt-supervisor-child.cjs');
+const CELLA = 'Cella';
+
+function leggiEventi(proc) {
+  const eventi = [];
+  let buf = '';
+  proc.stdout.setEncoding('utf8');
+  proc.stdout.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const riga = buf.slice(0, i); buf = buf.slice(i + 1);
+      try { eventi.push(JSON.parse(riga)); } catch (_) { /* rumore */ }
+    }
+  });
+  return eventi;
+}
+
+async function finche(fn, { timeoutMs = 8000, passoMs = 10 } = {}) {
+  const fine = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > fine) return v;
+    await new Promise((r) => setTimeout(r, passoMs));
+  }
+}
+
+async function avviaSupervisore(w, leaseHome) {
+  const clock = { t: 10_000 };
+  let mgr = createLeaseManager({ home: leaseHome, log: () => {} }, { now: () => Date.now() });
+  const info = await mgr.track(CELLA);
+  const server = net.createServer();
+  const adottato = new Promise((resolve) => server.once('connection', resolve));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const launchId = 'a1b2c3d4e5f60718';
+  const logPath = path.join(w.root, 'deliveries.log');
+  fs.writeFileSync(logPath, '');
+  fs.mkdirSync(w.dirSessione, { recursive: true, mode: 0o700 });
+  const proc = spawn(process.execPath, [CHILD, JSON.stringify({
+    port: server.address().port, cellId: CELLA, stablePath: info.stablePath, launchEpoch: info.launchEpoch,
+    dir: w.dirSessione, launchId, logPath,
+  })], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const eventi = leggiEventi(proc);
+  const lato = await adottato;
+  assert.equal(mgr.attachInitial(CELLA, lato, { generation: 0 }), true);
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId, canale: 'none' });
+  const stato = {
+    logB: [], mgr, info, proc, eventi, launchId, logPath, clock,
+    comando: (c) => proc.stdin.write(`${c}\n`),
+    consegne: () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length,
+    riavviaDaemon: async () => {
+      mgr.close();
+      // Il demone B nasce DOPO che il supervisore ha visto la chiusura e ha
+      // fatto il suo primo tentativo a vuoto: il reconnect arriva alla cadenza
+      // del client, come in un restart vero (il client riprova ogni 20 s).
+      await new Promise((r) => setTimeout(r, 400));
+      mgr = createLeaseManager({ home: leaseHome, log: (m) => stato.logB.push(`${Date.now() % 100000} ${String(m).slice(0, 80)}`) }, { now: () => Date.now() });
+      stato.mgr = mgr;
+      await mgr.boot();
+      return mgr;
+    },
+    chiudi: () => {
+      try { proc.stdin.write('quit\n'); } catch (_) {}
+      try { proc.kill('SIGKILL'); } catch (_) {}
+      try { stato.mgr.close(); } catch (_) {}
+      try { server.close(); } catch (_) {}
+      try { fs.chmodSync(w.dirSessione, 0o700); } catch (_) {}
+    },
+  };
+  return stato;
+}
+
+function runtimeCon(w, mgr) {
+  return createBuiltinRuntime({
+    cfg: { filesRoot: w.filesRoot, activityHooks: false, log: () => {}, env: {} },
+    home: w.home, defsPath: w.defsPath, tmuxBin: w.tmuxBin, readonly: () => false,
+    launchBroker: { issue: async () => ({}), revoke: async () => {}, close: async () => {} },
+    leaseManager: mgr, boot: loadDefinitions(w.defsPath),
+  });
+}
+
+test('E2E processo distinto: gen1 ammessa con pending non persistito -> la fotografia del proprietario dice 1, mai il vecchio submitted', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  const sup = await avviaSupervisore(w, fs.mkdtempSync(path.join(os.tmpdir(), 'promptauth-home-')));
+  try {
+    assert.ok(await finche(() => sup.eventi.find((e) => e.ev === 'spawned')), 'supervisore avviato');
+    // gen0 consegnata e terminale scritto dal proprietario
+    assert.ok(await finche(() => leggiRecordPrompt(w.dirSessione, sup.launchId)
+      && leggiRecordPrompt(w.dirSessione, sup.launchId).state === 'submitted'), 'terminale gen0 su disco');
+    assert.ok(await finche(() => sup.mgr.status(CELLA).state === 'live'));
+    const rt = runtimeCon(w, sup.mgr);
+    const prima = (await rt.status({})).cells[0].promptDelivery;
+    assert.equal(prima.state, 'submitted');
+    assert.equal(prima.generation, 0);
+    assert.equal(sup.consegne(), 1);
+    // il proprietario ammette gen1 con la scrittura del pending che FALLISCE
+    sup.comando('lock-dir');
+    assert.ok(await finche(() => sup.eventi.find((e) => e.ev === 'locked')));
+    sup.comando('exit-child');
+    assert.ok(await finche(() => sup.eventi.filter((e) => e.ev === 'spawned').length >= 2), 'respawn gen1');
+    // il record su disco e' ancora quello della gen0 (submitted)
+    assert.equal(leggiRecordPrompt(w.dirSessione, sup.launchId).generation, 0);
+    const dopo = (await rt.status({})).cells[0].promptDelivery;
+    assert.equal(dopo.state, 'unknown');
+    assert.equal(dopo.reason, 'generation-not-recorded');
+    assert.equal(dopo.generation, 1, 'la generazione viene dal proprietario reale');
+    assert.notEqual(dopo.state, 'submitted');
+    assert.equal(sup.consegne(), 1, 'zero paste per la generazione con pending non persistito');
+  } finally { sup.chiudi(); fs.rmSync(w.root, { recursive: true, force: true }); }
+});
+
+test('E2E restart del demone: prima della nuova fotografia unknown, dopo il recupero la stessa tupla; nessun armControl di stop', { timeout: 90000 }, async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  const sup = await avviaSupervisore(w, fs.mkdtempSync(path.join(os.tmpdir(), 'promptauth-home-')));
+  try {
+    assert.ok(await finche(() => leggiRecordPrompt(w.dirSessione, sup.launchId)
+      && leggiRecordPrompt(w.dirSessione, sup.launchId).state === 'submitted'), 'terminale gen0 su disco');
+    assert.ok(await finche(() => sup.mgr.status(CELLA).state === 'live'));
+    // il demone A termina: supervisore e file restano
+    const mgrB = await sup.riavviaDaemon();
+    assert.equal(mgrB.status(CELLA).state, 'none', 'nessun lease sopravvive al restart');
+    const rtB = runtimeCon(w, mgrB);
+    const prima = (await rtB.status({})).cells[0].promptDelivery;
+    assert.deepEqual(prima, { state: 'unknown', launchId: sup.launchId }, 'senza prova: unknown, niente terminale vecchio');
+    // il storico resta leggibile come storia
+    assert.equal(leggiRecordPrompt(w.dirSessione, sup.launchId).state, 'submitted');
+    // il supervisore si riconnette con le prove gia' previste
+    const trans = []; const t0 = Date.now();
+    assert.ok(await finche(() => { const st = mgrB.status(CELLA).state; if (trans[trans.length - 1] !== st) trans.push(`${Date.now() - t0}:${st}`); return st === 'live'; }, { timeoutMs: 45000, passoMs: 50 }), `reconnect vero: ${JSON.stringify(sup.logB.slice(0, 6))} ${JSON.stringify(trans)}`);
+    const dopo = (await rtB.status({})).cells[0].promptDelivery;
+    assert.equal(dopo.state, 'submitted');
+    assert.equal(dopo.launchId, sup.launchId);
+    assert.equal(dopo.generation, 0);
+    assert.equal(mgrB.controlArmato(CELLA), false, 'la lettura non riarma il controllo di stop');
+    assert.equal(sup.consegne(), 1, 'nessuna consegna ripetuta dal restart del demone');
+  } finally { sup.chiudi(); fs.rmSync(w.root, { recursive: true, force: true }); }
+});
