@@ -47,7 +47,7 @@ if (cfg.modo === 'muto') { setTimeout(() => {}, 60000); }
 else if (cfg.modo === 'eof') { frameOk(0, String(cfg.pid)); process.exit(0); }
 else if (cfg.modo === 'errore') { frameOk(0, String(cfg.pid)); frameErr(1, 'no such client'); process.exit(0); }
 else if (cfg.modo === 'presente') { frameOk(0, String(cfg.pid)); frameOk(1, ''); process.exit(0); }
-else { frameOk(0, String(cfg.pid)); frameErr(1, 'can\\'t find session: ' + ${JSON.stringify(SESSIONE)}); process.exit(0); }
+else { frameOk(0, String(cfg.pid)); frameErr(1, cfg.assenza || ('can\\'t find session: ' + ${JSON.stringify(SESSIONE)})); process.exit(0); }
 `, { mode: 0o755 });
   t.after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
   return {
@@ -100,6 +100,41 @@ test('solo due comandi di lettura: nessun kill, nessun invio, nessuna creazione'
   for (const vietato of ['kill-session', 'kill-server', 'send-keys', 'new-session', 'attach', 'respawn']) {
     assert.equal(argv.includes(vietato), false, `comando vietato sulla connessione nuova: ${vietato}`);
   }
+});
+
+test('un id che e\' PREFISSO di un altro non attesta ($7 contro $70)', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assenza', assenza: "can't find session: $70" });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, { bin: finto.bin }));
+  assert.equal(r.attestato, false, 'il suffisso diverso non e\' il nostro target');
+});
+
+test('un id che CONTIENE il nostro numero non attesta ($7 contro $17)', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assenza', assenza: "can't find session: $17" });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, { bin: finto.bin }));
+  assert.equal(r.attestato, false);
+});
+
+test('testo estraneo o aggiuntivo al verdetto non attesta', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assenza', assenza: "can't find session: $7 — nota aggiuntiva" });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, { bin: finto.bin }));
+  assert.equal(r.attestato, false);
+});
+
+test('grammatica del verdetto: solo il target ESATTO, nessuna sottostringa', () => {
+  const v = tmuxControl.verdettoAssenzaTarget;
+  assert.equal(v("can't find session: $7", '$7'), true);
+  assert.equal(v("  can't find session: $7  ", '$7'), true);
+  assert.equal(v("can't find session: $70", '$7'), false);
+  assert.equal(v("can't find session: $17", '$7'), false);
+  assert.equal(v("can't find session: $7x", '$7'), false);
+  assert.equal(v("can't find session: $7\nno such client", '$7'), false);
+  assert.equal(v('no such client', '$7'), false);
+  assert.equal(v("can't find session: 7", '$7'), false);
+  assert.equal(v("can't find session: $7", '$70'), false);
+  assert.equal(v(null, '$7'), false);
 });
 
 test('sessione presente: nessun falso successo', async (t) => {
