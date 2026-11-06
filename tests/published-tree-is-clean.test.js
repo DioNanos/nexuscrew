@@ -370,7 +370,7 @@ const PERCORSI_VIETATI_NEL_MIRROR = [
   // nulla, e il nome non passa dal filtro sul contenuto: la classe va
   // esercitata anche qui. Confini `[a-z0-9]` come sopra: nei percorsi `-` e `_`
   // sono separatori normali e non devono tagliare il match.
-  { re: /(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}[a-z0-9_-]*|fleet-(?:[a-z0-9_-]*-)?d[0-9]{3,4}[a-z0-9_-]*)/i,
+  { re: /(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}|(?:[a-z0-9]+-)+d[0-9]{3,4})[a-z0-9_-]*/i,
     perche: 'codice di lavoro nel nome del file' },
 ];
 
