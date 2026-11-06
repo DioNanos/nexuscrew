@@ -32,12 +32,13 @@ function scriviCanonico(payload, valore, { generation = 0, ts = Date.now() } = {
 // Rende «vivo» e attestante un leaseManager (reale o finto): lo stesso oggetto
 // che il runtime ha gia' in mano, solo con le tre letture della consultazione.
 function attestaProprietario(leaseManager, getPayload, { generation = 0, applicable = true, mcp } = {}) {
-  leaseManager.status = () => ({ state: 'live', leaseId: 'f'.repeat(16), generation });
+  const gen = () => (typeof generation === 'function' ? generation() : generation);
+  leaseManager.status = () => ({ state: 'live', leaseId: 'f'.repeat(16), generation: gen() });
   leaseManager.readPromptSnapshot = async () => {
     const p = getPayload();
     if (!p || !p.promptOutcome) return { ok: false, reason: 'no-lease' };
     return {
-      ok: true, launchId: p.promptOutcome.launchId, applicable, generation,
+      ok: true, launchId: p.promptOutcome.launchId, applicable, generation: gen(),
       ...(mcp ? { mcp } : {}), epoch: 1, leaseId: 'f'.repeat(16),
     };
   };

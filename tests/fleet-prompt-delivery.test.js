@@ -533,7 +533,7 @@ switch (cmd) {
   return p;
 }
 
-function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, readyWaitMs = 30, mcp = undefined }) {
+function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, readyWaitMs = 30, mcp = undefined, cfgExtra = {}, generation = 0 }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpd-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
@@ -568,9 +568,9 @@ function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, 
     },
     close: async () => {},
   };
-  const leaseManager = attestaProprietario({ track: async () => null }, () => ticket, { mcp });
+  const leaseManager = attestaProprietario({ track: async () => null }, () => ticket, { mcp, generation });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env },
+    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env, ...cfgExtra },
     home, defsPath, tmuxBin, readonly: () => false, launchBroker, leaseManager,
     boot: loadDefinitions(defsPath),
   });
@@ -733,6 +733,184 @@ test('up: l\'osservazione MCP gia\' nota alla risposta si conserva; se non nota 
     assert.equal(res.mcpDegraded, undefined);
     assert.equal(res.readinessDegraded, undefined);
   } finally { ignoto.cleanup(); }
+});
+
+// ── 0.9.80 strato 2c: osservatore diagnostico del terminale ─────────────────
+const { createDiagnostics, sanitizeMeta } = require('../lib/diagnostics/store.js');
+const { finche } = require('./helpers/prompt-canonico.js');
+const { scriviRecordPrompt: scriviRecordCanale } = require('../lib/files/activity.js');
+
+function eventiPrompt(diagnostics) {
+  return diagnostics.logs({ limit: 200 }).records.filter((r) => r.code === 'PROMPT_DELIVERY_TERMINAL');
+}
+function mondoOsservatore(extra = {}) {
+  const diagnostics = extra.diagnostics || createDiagnostics();
+  const clock = { t: 0 };
+  const w = makeManagedWorld({
+    client: 'kimi', provider: 'native', delivery: extra.delivery ?? 'submitted', canon: extra.canon,
+    generation: extra.generation ?? 0,
+    cfgExtra: {
+      diagnostics, monotonicNow: () => clock.t, sleepImpl: extra.sleepImpl || (async () => { clock.t += 600; }),
+      log: extra.log || (() => {}),
+    },
+  });
+  return { w, diagnostics, clock };
+}
+
+test('osservatore: un solo evento per un terminale osservato, con soli campi ammessi e senza leak', async () => {
+  const { w, diagnostics } = mondoOsservatore();
+  try {
+    await w.runtime.up('Dev');
+    const evento = await finche(() => eventiPrompt(diagnostics)[0]);
+    assert.ok(evento, 'evento terminale registrato');
+    assert.equal(evento.level, 'notice');
+    assert.equal(evento.component, 'fleet');
+    assert.deepEqual(Object.keys(evento.meta).sort(), ['cell', 'generation', 'launchId', 'state']);
+    assert.equal(evento.meta.state, 'submitted');
+    assert.equal(evento.meta.launchId, w.ticket().promptOutcome.launchId);
+    const blob = JSON.stringify(evento);
+    assert.ok(!blob.includes('bootstrap segreto'), 'nessun prompt');
+    assert.ok(!blob.includes(w.ticket().promptOutcome.dir), 'nessun path');
+    // polling ulteriore: nessun secondo evento per lo stesso ciclo
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(eventiPrompt(diagnostics).length, 1);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: il pending che scade senza terminale non produce alcun evento', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 300));          // il tetto (clock finto) si consuma in pochi poll
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: pending per due poll poi terminale -> UN evento (nessuno per i poll)', async () => {
+  let polls = 0;
+  const holder = {};
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+    sleepImpl: async () => {
+      polls += 1;
+      if (polls === 2) {
+        scriviRecordCanale(w.ticket().promptOutcome.dir, {
+          version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+          generation: 0, state: 'submitted', ts: Date.now(),
+        });
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    },
+  });
+  try {
+    await w.runtime.up('Dev');
+    const ev = await finche(() => eventiPrompt(diagnostics)[0]);
+    assert.ok(ev);
+    assert.equal(eventiPrompt(diagnostics).length, 1);
+    assert.ok(polls >= 2);
+    void holder;
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: abort (shutdown) prima del primo poll e dopo: nessun evento, nemmeno se il terminale arriva dopo', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    await w.runtime.up('Dev');
+    w.runtime.shutdown();                                    // prima che il lavoro distaccato parta
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+  } finally { w.cleanup(); }
+});
+
+test('osservatore: down e restart abortiscono il ciclo senza toccare la catena dei lock; terminale dopo il down -> nessun evento', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+    sleepImpl: async () => { await new Promise((r) => setTimeout(r, 40)); },
+  });
+  try {
+    await w.runtime.up('Dev');
+    const dopo = w.runtime.down('Dev').catch((e) => e);          // stessa catena di sempre: nessun lock nuovo
+    const esito = await dopo;
+    assert.ok(!(esito instanceof Error) || /down|cella/i.test(String(esito.message)), 'il down si conclude o fallisce per le sue ragioni');
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'abortito dal down: nessun evento tardivo');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: cambio di generazione durante il ciclo invalida il ciclo, nessun evento della vecchia tupla', async () => {
+  let gen = 0;
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 }, generation: () => gen,
+    sleepImpl: async () => {
+      gen = 1;                                               // il proprietario ha ammesso la generazione 1
+      scriviRecordCanale(w.ticket().promptOutcome.dir, {
+        version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+        generation: 1, state: 'submitted', ts: Date.now(),
+      });
+      await new Promise((r) => setTimeout(r, 5));
+    },
+  });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'il ciclo e\' legato alla prima generazione qualificata');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: unknown derivato (nessun record) non e\' un terminale; la GET non avvia osservatori ne\' emette eventi', async () => {
+  const { w, diagnostics } = mondoOsservatore({ delivery: '' });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+    // un terminale arriva dopo la fine del ciclo: la GET lo legge, ma non ricrea nulla
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    const st = await w.runtime.cellStatus({});
+    assert.equal(st.cells[0].promptDelivery.state, 'submitted');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'nessun replay da GET');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: store che fallisce (null o throw) -> un solo avviso al logger a testo costante', async () => {
+  for (const modo of ['null', 'throw']) {
+    const righe = [];
+    const rotto = { record: () => { if (modo === 'throw') throw new Error('secret /home/x/path'); return null; } };
+    const { w } = mondoOsservatore({ diagnostics: rotto, log: (m) => righe.push(String(m)) });
+    try {
+      await w.runtime.up('Dev');
+      const mie = () => righe.filter((r) => r.includes('prompt delivery event'));
+      await finche(() => mie().length > 0);
+      await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual(mie(), ['nexuscrew fleet: prompt delivery event not recorded'], modo);
+      assert.ok(!righe.join('\n').includes('secret'), 'nessun errore grezzo nel logger');
+    } finally { w.runtime.shutdown(); w.cleanup(); }
+  }
+});
+
+test('store diagnostico: launchId e generation con validatori esatti, DENIED_KEY invariata', () => {
+  assert.deepEqual(sanitizeMeta({ launchId: 'a1b2c3d4e5f60718', generation: 3 }), { launchId: 'a1b2c3d4e5f60718', generation: 3 });
+  for (const male of [{ launchId: '../x' }, { launchId: 'A1B2C3D4E5F60718' }, { launchId: 'a1b2c3d4e5f6071' },
+    { generation: -1 }, { generation: 1.5 }, { generation: 2 ** 60 }, { generation: '1' }]) {
+    assert.deepEqual(sanitizeMeta(male), {}, JSON.stringify(male));
+  }
+  // la rete di chiavi vietate non si allarga: queste restano fuori
+  assert.deepEqual(sanitizeMeta({ prompt: 'x', terminal: 'x', path: '/x', file: 'f' }), {});
 });
 
 test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', async () => {
