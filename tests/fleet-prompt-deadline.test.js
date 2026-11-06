@@ -174,25 +174,25 @@ test('deadline 10: salto civile +/-1h non sposta il budget monotono', async () =
   assert.equal(pasteCount(tB), 0, 'nessun paste tardivo grazie a un salto civile');
 });
 
-// 11. readyWaitMs: 0: NESSUNA osservazione privilegiata a budget zero —
-// zero paste, zero Enter, skipped-unknown + deadlineExceeded. Il gate sta
-// nella funzione, non nel caller (input negativi al clamp producono 0).
-test('deadline 11: readyWaitMs 0 (e clamp a 0) -> mai paste, skipped-unknown + deadlineExceeded', async () => {
-  for (const zero of [0, -1, -1000]) {
-    const clk = virtualClock();
-    const t = mkTmux(clk);
-    const r = await deliverBootstrapPrompt({
-      ...OPTS, readyWaitMs: zero, pollMs: 100,
-      nowImpl: clk.now, sleepImpl: clk.sleep,
-      tmuxExecImpl: t.exec,
-      captureImpl: async () => CLAUDE_READY_LIKE,
-    });
-    assert.equal(r.delivered, false, `readyWaitMs ${zero}: budget zero non consegna`);
-    assert.equal(r.state, 'skipped-unknown');
-    assert.equal(r.deadlineExceeded, true);
-    assert.equal(pasteCount(t), 0, `readyWaitMs ${zero}: zero paste`);
-    assert.equal(enterCount(t), 0, `readyWaitMs ${zero}: zero Enter`);
-  }
+// 11. Budget valido speso fino in fondo: se il pane non diventa pronto non si
+// consegna nulla (zero paste, zero Enter) e l'esito e' skipped-unknown con
+// deadlineExceeded. Il caso «budget zero» non esiste piu' nel contratto: un
+// payload con 0 viene rifiutato dal validatore del supervisore, non trasformato
+// in una consegna impossibile.
+test('deadline 11: budget valido e pane che non diventa pronto -> mai paste, skipped-unknown + deadlineExceeded', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 1000, pollMs: 100,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => 'loading…\n',
+  });
+  assert.equal(r.delivered, false, 'pane non pronto: nessuna consegna');
+  assert.equal(r.state, 'skipped-unknown');
+  assert.equal(r.deadlineExceeded, true);
+  assert.equal(pasteCount(t), 0, 'zero paste');
+  assert.equal(enterCount(t), 0, 'zero Enter');
 });
 
 // 12. Retry oltre il bound: primo load PROVATAMENTE fallito pre-paste con

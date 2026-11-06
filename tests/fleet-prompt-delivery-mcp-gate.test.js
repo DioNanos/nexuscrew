@@ -52,7 +52,7 @@ test('MCP ready subito: consegna submitted con mcp ready (contratto P3 del Gate 
   const s = seams({ captures: ['❯'] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'ready', ready: ['a', 'b'], failed: [], pending: [] }),
@@ -67,7 +67,7 @@ test('budget esaurito con pending: consegna DEGRADATO VISIBILE con elenco bounde
   const s = seams({ captures: ['❯'] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'pending', ready: ['a'], failed: [], pending: ['lento', 'ko-server'] }),
@@ -83,7 +83,7 @@ test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', as
   let pasteChiamate = 0;
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     isCancelled: () => true,
     captureImpl: s.captureImpl,
     tmuxExecImpl: async (bin, args) => {
@@ -107,7 +107,7 @@ test('dialogo aperto al timeout: skipped-unknown (C7) con kind dettaglio, mai co
   let mcpChiamata = false;
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 40, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     nowImpl: clk.now, sleepImpl: clk.sleep,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     mcpWait: async () => { mcpChiamata = true; return { state: 'ready', ready: ['x'], failed: [], pending: [] }; },
@@ -126,7 +126,7 @@ test('composer never-ready (unknown a timeout): skipped-unknown anche con mcpWai
   const s = seams({ captures: [''] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 40, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     mcpWait: async () => ({ state: 'ready', ready: ['x'], failed: [], pending: [] }),
   });

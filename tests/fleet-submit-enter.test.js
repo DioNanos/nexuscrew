@@ -178,7 +178,7 @@ test('consegna: prompt con byte di controllo -> prompt-rejected, zero paste', as
 
 test('consegna: readiness di trasporto bounded — pane mai risolvibile', async () => {
   const { calls, run } = submit({ paneSequence: [null] }, {
-    bracketedPaste: true, readyWaitMs: 100, pollMs: 50,
+    bracketedPaste: true, readyWaitMs: 1000, pollMs: 50,
   });
   const r = await run();
   assert.equal(r.state, 'failed-pre-paste');

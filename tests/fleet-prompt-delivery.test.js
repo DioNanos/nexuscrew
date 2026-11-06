@@ -1451,7 +1451,7 @@ test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kim
 //    Ogni test usa HOME/dir in tmpdir: nessuna scrittura fuori dalla own tmp.
 // ===========================================================================
 const activityFiles = require('../lib/files/activity.js');
-const { validSupervise, validPayload } = require('../lib/fleet/cell-exec.js');
+const { validSupervise, validPayload, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
 
 // Harness del supervisore: clock MONOTONO iniettato (la vita di ogni
 // generazione e' lifeMs), sleep contati, spawn fake con exit a microtask
@@ -1528,6 +1528,29 @@ test('budget: bounds di maxTotalRestarts validati (1..200 intero), payload inval
   }), false, 'payload con tetto fuori bounds rifiutato');
   const { DEFAULT_SUPERVISE } = require('../lib/fleet/cell-exec.js');
   assert.equal(DEFAULT_SUPERVISE.maxTotalRestarts, 12, 'default 12: gen0 + 12 spawn');
+});
+
+test('attesa di prontezza nel payload: 1000..120000 interi, 0 e i frazionari rifiutati', () => {
+  // Il contratto unico del tempo di consegna: il validatore del supervisore non
+  // accetta piu' un payload con 0 (che il runtime non produce) ne' un valore
+  // fuori range. Un payload fuori contratto si rifiuta, non si corregge.
+  const conAttesa = (v) => validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 's', prompt: 'p', client: 'claude', readyWaitMs: v,
+  });
+  assert.equal(conAttesa(1000), true);
+  assert.equal(conAttesa(15000), true);
+  assert.equal(conAttesa(60000), true);
+  assert.equal(conAttesa(120000), true);
+  assert.equal(conAttesa(1234), true, 'millisecondi esatti');
+  assert.equal(conAttesa(0), false, 'zero non e\' un budget valido');
+  assert.equal(conAttesa(999), false, 'sotto il minimo');
+  assert.equal(conAttesa(120001), false, 'sopra il massimo');
+  assert.equal(conAttesa(15.5), false, 'frazione');
+  assert.equal(conAttesa('15000'), false, 'stringa');
+  assert.equal(conAttesa(-1), false, 'negativo');
+  assert.equal(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 's', prompt: 'p', client: 'claude',
+  }), true, 'assente = default');
 });
 
 test('budget: cap=2 -> esattamente 3 spawn (gen0+2), il 4o vietato, stop SENZA sleep inutile', async () => {
