@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -320,6 +320,7 @@ process.exit(0);
     leaseManager: mgr,
     boot: loadDefinitions(defsPath),
     ...(seamIdentita ? { leggiIdentitaProc: seamIdentita } : {}),
+    ...(typeof attestaNuova === 'function' ? { attestaAssenzaNuovaConnessione: attestaNuova } : {}),
   });
   t.after(() => {
     try { runtime.shutdown(); } catch (_) {}
@@ -672,6 +673,56 @@ test('recupero nella stessa down con has-session CLI in timeout: il timeout non 
   assert.equal(recupero.ok, true);
   assert.equal(recupero.outcome, 'resolved-dead');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+});
+
+// --- B: risposta del teardown persa, verdetto di sola lettura ---------------
+
+test('risposta del teardown persa + stessa istanza + sessione assente: il down chiude nella stessa chiamata', async (t) => {
+  const visti = [];
+  const w = creaMondo(t, {
+    attestaNuova: async (opts) => { visti.push(opts); return { attestato: true, motivo: 'assente' }; },
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  // Il verdetto CLI del recupero resta muto: senza la connessione nuova il
+  // down non potrebbe chiudere. Con essa chiude NELLA STESSA chiamata.
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const esito = await w.runtime.down('CellaAtt');
+  assert.equal(esito.ok, true);
+  assert.equal(esito.outcome, 'attested-exit');
+  assert.equal(esito.killed, true, 'il comando di teardown era partito');
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+  assert.equal(visti.length, 1, 'una sola connessione di attestazione');
+  // Binding: id esatto della sessione, incarnazione del server del lancio e
+  // deadline della stessa down — nessuna risoluzione per nome.
+  assert.equal(visti[0].sessionId, SESSIONE);
+  assert.equal(visti[0].serverPid, 99999, 'il pid del server registrato al lancio');
+  assert.ok(Number.isFinite(visti[0].deadlineAt));
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0,
+    'nessun comando distruttivo sulla connessione nuova');
+});
+
+test('risposta del teardown persa + connessione nuova che NON attesta: resta STOP_UNKNOWN', async (t) => {
+  const w = creaMondo(t, {
+    attestaNuova: async () => ({ attestato: false, motivo: 'presente' }),
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => e.fleetCode === 'STOP_UNKNOWN'
+      && /down non dichiarabile.*connessione di controllo persa/.test(e.message),
+  );
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
 });
 
 test('recupero nella stessa down con lease ancora live: la prova (3) manca, resta STOP_UNKNOWN e il record resta', async (t) => {
