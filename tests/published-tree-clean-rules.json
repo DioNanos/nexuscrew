@@ -85,6 +85,11 @@
       "source": "\\bS[0-9]+F[0-9]+\\b",
       "flags": "",
       "reason": "internal layer finding marker in the published payload"
+    },
+    {
+      "source": "\\b(?:(?:nc|sentinella)-d[0-9]{1,4}[a-z0-9-]*|fleet-[a-z0-9-]*-d[0-9]{3,4}[a-z0-9-]*)",
+      "flags": "i",
+      "reason": "internal work-order code in a fixture or file name"
     }
   ],
   "payloadIds": [

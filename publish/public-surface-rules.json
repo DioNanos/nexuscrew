@@ -114,6 +114,11 @@
         "source": "\\b(?:[Rr]e-?)?[Aa]udit(?:or)?\\b[^\\n]{0,40}?\\b(?=[0-9a-f]{7,40}\\b)(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\\b|\\b[Pp]iano\\s+(?:v[0-9]+|[A-Z]?[0-9]+)\\b|\\b(?:[Pp]iano|[Rr]evisione|[Cc]ontratto|rev ?[0-9]+)\\b[^\\n]{0,40}?\\s:[0-9]{1,5}(?:-[0-9]{1,5})?\\b",
         "flags": "i",
         "reason": "internal audit hash or plan reference (never exempt)"
+      },
+      "LOWERCASE_ID": {
+        "source": "\\b(?:(?:nc|sentinella)-d[0-9]{1,4}[a-z0-9-]*|fleet-[a-z0-9-]*-d[0-9]{3,4}[a-z0-9-]*)",
+        "flags": "i",
+        "reason": "internal work-order code in a fixture or file name"
       }
     },
     "denyToken": [],

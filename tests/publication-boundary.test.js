@@ -420,6 +420,72 @@ test('provenance: the family has no exemption of any kind', () => {
   for (const wide of ['README.md', 'CHANGELOG.md', 'skills/']) assert.ok(!prefixes.includes(wide), `${wide} must not be exempt as a whole`);
 });
 
+// Le fixture dei test nominavano i giri di lavoro in minuscolo (`nc-d582-…`,
+// `sentinella-d582`, il vecchio nome di un file di test). I codici in
+// MAIUSCOLO erano coperti; queste forme no, e il rilevatore le contava zero.
+// Sono un punto cieco suo, non un'assenza nel repository.
+test('workcodes: a lowercase work-order prefix in a fixture name fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-lower-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: "const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-d582-proc-'));\n" }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /internal work-order code in a fixture or file name/);
+    assert.match(result.stderr, /nc-d582-proc-/);
+    assert.equal(fs.existsSync(manifest), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: a tmux sentinel named after a work order fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-sentinel-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: "const nome = 'sentinella-d582';\n" }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /sentinella-d582/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('workcodes: an old test file name carrying a work order fails the verifier', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-oldname-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: '// provato con seam in fleet-vl-bootstrap-d558-runtime.test.js\n' }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /fleet-vl-bootstrap-d558-runtime/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Il positivo: i nomi neutri non sono codici e non devono accendere il gate.
+test('workcodes: neutral fixture and file names pass', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-neutral-'));
+  try {
+    const files = [{ rel: 'tests/demo.test.js', data: "const a = 'nc-group-post-';\\nconst b = 'nc-claim-outcome-';\\nconst c = 'nc-sentinel';\\n// provato con seam in fleet-vl-bootstrap-claim-runtime.test.js\\n" }];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('workcodes: a family exemption does not hide another family', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-scope-'));
   try {
