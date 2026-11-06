@@ -526,6 +526,54 @@ test('la morte del server non chiude un lancio cambiato durante l\'attesa', asyn
     'l\'incertezza del lancio vecchio non deve finire sul lancio nuovo');
 });
 
+test('fence: il record cambiato durante l\'attesa host non viene cancellato', async (t) => {
+  // Il record viene sostituito nella finestra asincrona fra la guardia e la
+  // rimozione: la rimozione e' per NOME, quindi cancellerebbe il lancio NUOVO.
+  let w = null;
+  const leggiOriginale = launchTarget.leggi;
+  let cambiato = false;
+  t.after(() => { launchTarget.leggi = leggiOriginale; });
+  w = creaMondo(t, {
+    attestaNuova: async () => {
+      launchTarget.leggi = (...args) => {
+        const r = leggiOriginale(...args);
+        launchTarget.leggi = leggiOriginale;
+        queueMicrotask(() => {
+          const rec = r.record;
+          launchTarget.registra(w.filesRoot, NOME, {
+            launchId: 'abcdef0123456789',
+            sessionId: rec.sessionId,
+            paneId: rec.paneId,
+            tmuxSocket: rec.tmuxSocket,
+            serverPid: rec.serverPid,
+            panePid: rec.panePid,
+            paneStarttime: rec.paneStarttime,
+            family: rec.family,
+          });
+          cambiato = true;
+        });
+        return r;
+      };
+      return { attestato: true, motivo: 'incarnazione-morta' };
+    },
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.equal(cambiato, true, 'il record doveva cambiare durante l\'attesa');
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'IDENTITY_UNVERIFIED');
+  const dopo = leggiOriginale(w.filesRoot, NOME);
+  assert.equal(dopo.stato, 'presente', 'il record del lancio nuovo deve restare');
+  assert.equal(dopo.record.launchId, 'abcdef0123456789');
+  assert.notEqual(dopo.record.incerto, true, 'nessuna marcatura sul lancio nuovo');
+});
+
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
 
 test('down su /proc affollato: uscita provata + client morto con la sessione NON attesta, ma le tre prove chiude NELLA STESSA down (attested-recovery) e l up dopo riesce', async (t) => {
