@@ -354,6 +354,19 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   await new Promise((r) => setTimeout(r, 1500));
   assert.equal(chat(), 1, 'nessun reinvio dopo il terminale');
 
+  // Sentinella sul server tmux del test. Il test usa un server PRIVATO che
+  // parte con una config privata (tmux-osserva.conf), quindi vale il default
+  // `exit-empty on`: se la cella fosse l'unica sessione, la kill-session del
+  // down farebbe uscire il server e la has-session di sola lettura non
+  // troverebbe piu' nessuno a cui chiedere — il verdetto specifico non
+  // arriverebbe e il down resterebbe STOP_UNKNOWN. Sulla flotta il server e'
+  // condiviso e ha sempre altre sessioni: la sentinella riproduce quella
+  // condizione senza toccare il prodotto. Il server del test viene chiuso per
+  // pid nel cleanup, sentinella compresa.
+  const sentinella = tmuxTest(['new-session', '-d', '-s', 'sentinella-d582', 'sleep', '3600']);
+  assert.equal(sentinella.status, 0,
+    `sessione sentinella non creata: ${String(sentinella.stderr || '').trim()}`);
+
   const down1 = await fleet.down('Mai');
   assert.equal(down1.ok, true, `down: ${JSON.stringify(down1)}`);
 
