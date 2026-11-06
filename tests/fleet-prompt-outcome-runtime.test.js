@@ -580,3 +580,50 @@ test('supervisore: dopo il terminale la retention lascia 8 record TOTALI con il 
     assert.ok(restanti.includes(`prompt-${LAUNCH}.json`), 'il lancio corrente e\' dentro gli otto');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+// --- Fix R2: un pending incompleto trattiene l'effetto ---------------------------
+// Il mondo e' quello di startGenerationPrompt con i seams; solo fs.writeSync e'
+// sostituito, e SOLO durante l'ammissione sincrona (il pending si scrive li').
+function ammissione(root, { config = {}, generation = 0, gate = { ultimaGenerazioneAmmessa: -1 }, deliver, over = {} } = {}) {
+  const errs = []; let timer = null; const consegne = [];
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, client: 'kimi', readyWaitMs: 1000, ...config },
+    generation, { exited: false },
+    {
+      promptOutcome: canale(root), promptGate: gate,
+      setTimeout: (fn) => { timer = fn; return { unref() {} }; }, clearTimeout: () => {},
+      writeError: (m) => errs.push(String(m)),
+      tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+      deliverBootstrapPrompt: async (o) => { consegne.push(o); return deliver ? deliver(o) : { state: 'submitted' }; },
+      ...over,
+    },
+  );
+  return { ctl, errs, consegne, fire: () => timer() };
+}
+
+test('supervisore: una scrittura del pending che non progredisce trattiene la consegna e non lascia byte parziali', async () => {
+  const root = tmpRoot(); const originale = fs.writeSync;
+  try {
+    let a;
+    fs.writeSync = () => 0;     // nessun progresso: ne' 7 byte ne' altro
+    try { a = ammissione(root); } finally { fs.writeSync = originale; }
+    const dirPrompt = path.join(root, 'cloud-T');
+    assert.deepEqual(fs.readdirSync(dirPrompt), [], 'nessun record parziale ne\' temporaneo');
+    await a.fire(); await a.ctl.settled;
+    assert.equal(a.consegne.length, 0, 'zero consegna con un pending non completo');
+    assert.ok(a.errs.some((m) => m.includes('delivery withheld')));
+  } finally { fs.writeSync = originale; fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('supervisore: una scrittura corta del pending si completa e la consegna prosegue', async () => {
+  const root = tmpRoot(); const originale = fs.writeSync;
+  try {
+    let a;
+    fs.writeSync = (fd, buf, off, len, pos) => originale(fd, buf, off, Math.min(len, 7), pos);
+    try { a = ammissione(root); } finally { fs.writeSync = originale; }
+    const letto = activityFiles.leggiRecordPrompt(path.join(root, 'cloud-T'), LAUNCH);
+    assert.equal(letto.state, 'pending', 'il pending e\' intero e leggibile');
+    await a.fire(); await a.ctl.settled;
+    assert.equal(a.consegne.length, 1);
+  } finally { fs.writeSync = originale; fs.rmSync(root, { recursive: true, force: true }); }
+});

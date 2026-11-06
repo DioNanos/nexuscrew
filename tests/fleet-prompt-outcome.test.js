@@ -189,6 +189,117 @@ test('scriviDurabile: ogni fallimento iniettato -> false, nessun residuo', () =>
   }
 });
 
+// --- 6b. Scrittura completa, close controllato, antenati creati ---------------
+// Il fs di questi test e' quello REALE con UN solo metodo sostituito: il file
+// finisce davvero su disco e il test legge il risultato.
+function fsCon(over) {
+  return Object.assign(Object.create(fs), over);
+}
+
+test('scriviDurabile: una scrittura corta si COMPLETA (offset in byte), il file e\' intero', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  try {
+    // Contenuto con caratteri multibyte: gli offset sono in BYTE, non in code unit.
+    const contenuto = `${JSON.stringify({ k: 'àèìòù-€-ok' })}\n`;
+    let chiamate = 0;
+    const f = fsCon({
+      writeSync: (fd, buf, off, len, pos) => {
+        chiamate += 1;
+        // Ogni chiamata scrive AL PIU' 5 byte.
+        return fs.writeSync(fd, buf, off, Math.min(len, 5), pos);
+      },
+    });
+    assert.equal(activityFiles.scriviDurabile(dir, 'r.json', contenuto, { fsImpl: f }), true);
+    assert.equal(fs.readFileSync(path.join(dir, 'r.json'), 'utf8'), contenuto);
+    assert.ok(chiamate > 1, 'la scrittura e\' stata ripresa piu\' volte');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scriviDurabile: nessun progresso nella scrittura -> false, nessun file, nessun residuo', () => {
+  for (const progresso of [0, -1, 1.5, NaN, undefined]) {
+    const root = tmpRoot(); const dir = dirSessione(root);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      const f = fsCon({ writeSync: () => progresso });
+      assert.equal(activityFiles.scriviDurabile(dir, 'r.json', '{"a":1}\n', { fsImpl: f }), false, String(progresso));
+      assert.deepEqual(fs.readdirSync(dir), [], `${progresso}: ne' destinazione ne' temporaneo`);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  }
+});
+
+test('scriviDurabile: un progresso oltre il residuo non e\' una scrittura completa', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const f = fsCon({ writeSync: () => 10 ** 6 });
+    assert.equal(activityFiles.scriviDurabile(dir, 'r.json', '{"a":1}\n', { fsImpl: f }), false);
+    assert.deepEqual(fs.readdirSync(dir), []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scriviDurabile: il close del file che fallisce NON si trasforma in successo', () => {
+  const root = tmpRoot(); const dir = dirSessione(root);
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const aperti = new Set();
+    const f = fsCon({
+      openSync: (p, flags, ...a) => {
+        const fd = fs.openSync(p, flags, ...a);
+        if (flags === 'wx') aperti.add(fd);
+        return fd;
+      },
+      closeSync: (fd) => {
+        fs.closeSync(fd);
+        if (aperti.delete(fd)) { const e = new Error('inject close'); e.code = 'EIO'; throw e; }
+      },
+    });
+    assert.equal(activityFiles.scriviDurabile(dir, 'r.json', '{"a":1}\n', { fsImpl: f }), false);
+    assert.deepEqual(fs.readdirSync(dir), [], 'nessuna destinazione visibile, temporaneo pulito');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scriviDurabile: tutti gli antenati creati da questa chiamata sono sincronizzati', () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'a', 'b', 'sessione');
+    const aperti = new Map(); const sincronizzate = [];
+    const f = fsCon({
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); aperti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) sincronizzate.push(aperti.get(fd));
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviDurabile(dir, 'r.json', '{"a":1}\n', { fsImpl: f }), true);
+    // La directory della sessione, ogni directory NATA da questa chiamata e il
+    // primo antenato che esisteva gia' (la sua entry contiene la prima nuova).
+    for (const atteso of [root, path.join(root, 'a'), path.join(root, 'a', 'b'), dir]) {
+      assert.ok(sincronizzate.includes(atteso), `fsync mancante: ${path.relative(root, atteso) || '.'}`);
+    }
+    // Una directory che ESISTEVA non genera fsync degli antenati.
+    sincronizzate.length = 0;
+    assert.equal(activityFiles.scriviDurabile(dir, 'r2.json', '{"a":2}\n', { fsImpl: f }), true);
+    assert.deepEqual(sincronizzate, [dir]);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scriviDurabile: il fsync di un antenato creato che fallisce -> false (destinazione non cancellata)', () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'a', 'b', 'sessione');
+    const aperti = new Map();
+    const f = fsCon({
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); aperti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (aperti.get(fd) === path.join(root, 'a')) { const e = new Error('inject'); e.code = 'EIO'; throw e; }
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviDurabile(dir, 'r.json', '{"a":1}\n', { fsImpl: f }), false);
+    assert.equal(fs.existsSync(path.join(dir, 'r.json')), true, 'come per il fsync della directory: non si cancella');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- 7. Nessun contenuto grezzo nel file --------------------------------------
 test('record: nessun testo del prompt nel file, solo chiavi ammesse', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
