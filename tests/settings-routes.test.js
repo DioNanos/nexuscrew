@@ -855,3 +855,133 @@ test('ai-desktop NEGATIVO: la chiave in POST /config accetta solo boolean', asyn
   });
   assert.equal(koR.status, 400);
 });
+
+
+// --- attesa di prontezza: salvato e applicato sono due cose -------------------
+
+function fleetFinto({ valore = null, applica = null } = {}) {
+  const chiamate = [];
+  return {
+    chiamate,
+    getRuntimeOption: (k) => (k === 'bootstrapReadyWaitMs' ? valore : null),
+    setRuntimeOption: (k, v) => {
+      if (k !== 'bootstrapReadyWaitMs') return { applied: null, reason: 'unknown-key' };
+      chiamate.push(v);
+      return applica ? applica(v) : { applied: v };
+    },
+  };
+}
+
+const postAttesa = async (base, token, body) => fetch(`${base}/api/settings/config`, {
+  method: 'POST', headers: H(token), body: JSON.stringify(body),
+});
+
+test('attesa: la GET distingue effettivo e salvato e dichiara il restart', async (t) => {
+  const fleet = fleetFinto({ valore: 15000 });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 60000 }));
+  const st = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(st.bootstrapReadyWaitMs, 15000, 'effettivo: quello del runtime');
+  assert.equal(st.savedBootstrapReadyWaitMs, 60000, 'salvato: quello del file');
+  assert.equal(st.applyState, 'restart-required');
+  assert.equal(st.restartRequired, true);
+});
+
+test('attesa: un valore salvato invalido non diventa «salvato 15000»', async (t) => {
+  const fleet = fleetFinto({ valore: 15000 });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 'abc' }));
+  const st = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(st.savedBootstrapReadyWaitMs, null, 'invalido: nessun valore inventato');
+  assert.equal(st.bootstrapReadyWaitMs, 15000);
+  assert.equal(st.applyState, 'applied', 'niente da applicare: il runtime e\' al default');
+});
+
+test('attesa: il POST salva, applica e dice entrambe le cose', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.equal(body.config.bootstrapReadyWaitMs, 60000, 'config = valore persistito');
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(body.applyState, 'applied');
+  assert.equal(body.restartRequired, false);
+  assert.deepEqual(fleet.chiamate, [60000]);
+  const suDisco = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(suDisco.bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: valori invalidi -> 400 e file NON toccato', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 15000 }));
+  const prima = fs.readFileSync(configPath, 'utf8');
+  for (const v of [999, 120001, 0, '15000', 15.5, null, true, -1]) {
+    const r = await postAttesa(base, token, { bootstrapReadyWaitMs: v });
+    assert.equal(r.status, 400, `valore ${JSON.stringify(v)}`);
+    const body = await r.json();
+    assert.equal(body.code, 'bootstrap-wait-invalid');
+  }
+  assert.equal(fs.readFileSync(configPath, 'utf8'), prima, 'il file resta com\'era');
+  assert.deepEqual(fleet.chiamate, [], 'nessuna applicazione');
+});
+
+test('attesa: file illeggibile -> 409, nessuna scrittura', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, '{ non json');
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 409);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), '{ non json', 'niente sostituzione vuota');
+});
+
+test('attesa: setter ASSENTE -> salvato ma restart-required, applied null', async (t) => {
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve({ available: false }) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(body.restartRequired, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: setter che FALLISCE -> file salvato, applied null, restart-required', async (t) => {
+  const fleet = fleetFinto({ applica: () => ({ applied: null, reason: 'errore' }) });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: due POST concorrenti -> persist e apply nell\'ordine, senza divergenza', async (t) => {
+  const visti = [];
+  let sblocca;
+  const sospeso = new Promise((r) => { sblocca = r; });
+  const fleet = fleetFinto({
+    applica: async (v) => {
+      visti.push(v);
+      if (v === 60000) await sospeso;   // il primo resta appeso
+      return { applied: v };
+    },
+  });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const p1 = postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  const p2 = postAttesa(base, token, { bootstrapReadyWaitMs: 120000 });
+  await new Promise((r) => setTimeout(r, 30));
+  sblocca();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  const b1 = await r1.json();
+  const b2 = await r2.json();
+  assert.deepEqual(visti, [60000, 120000], 'applicazioni nell\'ordine dei POST');
+  assert.deepEqual(b1.applied, { bootstrapReadyWaitMs: 60000 });
+  assert.deepEqual(b2.applied, { bootstrapReadyWaitMs: 120000 });
+  const suDisco = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(suDisco.bootstrapReadyWaitMs, 120000, 'disco e ultimo applicato coincidono');
+});

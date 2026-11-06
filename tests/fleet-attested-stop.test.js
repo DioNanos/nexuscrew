@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999, engineEnv = null, diagnosticaAttesa = null } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999, engineEnv = null, diagnosticaAttesa = null, cellPrompt = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -301,7 +301,7 @@ process.exit(0);
       // il passthrough dell'operatore si prova qui.
       ? { id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys', env: engineEnv }
       : { id: 'eg', label: 'G', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } }],
-    cells: [{ id: 'CellaAtt', tmuxSession: NOME, cwd, engine: 'eg', boot: false }],
+    cells: [{ id: 'CellaAtt', tmuxSession: NOME, cwd, engine: 'eg', boot: false, ...(cellPrompt ? { prompt: cellPrompt } : {}) }],
   });
   let payloadLancio = null;
   const mgr = createLeaseManager({ home });
@@ -773,6 +773,34 @@ test('payload: l\'env esplicito dell\'engine vince sulla base, anche con TERM=du
   assert.equal(p.env.TERM, 'dumb', 'la scelta esplicita vince sul ripiego');
   assert.equal(p.env.NO_COLOR, '1', 'il passthrough dell\'operatore vince');
   assert.equal('FORCE_COLOR' in p.env, false, 'cio\' che non e\' scelto resta fuori');
+});
+
+test('attesa: il setter vale dalla PROSSIMA up e non tocca cio\' che e\' gia\' partito', async (t) => {
+  const w = creaMondo(t, {
+    cfgExtra: { bootstrapReadyWaitMs: 15000 },
+    engineEnv: { TERM: 'xterm' },
+    cellPrompt: 'bootstrap',
+  });
+  assert.equal(w.runtime.getRuntimeOption('bootstrapReadyWaitMs'), 15000);
+  await w.runtime.up('CellaAtt');
+  const primo = w.payloadLancio().restartPrompt.readyWaitMs;
+  assert.equal(primo, 15000, 'il lancio parte col valore del momento');
+  assert.deepEqual(w.runtime.setRuntimeOption('bootstrapReadyWaitMs', 60000), { applied: 60000 });
+  assert.equal(w.runtime.getRuntimeOption('bootstrapReadyWaitMs'), 60000);
+  // La sessione del primo lancio non esiste piu': il secondo up e' un lancio nuovo.
+  fs.writeFileSync(path.join(w.root, 'sessions.json'), '[]');
+  await w.runtime.up('CellaAtt').catch(() => {});
+  const secondo = w.payloadLancio().restartPrompt.readyWaitMs;
+  assert.equal(secondo, 60000, 'la up successiva usa il valore nuovo');
+  assert.equal(primo, 15000, 'il payload gia\' consegnato non cambia');
+});
+
+test('attesa: il setter rifiuta un valore fuori contratto e non cambia nulla', async (t) => {
+  const w = creaMondo(t, { cfgExtra: { bootstrapReadyWaitMs: 15000 } });
+  for (const [v, motivo] of [[999, 'range'], [120001, 'range'], ['15000', 'tipo'], [15.5, 'non-intero']]) {
+    assert.deepEqual(w.runtime.setRuntimeOption('bootstrapReadyWaitMs', v), { applied: null, reason: motivo });
+  }
+  assert.equal(w.runtime.getRuntimeOption('bootstrapReadyWaitMs'), 15000);
 });
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
