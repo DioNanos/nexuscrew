@@ -668,6 +668,51 @@ test('uscita OLTRE la deadline: resta stop-unknown, nessun falso pulito', async 
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
 });
 
+test('data del rifiuto: il motivo SPECIFICO del manager arriva fino a down.data', async (t) => {
+  // CP07: il manager dice «starttime mancante»; il confine runtime/manager non
+  // deve ridurlo a un generico «non-provata».
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  w.mgr.attendiUscita = async () => ({ provato: false, motivo: 'starttime' });
+  affollaProc(t);
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err);
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.equal(err.data.uscito, false);
+  assert.equal(err.data.motivoUscita, 'starttime', 'il motivo non va perso al confine runtime/manager');
+});
+
+test('data del rifiuto: un motivo fuori elenco diventa il valore fisso «non-provata»', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  w.mgr.attendiUscita = async () => ({ provato: false, motivo: 'boh' });
+  affollaProc(t);
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err);
+  assert.equal(err.data.motivoUscita, 'non-provata');
+});
+
+test('data del rifiuto: il taglio esterno della deadline produce sempre «scaduta»', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  // Il manager non risponde mai: chiude il conLimite esterno, e il motivo e'
+  // quello della deadline.
+  w.mgr.attendiUscita = () => new Promise(() => {});
+  affollaProc(t);
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err);
+  assert.equal(err.data.motivoUscita, 'scaduta');
+});
+
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
 
 test('down su /proc affollato: uscita provata + client morto con la sessione NON attesta, ma le tre prove chiude NELLA STESSA down (attested-recovery) e l up dopo riesce', async (t) => {
