@@ -717,11 +717,16 @@ test('risposta del teardown persa + connessione nuova che NON attesta: resta STO
   assert.ok(sup);
   affollaProc(t);
   fs.writeFileSync(w.marker.bloccaHasCli, '1');
-  await assert.rejects(
-    () => w.runtime.down('CellaAtt'),
-    (e) => e.fleetCode === 'STOP_UNKNOWN'
-      && /down non dichiarabile.*connessione di controllo persa/.test(e.message),
-  );
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.match(err.message, /down non dichiarabile.*connessione di controllo persa/);
+  // Il rifiuto deve dire PERCHE': esito del giudizio, conti e motivo
+  // dell'attestazione di sola lettura. Senza, una E2E rossa non si legge.
+  assert.ok(err.data, 'manca data nel rifiuto');
+  assert.equal(err.data.outcome, 'killed-clean');
+  assert.deepEqual(err.data.conti, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' });
+  assert.equal(err.data.attestazione, 'presente');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
 });
 

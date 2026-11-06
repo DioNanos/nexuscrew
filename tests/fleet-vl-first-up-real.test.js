@@ -367,7 +367,19 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   assert.equal(sentinella.status, 0,
     `sessione sentinella non creata: ${String(sentinella.stderr || '').trim()}`);
 
-  const down1 = await fleet.down('Mai');
+  // Se il down rifiuta, il motivo va stampato: senza, una E2E rossa non si
+  // legge. `data` porta solo enumerazioni e numeri (outcome, conti, motivo
+  // dell'attestazione), nessun segreto.
+  let down1;
+  try {
+    down1 = await fleet.down('Mai');
+  } catch (e) {
+    process.stderr.write(`[diagnostica first-up] down rifiutato: `
+      + `code=${e && e.fleetCode} message=${String((e && e.message) || '').slice(0, 400)} `
+      + `data=${JSON.stringify(e && e.data)}
+`);
+    throw e;
+  }
   assert.equal(down1.ok, true, `down: ${JSON.stringify(down1)}`);
 
   const up2 = await fleet.up('Mai');
