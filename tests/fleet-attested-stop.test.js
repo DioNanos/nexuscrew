@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, serverPid = 99999 } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -323,6 +323,7 @@ process.exit(0);
     ...(seamIdentita ? { leggiIdentitaProc: seamIdentita } : {}),
     ...(typeof attestaNuova === 'function' ? { attestaAssenzaNuovaConnessione: attestaNuova } : {}),
     ...(typeof leggiStarttime === 'function' ? { leggiStarttimeProc: leggiStarttime } : {}),
+    ...(typeof leggiIdentita === 'function' ? { leggiIdentitaProc: leggiIdentita } : {}),
   });
   t.after(() => {
     try { runtime.shutdown(); } catch (_) {}
@@ -439,15 +440,14 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
 
 // --- cablaggio del seam numerico verso l'attestazione ----------------------
 
-test('cablaggio: l\'attestazione riceve il seam NUMERICO dello starttime, non la lettura ternaria', async (t) => {
-  // Si inietta SOLO il lettore numerico: la funzione di attestazione e' quella
-  // vera. Se il runtime le passa la lettura ternaria ({esito, nascita}) invece
-  // del numero, il confronto d'identita' fallisce sempre e l'attestazione non
-  // arriva nemmeno al socket.
+test('cablaggio: l\'attestazione identifica il server in forma TERNARIA e si ferma al socket', async (t) => {
+  // Si inietta SOLO il lettore ternario: la funzione di attestazione e' quella
+  // vera. La morte dell'incarnazione si decide proprio su quella lettura, che
+  // deve distinguere «assente» da «illeggibile».
   const chiamate = [];
   const w = creaMondo(t, {
     serverPid: process.pid,
-    leggiStarttime: (pid) => { chiamate.push(pid); return leggiStarttimeProc(pid); },
+    leggiIdentita: (pid) => { chiamate.push(pid); return leggiIdentitaProc(pid); },
   });
   graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
@@ -459,10 +459,69 @@ test('cablaggio: l\'attestazione riceve il seam NUMERICO dello starttime, non la
   const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
   assert.ok(err, 'il down doveva rifiutare');
   assert.equal(err.fleetCode, 'STOP_UNKNOWN');
-  assert.ok(chiamate.length > 0,
-    'il seam numerico non e\' stato interrogato: il cablaggio passa ancora la lettura ternaria');
+  assert.ok(chiamate.includes(process.pid),
+    'il server del lancio deve essere identificato in forma ternaria');
   assert.equal(err.data.attestazione, 'socket',
-    'superata l\'identita\' ci si ferma al socket assente, non su «identita»');
+    'server vivo e socket assente: ci si ferma al socket, non sull\'identita\'');
+});
+
+test('morte provata dell\'incarnazione del server: il down chiude nella stessa chiamata', async (t) => {
+  // Il server registrato al lancio e' questo processo, che il seam dichiara
+  // ASSENTE: incarnazione finita, quindi la sua sessione non esiste piu'.
+  const w = creaMondo(t, {
+    serverPid: process.pid,
+    leggiIdentita: (pid) => (pid === process.pid
+      ? { esito: 'assente', nascita: null }
+      : leggiIdentitaProc(pid)),
+  });
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const esito = await w.runtime.down('CellaAtt');
+  assert.equal(esito.ok, true);
+  assert.equal(esito.outcome, 'attested-exit');
+  assert.equal(esito.killed, true, 'il teardown era partito');
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+});
+
+test('la morte del server non chiude un lancio cambiato durante l\'attesa', async (t) => {
+  let w = null;
+  const w2 = creaMondo(t, {
+    attestaNuova: async () => {
+      // Durante l'attesa il record viene sostituito da un lancio NUOVO: la
+      // morte del server vecchio non autorizza a chiuderlo.
+      const rec = launchTarget.leggi(w.filesRoot, NOME).record;
+      launchTarget.registra(w.filesRoot, NOME, {
+        launchId: 'abcdef0123456789',
+        sessionId: rec.sessionId,
+        paneId: rec.paneId,
+        tmuxSocket: rec.tmuxSocket,
+        serverPid: rec.serverPid,
+        panePid: rec.panePid,
+        paneStarttime: rec.paneStarttime,
+        family: rec.family,
+      });
+      return { attestato: true, motivo: 'incarnazione-morta' };
+    },
+  });
+  w = w2;
+  graceScaduta(w);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true });
+  assert.ok(sup);
+  affollaProc(t);
+  fs.writeFileSync(w.marker.bloccaHasCli, '1');
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'IDENTITY_UNVERIFIED');
+  assert.match(err.message, /identita' del lancio e' cambiata/);
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente',
+    'il record del lancio nuovo non si tocca');
 });
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------

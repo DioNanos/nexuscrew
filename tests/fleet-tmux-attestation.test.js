@@ -81,6 +81,90 @@ function base(socket, extra = {}) {
   };
 }
 
+// --- morte verificata della stessa incarnazione del server ------------------
+
+function incarnazione(stato) {
+  return { leggiIdentitaProc: () => stato };
+}
+
+test('incarnazione morta (numero sparito): attesta senza chiedere al socket', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assente' });
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base('/tmp/non-esiste-mai.sock', {
+    bin: finto.bin, ...incarnazione({ esito: 'assente', nascita: null }),
+  }));
+  assert.equal(r.attestato, true);
+  assert.equal(r.motivo, 'incarnazione-morta');
+  assert.deepEqual(finto.invocazioni(), [], 'nessun client su un server morto');
+});
+
+test('pid riutilizzato con nascita diversa: la vecchia incarnazione e\' finita', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assente' });
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base('/tmp/non-esiste-mai.sock', {
+    bin: finto.bin, ...incarnazione({ esito: 'presente', nascita: NASCITA + 1 }),
+  }));
+  assert.equal(r.attestato, true);
+  assert.equal(r.motivo, 'incarnazione-morta');
+  assert.deepEqual(finto.invocazioni(), [], 'nessuna azione sul processo nuovo');
+});
+
+test('lettura negata dell\'incarnazione: non attesta', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assente' });
+  for (const stato of [{ esito: 'indeterminata', nascita: null }, null, { esito: 'presente', nascita: null }]) {
+    const r = await tmuxControl.attestaAssenzaNuovaConnessione(base('/tmp/non-esiste-mai.sock', {
+      bin: finto.bin, ...incarnazione(stato),
+    }));
+    assert.equal(r.attestato, false, `stato ${JSON.stringify(stato)}`);
+  }
+  assert.deepEqual(finto.invocazioni(), []);
+});
+
+test('nascita iniziale mancante o non numerica: non attesta', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assente' });
+  for (const nascita of [null, undefined, 'x']) {
+    const r = await tmuxControl.attestaAssenzaNuovaConnessione(base('/tmp/non-esiste-mai.sock', {
+      bin: finto.bin, serverStarttime: nascita,
+    }));
+    assert.equal(r.attestato, false, `nascita ${String(nascita)}`);
+  }
+});
+
+test('server VIVO con socket irraggiungibile: non attesta (l\'irraggiungibilita\' non e\' morte)', async (t) => {
+  // Il file del socket c'e' (lstat passa) ma nessuno risponde alla connessione:
+  // e' il caso che l'irraggiungibilita' non deve promuovere a morte.
+  const finto = tmuxFinto(t, { modo: 'assente' });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin,
+    leggiIdentitaProc: () => ({ esito: 'presente', nascita: NASCITA }),
+    connetti: async () => false,
+  }));
+  assert.equal(r.attestato, false);
+  assert.equal(r.motivo, 'server-assente');
+});
+
+test('server vivo e vuoto («no current target») NON attesta: la variante resta aperta', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'assenza', assenza: 'no current target' });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin,
+    leggiIdentitaProc: () => ({ esito: 'presente', nascita: NASCITA }),
+  }));
+  assert.equal(r.attestato, false, 'un errore generico non e\' un verdetto sul target');
+});
+
+test('la morte dell\'incarnazione non invia segnali a nessuno', async (t) => {
+  const chiamate = [];
+  const vero = process.kill;
+  process.kill = (pid, sig) => { chiamate.push([pid, sig]); throw new Error('mai'); };
+  t.after(() => { process.kill = vero; });
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base('/tmp/non-esiste-mai.sock', {
+    bin: tmuxFinto(t, { modo: 'assente' }).bin,
+    ...incarnazione({ esito: 'assente', nascita: null }),
+  }));
+  assert.equal(r.attestato, true);
+  assert.deepEqual(chiamate, []);
+});
+
 test('sessione assente, stessa incarnazione: attesta', async (t) => {
   const finto = tmuxFinto(t, { modo: 'assente' });
   const socket = await socketInAscolto(t);
