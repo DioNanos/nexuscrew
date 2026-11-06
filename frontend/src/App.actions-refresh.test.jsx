@@ -124,3 +124,49 @@ describe('le azioni cella chiedono il refresh della route toccata', () => {
     await agisci('act-confirm');
   });
 });
+
+// Con la risposta persa l'azione può essere passata comunque. Il roster si
+// rilegge UNA volta, in differita, per la tupla toccata: non si ripete il POST
+// (sarebbe una seconda azione, non una riprova) e due richieste ravvicinate non
+// raddoppiano la lettura.
+describe('risposta persa: una rilettura differita per tupla, nessun replay', () => {
+  const peerTimeout = () => {
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504;
+    e.data = { error: 'peer non risponde entro il timeout', reason: 'federation-peer-timeout' };
+    return e;
+  };
+
+  const conferma = async () => {
+    fireEvent.click(await screen.findByTestId('open-power'));
+    await screen.findByTestId('act-confirm');
+    mocks.refreshFleetRoute.mockClear();
+    fireEvent.click(screen.getByTestId('act-confirm'));
+  };
+
+  it('dopo un 504 il POST non si ripete e la rilettura arriva una volta', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    render(<App />);
+    await conferma();
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledWith(HUB, 't'));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
+    // la differita arriva dopo la finestra, e solo una volta
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(mocks.fleetUp).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2);
+  });
+
+  it('due richieste ravvicinate sulla stessa tupla: una sola rilettura differita', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    render(<App />);
+    await conferma();
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(2));
+    // due letture immediate (una per azione) e UNA SOLA differita: la seconda
+    // richiesta cade nella stessa finestra e viene coalesciuta, non raddoppiata
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+  });
+});

@@ -88,10 +88,14 @@ export function upActionNotice(result) {
 //   dal roster;
 // - 502 «upstream-timeout» del proxy federato (PROXY_TIMEOUT_MS): la cella
 //   remota può essere ancora in avvio mentre il proxy ha già risposto;
+// - 504 «federation-peer-timeout» del proxy federato: il peer non ha risposto
+//   entro il tetto della GET. È la stessa incertezza del 502 legacy, con lo
+//   stesso testo, ma il codice nei dati resta distinto per la diagnostica:
+//   chi indaga deve poter dire se l'attesa è scaduta qui o là.
 // - 409 SESSION_DUPLICATE su 'up' (preflight del runtime: la sessione esiste
 //   già). La cella è viva, non serve rilanciare.
-// 'down' non ha il 409: è idempotente per progetto (la kill di una sessione
-// assente non è errore) e risolve sempre con ok.
+// In nessuno di questi casi si ripete il POST: l'azione può essere già passata,
+// e un secondo invio non è una riprova ma una seconda azione.
 export function fleetActionErrorNotice(error, action) {
   if (!error) return null;
   // Due facce della stessa attesa: il timeout client (FLEET_ACTION_TIMEOUT_MS)
@@ -101,9 +105,11 @@ export function fleetActionErrorNotice(error, action) {
   // notice avvisa, l'esito reale arriva dal roster.
   const slowRoute = error.status === 502
     && error.data && error.data.cause === 'upstream-timeout';
-  if (error.name === 'TimeoutError' || slowRoute) {
+  const peerTimeout = error.status === 504
+    && error.data && error.data.reason === 'federation-peer-timeout';
+  if (error.name === 'TimeoutError' || slowRoute || peerTimeout) {
     return {
-      code: 'FLEET_ACTION_TIMEOUT',
+      code: peerTimeout ? 'FLEET_PEER_TIMEOUT' : 'FLEET_ACTION_TIMEOUT',
       recovery: null,
       text: t(action === 'down' ? 'fleet-down-slow' : 'fleet-up-slow'),
     };

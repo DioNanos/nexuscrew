@@ -33,6 +33,7 @@ import {
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { runFleetPowerAction } from './lib/fleet-action-notice.js';
+import { createDeferredReread } from './lib/deferred-reread.js';
 import useActionNotice from './hooks/useActionNotice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
@@ -1006,6 +1007,11 @@ export default function App() {
   const [powerCell, setPowerCell] = useState(null);
   const [bootSettlement, setBootSettlement] = useState(null);
   const bootSettlementSeq = useRef(0);
+  // Le riletture differite delle tuple la cui azione ha perso la risposta: una
+  // alla volta per tupla, e nessuna che sopravviva alla pagina.
+  const rilettureDifferite = useRef(null);
+  if (!rilettureDifferite.current) rilettureDifferite.current = createDeferredReread();
+  useEffect(() => () => { if (rilettureDifferite.current) rilettureDifferite.current.annullaTutto(); }, []);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
@@ -1402,6 +1408,16 @@ export default function App() {
     // che li mostra coi pulsanti riabilitati. La barra deck parla solo di
     // deck: il suo errore resta quello di caricamento/salvataggio/owner.
     const benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: mostraAvvisoDeck });
+    // Con la risposta persa (timeout client, 502 o 504 del peer) lo stato si è
+    // mosso senza che noi lo sapessimo: una rilettura sola, in differita, per
+    // QUESTA tupla. Il 409 «già in esecuzione» non ne ha bisogno: la sessione
+    // c'era già e la rilettura immediata qui sotto la vede.
+    if (benign && benign.code !== 'FLEET_SESSION_DUPLICATE') {
+      rilettureDifferite.current.programma(
+        `${route.length ? route.join('/') : 'local'}|${cell}`,
+        () => refreshFleetRoute(route, token),
+      );
+    }
     if (!benign) {
       const enabled = payload.action === 'up'
         ? !!payload.boot
