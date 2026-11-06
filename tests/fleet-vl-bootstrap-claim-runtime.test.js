@@ -240,7 +240,7 @@ test('runtime reale: host GIA\' ESISTENTE — up consegna il prompt, eligible pe
   assert.equal(res.prompt.state, 'submitted', 'esito canonico del supervisore letto dal runtime');
   assert.equal(res.prompt.generation, 0);
   const vb = w.tickets[0].restartPrompt.vlBootstrap;
-  assert.equal(vb.eligible, true, 'host esistente: idoneo comunque (requisito DAG)');
+  assert.equal(vb.eligible, true, 'host esistente: idoneo comunque (requisito)');
   assert.equal(vb.reason, 'launch');
   assert.ok(typeof vb.claimPath === 'string' && vb.claimPath.includes(path.join('.nexuscrew', 'vl-cells')));
   assert.ok(!vb.claimPath.includes(path.join('state', 'vl', 'host-v1')), 'claim mai dentro i file di VL');

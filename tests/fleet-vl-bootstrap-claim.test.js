@@ -148,7 +148,7 @@ function mkPrivateChain(home, dir) {
   }
 }
 
-test('claim per avvio: OGNI avvio e\' idoneo — host NUOVO e host GIA\' ESISTENTE (requisito DAG 30/10)', () => {
+test('claim per avvio: OGNI avvio e\' idoneo — host NUOVO e host GIA\' ESISTENTE (requisito)', () => {
   // host nuovo: la root non esiste
   const home = tmpHome();
   const d1 = decideVlBootstrap({
@@ -409,7 +409,7 @@ test('validRestartPrompt: vl ammesso con vlBootstrap bounded; rifiuti per kimi/v
   assert.equal(cellExec.validRestartPrompt(vlConfig({
     vlBootstrap: { eligible: false, reason: 'motivo-inventato' },
   })), false, 'motivo fuori enum rifiutato');
-  // i motivi del vocabolario pre-fix non sono piu\' bounded (per avvio, DAG 30/10)
+  // i motivi del vocabolario pre-fix non sono piu\' bounded (per avvio)
   assert.equal(cellExec.validRestartPrompt(vlConfig({
     vlBootstrap: { eligible: false, reason: 'host-pre-existing' },
   })), false, 'host-pre-existing fuori enum');
