@@ -155,8 +155,21 @@ exec ${TMUX} "$@"
     ],
   });
   const tickets = [];
-  const broker = createLaunchBroker({ home });
-  const fleet = await createBuiltinFleet({
+  // Il broker aggancia la lease come nel demone vero: la connessione one-shot
+  // del supervisore diventa il canale lease del manager del fleet (stesso
+  // attachInitial del broker costruito dal facade). `fleet` e' definito subito
+  // sotto: la callback gira solo dopo.
+  let fleet = null;
+  const broker = createLaunchBroker({
+    home,
+    onLease: (socket, lease) => {
+      const ok = !!(fleet && fleet.lease && lease && lease.cellId
+        && fleet.lease.attachInitial(lease.cellId, socket, { generation: 0 }));
+      if (!ok) { try { socket.destroy(); } catch (_) { /* gia' chiuso */ } }
+      return ok;
+    },
+  });
+  fleet = await createBuiltinFleet({
     home, fleetDefsPath: defsPath, tmuxBin,
     launchBroker: {
       issue: async (payload) => {
