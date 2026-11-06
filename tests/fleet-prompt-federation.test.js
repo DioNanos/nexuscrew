@@ -112,3 +112,56 @@ test('route reali: GET /api/fleet/status e percorso federato filtrato per scope,
   assert.equal(fs.readdirSync(w.root).sort().join(','), prima, 'nessuna scrittura dalla GET');
   void selfA;
 });
+
+test('catena reale a DUE server: il proxy federato A inoltra a B, lo scope di B filtra la voce intera, nessun leak', async (t) => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  t.after(() => fs.rmSync(w.root, { recursive: true, force: true }));
+  const fleet = costruisciFleet(w);
+  t.after(() => fleet.rt.shutdown());
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfed2-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  // B = proprietario della flotta; A = nodo del visitatore (nessuna flotta sua)
+  const B = await avvia(t, path.join(root, 'b'), fleet);
+  const A = await avvia(t, path.join(root, 'a'), { available: false, provider: 'disabled' });
+  const selfB = nodesStore.loadStoreStrict(B.nodesPath).nodeId;
+  const selfA = nodesStore.loadStoreStrict(A.nodesPath).nodeId;
+  // B accetta A come peer INBOUND con scope limitato alla sola cella 'Cella'
+  let stB = nodesStore.addNode(nodesStore.loadStoreStrict(B.nodesPath), {
+    name: 'a', remotePort: 41999, localPort: A.port, nodeId: selfA,
+    acceptToken: SECRET, direction: 'inbound', shared: true, visibility: 'network',
+  });
+  stB = nodesStore.setPeerAccessGrants(stB, 'a', {
+    cellVisibility: 'selected', cells: ['Cella'], eventsAccess: false, nodeEventsAccess: false,
+    askReplyAccess: false, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: true,
+  });
+  nodesStore.atomicWriteStore(B.nodesPath, stB);
+  // A raggiunge B come peer OUTBOUND (porta locale del tunnel = porta di B)
+  let stA = nodesStore.addNode(nodesStore.loadStoreStrict(A.nodesPath), {
+    name: 'b', remotePort: 41999, localPort: B.port, nodeId: selfB,
+    token: SECRET, direction: 'outbound', shared: true, visibility: 'network', ssh: 'u@b',
+  });
+  nodesStore.atomicWriteStore(A.nodesPath, stA);
+  const prima = fs.readdirSync(w.root).sort().join(',');
+  const r = await fetch(`${A.base}/api/route/b/_/fleet/status`, { headers: { authorization: `Bearer ${A.token}` } });
+  const testo = await r.text();
+  assert.equal(r.status, 200, testo.slice(0, 300));
+  const corpo = JSON.parse(testo);
+  assert.deepEqual(corpo.cells.map((c) => c.cell), ['Cella'], 'solo la cella in scope attraversa la catena');
+  assert.equal(corpo.cells[0].promptDelivery.launchId, LANCIO_VISIBILE);
+  assert.equal(corpo.cells[0].promptDelivery.generation, 4);
+  assert.equal(corpo.cells[0].promptMcp.failed[0], 'alfa');
+  for (const nascosto of [LANCIO_NASCOSTO, 'segreto-nascosto', 'Nascosta', '"generation":7']) {
+    assert.equal(testo.includes(nascosto), false, `non deve uscire dalla catena: ${nascosto}`);
+  }
+  assert.equal(fs.readdirSync(w.root).sort().join(','), prima, 'nessuna scrittura dalla catena');
+  // controllo positivo: con scope «tutte» la stessa catena porta ENTRAMBE le celle
+  // (il filtro, non l'assenza di dati, spiega l'esito sopra)
+  let stB2 = nodesStore.setPeerAccessGrants(nodesStore.loadStoreStrict(B.nodesPath), 'a', {
+    cellVisibility: 'all', cells: [], eventsAccess: false, nodeEventsAccess: false,
+    askReplyAccess: false, filesReadAccess: false, liveHostAccess: false, panelAccess: false, peerOperatorAccess: true,
+  });
+  nodesStore.atomicWriteStore(B.nodesPath, stB2);
+  const r2 = await fetch(`${A.base}/api/route/b/_/fleet/status`, { headers: { authorization: `Bearer ${A.token}` } });
+  const c2 = JSON.parse(await r2.text());
+  assert.deepEqual(c2.cells.map((c) => c.cell).sort(), ['Cella', 'Nascosta']);
+});
