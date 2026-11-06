@@ -357,6 +357,97 @@ for (const [nome, record] of [
   });
 }
 
+// --- 6d. Riattestazione: TUTTA la catena di antenati, fino al confine di proprieta' --
+const MIO_UID = typeof process.getuid === 'function' ? process.getuid() : null;
+
+test('ripubblicazione dopo il fallimento di un antenato SUPERIORE: lo risincronizza, o non conferma', () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'a', 'b', 'sessione');
+    const aperti = new Map();
+    const guasto = fsCon({
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); aperti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (aperti.get(fd) === path.join(root, 'a')) { const e = new Error('inject'); e.code = 'EIO'; throw e; }
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: guasto }), false);
+    // Seconda pubblicazione, SENZA il contesto della prima: filesystem sano.
+    const visti = new Map(); const sincronizzate = [];
+    const sano = fsCon({
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); visti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) sincronizzate.push(visti.get(fd));
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: sano }), true);
+    for (const atteso of [dir, path.join(root, 'a', 'b'), path.join(root, 'a'), root]) {
+      assert.ok(sincronizzate.includes(atteso), `antenato non risincronizzato: ${path.relative(root, atteso) || '.'}`);
+    }
+    // Con lo stesso antenato ANCORA rotto la conferma non arriva.
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: guasto }), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('riattestazione: la catena si ferma al primo antenato che NON e\' dell\'utente (confine dichiarato)', { skip: MIO_UID === null }, () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'a', 'sessione');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), true);
+    const sopra = path.dirname(root); const ancoraSopra = path.dirname(sopra);
+    // `root` e tutto cio' che contiene e' dell'utente; `sopra` no.
+    const visti = new Map(); const sincronizzate = [];
+    const f = fsCon({
+      statSync: (p, ...a) => {
+        const st = fs.statSync(p, ...a);
+        return { isDirectory: () => st.isDirectory(), uid: (p === root || p.startsWith(root + path.sep)) ? MIO_UID : MIO_UID + 1 };
+      },
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); visti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) sincronizzate.push(visti.get(fd));
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: f }), true);
+    assert.ok(sincronizzate.includes(root), 'l\'ultimo antenato dell\'utente');
+    assert.ok(sincronizzate.includes(sopra), 'il primo antenato NON dell\'utente contiene l\'entry di root');
+    if (ancoraSopra !== sopra) assert.ok(!sincronizzate.includes(ancoraSopra), 'oltre il confine non si sale');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('riattestazione: un antenato non dell\'utente che non si apre (EACCES) si salta; uno dell\'utente no', { skip: MIO_UID === null }, () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'sessione');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), true);
+    const sopra = path.dirname(root);
+    const stat = (p, ...a) => {
+      const st = fs.statSync(p, ...a);
+      return { isDirectory: () => st.isDirectory(), uid: (p === root || p.startsWith(root + path.sep)) ? MIO_UID : MIO_UID + 1 };
+    };
+    const negaSopra = fsCon({
+      statSync: stat,
+      openSync: (p, ...a) => {
+        if (p === sopra) { const e = new Error('inject'); e.code = 'EACCES'; throw e; }
+        return fs.openSync(p, ...a);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: negaSopra }), true,
+      'non si puo\' aprire cio\' che non e\' nostro: nessuna conferma da pretendere');
+    const negaRoot = fsCon({
+      statSync: stat,
+      openSync: (p, ...a) => {
+        if (p === root) { const e = new Error('inject'); e.code = 'EACCES'; throw e; }
+        return fs.openSync(p, ...a);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: negaRoot }), false,
+      'un antenato dell\'utente che non si impegna non e\' durabilita\' attestata');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- 7. Nessun contenuto grezzo nel file --------------------------------------
 test('record: nessun testo del prompt nel file, solo chiavi ammesse', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
@@ -419,7 +510,7 @@ test('lettore: tuple del record per identita\', anche con canale attivita\' off'
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ launchId: CORRENTE, state: 'skipped', reason: 'not-ready', notReady: 'not-ready-auth' })), true);
     // Il record del lancio corrente, PER IDENTITA': mai quello di un lancio
     // vecchio, mai attraverso il selettore launch-current.
-    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: CORRENTE, canale: 'off' });
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: CORRENTE, canale: 'off', generation: 0 });
     assert.deepEqual(letto, {
       launchId: CORRENTE, generation: 0, state: 'skipped',
       reason: 'not-ready', notReady: 'not-ready-auth', ts: 1700000000000,
@@ -446,7 +537,7 @@ test('lettore: pending oltre deadlineTs+2000 -> unknown/deadline-exceeded, senza
     assert.equal(activityFiles.scriviRecordPrompt(dir, scaduto), true);
     const prima = fs.readFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), 'utf8');
     const mtimePrima = fs.statSync(path.join(dir, nomeRecordPrompt(LAUNCH))).mtimeMs;
-    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }), {
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH, generation: 0 }), {
       state: 'unknown', reason: 'deadline-exceeded', launchId: LAUNCH,
       generation: 0, ts: scaduto.ts,
     });
@@ -456,16 +547,16 @@ test('lettore: pending oltre deadlineTs+2000 -> unknown/deadline-exceeded, senza
     // Clock civile incoerente (ts nel futuro): unknown bounded, non pending eterno.
     fs.rmSync(dir, { recursive: true, force: true });
     assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ ts: adesso + 600000, deadlineTs: adesso + 604000 })), true);
-    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }), {
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH, generation: 0 }), {
       state: 'unknown', reason: 'deadline-exceeded', launchId: LAUNCH,
       generation: 0, ts: adesso + 600000,
     });
     // Un terminale realmente persistito DOPO resta leggibile.
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted' })), true);
-    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }).state, 'submitted');
+    assert.equal(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH, generation: 0 }).state, 'submitted');
     // Pending NON scaduto: resta pending in lettura.
     assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ launchId: VECCHIO, ts: adesso, deadlineTs: adesso + 60000 })), true);
-    const vivo = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: VECCHIO });
+    const vivo = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: VECCHIO, generation: 0 });
     assert.equal(vivo.state, 'pending');
     assert.equal(vivo.deadlineTs, adesso + 60000);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
@@ -627,7 +718,7 @@ test('record: pending senza deadlineTs rifiutato in scrittura e non leggibile co
     fs.mkdirSync(dir, { recursive: true });
     const { deadlineTs, ...senzaDeadline } = pending();
     fs.writeFileSync(path.join(dir, nomeRecordPrompt(LAUNCH)), `${JSON.stringify(senzaDeadline)}\n`);
-    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH });
+    const letto = activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH, generation: 0 });
     assert.equal(letto.state, 'unknown',
       'mai pending eterno: senza limite di osservabilita\' il record non e\' attestabile');
     assert.equal(letto.reason, 'record-broken',
