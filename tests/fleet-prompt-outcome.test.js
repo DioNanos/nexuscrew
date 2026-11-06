@@ -448,6 +448,83 @@ test('riattestazione: un antenato non dell\'utente che non si apre (EACCES) si s
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// --- 6e. Gli errori della riattestazione non sono prove di non-proprieta' --------
+test('riattestazione: uno stat che FALLISCE non e\' il confine di proprieta\': false, non una catena troncata', () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'a', 'b', 'sessione');
+    const aperti = new Map();
+    const primoGuasto = fsCon({
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); aperti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (aperti.get(fd) === root) { const e = new Error('inject'); e.code = 'EIO'; throw e; }
+        return fs.fsyncSync(fd);
+      },
+    });
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: primoGuasto }), false,
+      'il commit di `root` non e\' attestato');
+    // Retry: ogni open/fsync funziona, ma lo stat di `a` da' EIO.
+    const visti = new Map(); const sincronizzate = [];
+    const stat = (guasti) => (p, ...a) => {
+      if (guasti.includes(p)) { const e = new Error('inject stat'); e.code = 'EIO'; throw e; }
+      return fs.statSync(p, ...a);
+    };
+    const retry = (guasti) => fsCon({
+      statSync: stat(guasti),
+      openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); visti.set(fd, p); return fd; },
+      fsyncSync: (fd) => {
+        if (fs.fstatSync(fd).isDirectory()) sincronizzate.push(visti.get(fd));
+        return fs.fsyncSync(fd);
+      },
+    });
+    for (const guasto of [path.join(root, 'a'), path.join(root, 'a', 'b'), root]) {
+      assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: retry([guasto]) }), false,
+        `stat fallito su ${path.relative(root, guasto) || '.'}: durabilita\' non attestata`);
+    }
+    // Senza guasti di stat la stessa ripubblicazione completa la catena e conferma.
+    sincronizzate.length = 0;
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: retry([]) }), true);
+    assert.ok(sincronizzate.includes(root), 'la directory non impegnata dalla prima chiamata e\' ora sincronizzata');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('riattestazione: sul confine non proprio solo un open NEGATO si salta, un fsync fallito dopo un open riuscito no', { skip: MIO_UID === null }, () => {
+  const root = tmpRoot();
+  try {
+    const dir = path.join(root, 'sessione');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, pending()), true);
+    const sopra = path.dirname(root);
+    const statConfine = (p, ...a) => {
+      const st = fs.statSync(p, ...a);
+      return { isDirectory: () => st.isDirectory(), uid: (p === root || p.startsWith(root + path.sep)) ? MIO_UID : MIO_UID + 1 };
+    };
+    for (const codice of ['EACCES', 'EPERM', 'EIO']) {
+      // fsync del confine non proprio, DOPO un open riuscito: sempre un fallimento.
+      const aperti = new Map();
+      const fsyncRotto = fsCon({
+        statSync: statConfine,
+        openSync: (p, ...a) => { const fd = fs.openSync(p, ...a); aperti.set(fd, p); return fd; },
+        fsyncSync: (fd) => {
+          if (aperti.get(fd) === sopra) { const e = new Error('inject fsync'); e.code = codice; throw e; }
+          return fs.fsyncSync(fd);
+        },
+      });
+      assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: fsyncRotto }), false,
+        `fsync ${codice} dopo un open riuscito: nessuna conferma`);
+      // L'open negato (EACCES/EPERM) sullo stesso confine resta l'eccezione ammessa...
+      const openNegato = fsCon({
+        statSync: statConfine,
+        openSync: (p, ...a) => {
+          if (p === sopra) { const e = new Error('inject open'); e.code = codice; throw e; }
+          return fs.openSync(p, ...a);
+        },
+      });
+      assert.equal(activityFiles.scriviRecordPrompt(dir, pending(), { fsImpl: openNegato }), codice !== 'EIO',
+        `open ${codice}: ${codice === 'EIO' ? 'errore non qualificato -> false' : 'eccezione ammessa'}`);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 // --- 7. Nessun contenuto grezzo nel file --------------------------------------
 test('record: nessun testo del prompt nel file, solo chiavi ammesse', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
