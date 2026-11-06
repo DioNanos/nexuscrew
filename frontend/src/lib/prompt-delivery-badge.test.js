@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { cellRuntime, healthDot, promptDeliveryBadge } from './roster-view-model.js';
+import { buildLocalRoster, buildRemoteRoster, cellRuntime, healthDot, promptDeliveryBadge } from './roster-view-model.js';
+import { buildNodeGroups } from './nodes-model.js';
 
 // The prompt delivery is its own row: it says what happened to the prompt, not
 // what the cell is doing. A cell waiting for a prompt is not "working", and a
@@ -104,7 +105,7 @@ describe('prompt delivery badge', () => {
       state: 'skipped', reason: 'failed-pre-paste', launchId: 'abcdef0123456789',
       message: 'Traceback (most recent call last): permission denied',
     }));
-    expect(Object.keys(out).sort()).toEqual(['badge', 'key', 'launchId', 'priorita', 'reason']);
+    expect(Object.keys(out).sort()).toEqual(['badge', 'freschezza', 'key', 'launchId', 'priorita', 'reason']);
     expect(out.key).toBe('prompt-badge-problem');
     expect(out.reason).toBe('failed-pre-paste');
     for (const v of Object.values(out)) {
@@ -142,5 +143,48 @@ describe('the delivery row is orthogonal to the cell state', () => {
     }, {});
     expect(out.stato).toBe('ferma');
     expect(out.terminale).toBe('lease-lost');
+  });
+});
+
+// Una lettura non autorevole non promuove un'istantanea a stato corrente: il
+// peer che non risponde non viene interrogato per degradarla, quindi tocca al
+// frontend usare cio' che gia' sa — preserved, stale, lettura non autorevole.
+describe('badge e autorità della lettura', () => {
+  const storage = { getItem() { return null; }, setItem() {} };
+  const consegnata = [{ cell: 'Fixture', tmuxSession: 'fixture-a', tmux: true,
+    promptDelivery: { state: 'submitted', launchId: 'old-launch', generation: 0 } }];
+
+  it('un inventario remoto conservato non mostra submitted come corrente', () => {
+    const owner = { name: 'leaf', label: 'Leaf', instanceId: 'a'.repeat(32), route: ['hub', 'leaf'], stale: true };
+    const groups = buildNodeGroups({
+      nodes: [], topology: [owner], remote: {},
+      fleet: { 'hub/leaf': { available: false, cells: consegnata, fleetState: 'stale' } },
+    });
+    const riga = buildRemoteRoster(groups[0], storage).rawItems[0];
+    expect(riga.live).toBe(false);
+    expect(riga.prompt.badge).not.toBe('submitted');
+    expect(riga.prompt.freschezza).toBe('last-known');
+  });
+
+  it('una lettura locale non autorevole degrada lo stesso', () => {
+    const riga = buildLocalRoster(consegnata, [], new Map(), storage, { autorevole: false, fleetStale: true })[0];
+    expect(riga.prompt.badge).not.toBe('submitted');
+    expect(riga.prompt.freschezza).toBe('last-known');
+  });
+
+  it('una lettura corrente e autorevole resta submitted', () => {
+    const riga = buildLocalRoster(consegnata, [], new Map(), storage, { autorevole: true, fleetStale: false })[0];
+    expect(riga.prompt.badge).toBe('submitted');
+    expect(riga.prompt.freschezza).toBe('current');
+  });
+
+  it('una richiesta d azione resta visibile, ma come storico', () => {
+    const riga = buildLocalRoster(
+      [{ cell: 'Fixture', tmuxSession: 'fixture-a', tmux: true,
+        promptDelivery: { state: 'skipped', reason: 'prompt-rejected', launchId: 'old-launch' } }],
+      [], new Map(), storage, { autorevole: false, fleetStale: true },
+    )[0];
+    expect(riga.prompt.badge).toBe('action');
+    expect(riga.prompt.freschezza).toBe('last-known');
   });
 });

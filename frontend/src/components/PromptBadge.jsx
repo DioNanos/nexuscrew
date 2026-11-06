@@ -6,7 +6,11 @@ import './PromptBadge.css';
 // colore da un enum chiuso — nessun testo che arrivi dal nodo.
 export default function PromptBadge({ prompt }) {
   if (!prompt || !prompt.key) return null;
-  const testo = t(prompt.key);
+  // Da una lettura non corrente il dato e' l'ultimo noto, e va detto: il badge
+  // non lo presenta mai come un'attestazione di adesso.
+  const testo = prompt.freschezza === 'last-known' && prompt.badge !== 'stale'
+    ? `${t(prompt.key)} · ${t('prompt-badge-last-known')}`
+    : t(prompt.key);
   return (
     <span className={`nc-prompt-badge nc-prompt-badge-${prompt.badge}`} title={testo} aria-label={testo}>
       {testo}
