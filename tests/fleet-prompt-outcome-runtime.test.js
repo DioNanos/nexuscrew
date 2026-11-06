@@ -703,9 +703,11 @@ test('lettore: l\'autorita\' puo\' arrivare anche dal chiamante (altro processo)
     assert.equal(leggi({ launchId: LAUNCH, generation: 0 }).state, 'submitted', 'generazione coincidente');
     assert.deepEqual(leggi({ launchId: LAUNCH, generation: 1 }),
       { state: 'unknown', reason: 'generation-not-recorded', launchId: LAUNCH, generation: 1 });
-    // Un record PIU' NUOVO del contesto del chiamante non e' contraddetto da esso.
+    // Un record PIU' NUOVO del contesto del chiamante non lo aggiorna: la
+    // freschezza dell'autorita' non si deduce dal contenuto del record.
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(2, { state: 'unknown', reason: 'delivery-unknown' })), true);
-    assert.equal(leggi({ launchId: LAUNCH, generation: 1 }).generation, 2);
+    assert.deepEqual(leggi({ launchId: LAUNCH, generation: 1 }), { state: 'unknown', launchId: LAUNCH });
+    assert.equal(leggi({ launchId: LAUNCH, generation: 2 }).reason, 'delivery-unknown', 'autorita\' coincidente');
     // Una generazione dichiarata non valida e' un input invalido, non un'assenza.
     for (const generation of [-1, 1.5, '1', NaN]) {
       assert.equal(leggi({ launchId: LAUNCH, generation }), null, String(generation));
@@ -884,5 +886,54 @@ test('reprompt:false cancellato con stage ignoto -> unknown, non pending', async
   try {
     await repromptFalse(root, { ok: false, stage: 'strano' }, { cancella: true });
     assert.equal(letto(root).state, 'unknown');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- Fix R3: lo stato CORRENTE senza autorita' della generazione e' unknown ------
+test('lettore corrente: senza autorita\' sulla generazione un record presente e\' unknown, mai il suo contenuto', () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    for (const record of [
+      terminaleGen(0),
+      terminaleGen(0, { state: 'skipped', reason: 'not-ready' }),
+      { version: 1, event: 'prompt-delivery', launchId: LAUNCH, generation: 0, state: 'pending', ts: Date.now(), deadlineTs: Date.now() + 60000 },
+    ]) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record), true);
+      assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: LAUNCH }),
+        { state: 'unknown', launchId: LAUNCH }, record.state);
+    }
+    // La lettura del record STORICO e' un'altra cosa e resta com'e': il
+    // consumer non la usa per dedurre l'esito corrente.
+    assert.equal(activityFiles.leggiRecordPrompt(dir, LAUNCH).state, 'pending');
+    // Assente o rotto non portano un esito vecchio: restano quel che sono.
+    assert.deepEqual(activityFiles.leggiEsitoPromptCorrente(root, 'cloud-T', { launchId: 'e'.repeat(16) }),
+      { state: 'absent', launchId: 'e'.repeat(16) });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettore corrente: un lettore in un ALTRO processo senza autorita\' non legge il vecchio submitted dopo la gen1 fallita', () => {
+  const { spawnSync } = require('node:child_process');
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    assert.equal(activityFiles.scriviRecordPrompt(dir, terminaleGen(0)), true);
+    const ripristina = rotturaApertura(dir);
+    let a;
+    try { a = ammissione(root, { generation: 1, gate: { ultimaGenerazioneAmmessa: 0 } }); } finally { ripristina(); }
+    a.ctl.cancel();
+    const modulo = require.resolve('../lib/files/activity.js');
+    const leggiAltroProcesso = (lancio) => {
+      const r = spawnSync(process.execPath, ['-e',
+        'const A=require(process.argv[1]);console.log(JSON.stringify(A.leggiEsitoPromptCorrente(process.argv[2],"cloud-T",JSON.parse(process.argv[3]))));',
+        modulo, root, JSON.stringify(lancio)], { encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout.trim());
+    };
+    assert.deepEqual(leggiAltroProcesso({ launchId: LAUNCH }), { state: 'unknown', launchId: LAUNCH },
+      'nessuna autorita\' -> unknown, niente default gen0');
+    assert.deepEqual(leggiAltroProcesso({ launchId: LAUNCH, generation: 1 }),
+      { state: 'unknown', reason: 'generation-not-recorded', launchId: LAUNCH, generation: 1 });
+    assert.equal(leggiAltroProcesso({ launchId: LAUNCH, generation: 0 }).state, 'submitted',
+      'l\'autorita\' qualificata la porta il chiamante: con la gen0 dichiarata il record coincide');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
