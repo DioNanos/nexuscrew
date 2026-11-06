@@ -134,3 +134,33 @@ test('R1 02: la stessa definizione mutata, su una NUOVA istanza dopo il restart,
     assert.equal((await cell(w, l)).promptDelivery, undefined);
   } finally { clean(w); }
 });
+
+test('R1 03: il tetto viene dai budget EFFETTIVI del payload (readyMs clampato), non dalla config', async () => {
+  const clock = { t: 0 }; const d = createDiagnostics();
+  const fixture = managedFixture({ onWrite: () => { clock.t = 50000; } });
+  const w = fixture({
+    client: 'kimi', provider: 'native', delivery: 'submitted', readyWaitMs: 1000,
+    cfgExtra: { diagnostics: d, monotonicNow: () => clock.t, sleepImpl: async () => { clock.t += 500; }, log: () => {}, sendKeysReadyMs: 99999 },
+  });
+  try {
+    await w.runtime.up('Dev');
+    assert.equal(w.ticket().restartPrompt.readyMs, 30000, 'il payload clampa readyMs');
+    await delay(60);
+    // payload: 30000 + 1000 + 2000 = 33000 < 50000 gia' consumati prima dell'issue
+    assert.equal(d.logs().records.filter((x) => x.code === 'PROMPT_DELIVERY_TERMINAL').length, 0);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('R1 03: dentro la finestra effettiva l\'evento terminale c\'e\' ed e\' uno solo', async () => {
+  const clock = { t: 0 }; const d = createDiagnostics();
+  const fixture = managedFixture({});
+  const w = fixture({
+    client: 'kimi', provider: 'native', delivery: 'submitted', readyWaitMs: 1000,
+    cfgExtra: { diagnostics: d, monotonicNow: () => clock.t, sleepImpl: async () => { clock.t += 100; }, log: () => {} },
+  });
+  try {
+    await w.runtime.up('Dev');
+    await delay(100);
+    assert.equal(d.logs().records.filter((x) => x.code === 'PROMPT_DELIVERY_TERMINAL').length, 1);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
