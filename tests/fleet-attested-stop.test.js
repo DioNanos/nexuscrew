@@ -161,7 +161,7 @@ function svuotaProc(t) {
 
 // --- mondo: runtime + lease REALE + tmux finto scriptato -------------------
 
-function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999 } = {}) {
+function creaMondo(t, { faultIdentita = null, cfgExtra = null, attestaNuova = null, leggiStarttime = null, leggiIdentita = null, serverPid = 99999, engineEnv = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-att-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 });
@@ -296,7 +296,11 @@ process.exit(0);
   const defsPath = path.join(root, 'fleet.json');
   atomicWrite(defsPath, {
     schemaVersion: 1,
-    engines: [{ id: 'eg', label: 'G', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } }],
+    engines: [engineEnv
+      // Engine CUSTOM: per i managed l'env e' ristretto a una sola chiave, quindi
+      // il passthrough dell'operatore si prova qui.
+      ? { id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys', env: engineEnv }
+      : { id: 'eg', label: 'G', managed: { client: 'claude', provider: 'native', model: '', permissionPolicy: 'unsafe' } }],
     cells: [{ id: 'CellaAtt', tmuxSession: NOME, cwd, engine: 'eg', boot: false }],
   });
   let payloadLancio = null;
@@ -711,6 +715,41 @@ test('data del rifiuto: il taglio esterno della deadline produce sempre «scadut
   const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
   assert.ok(err);
   assert.equal(err.data.motivoUscita, 'scaduta');
+});
+
+// --- C17: ambiente del payload -------------------------------------------------
+
+function conEnv(t, valori) {
+  const prima = {};
+  for (const k of Object.keys(valori)) prima[k] = process.env[k];
+  t.after(() => {
+    for (const [k, v] of Object.entries(prima)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  for (const [k, v] of Object.entries(valori)) process.env[k] = v;
+}
+
+test('payload: TERM inutilizzabile diventa il ripiego e NO_COLOR/FORCE_COLOR spariscono dalla base', async (t) => {
+  conEnv(t, { TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '1' });
+  const w = creaMondo(t);
+  await w.runtime.up('CellaAtt');
+  const p = w.payloadLancio();
+  assert.equal(p.env.TERM, 'xterm-256color');
+  assert.equal('NO_COLOR' in p.env, false);
+  assert.equal('FORCE_COLOR' in p.env, false);
+});
+
+test('payload: l\'env esplicito dell\'engine vince sulla base, anche con TERM=dumb e NO_COLOR voluti', async (t) => {
+  conEnv(t, { TERM: 'dumb', NO_COLOR: '1', FORCE_COLOR: '1' });
+  const w = creaMondo(t, { engineEnv: { TERM: 'dumb', NO_COLOR: '1' } });
+  // Il payload viene emesso prima della prontezza: l'esito dell'up non serve.
+  await w.runtime.up('CellaAtt').catch(() => {});
+  const p = w.payloadLancio();
+  assert.equal(p.env.TERM, 'dumb', 'la scelta esplicita vince sul ripiego');
+  assert.equal(p.env.NO_COLOR, '1', 'il passthrough dell\'operatore vince');
+  assert.equal('FORCE_COLOR' in p.env, false, 'cio\' che non e\' scelto resta fuori');
 });
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
