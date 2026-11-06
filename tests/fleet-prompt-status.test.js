@@ -268,3 +268,79 @@ test('cellStatus e\' passivo: nessun file creato, modificato o potato; nessuna s
   await statoCella(w, leaseFinto({ generation: 3 }));
   assert.deepEqual(fotoFs(w.root), prima);
 });
+
+// ── ACL / federazione: la voce cella viaggia intera, il filtro la toglie intera ─
+const express = require('express');
+const { createCellScopeGuard } = require('../lib/cells/scope-guard.js');
+const { atomicWrite: scriviDefs } = require('../lib/fleet/definitions.js');
+
+const NODO_LOCALE = 'a'.repeat(32);
+const NODO_PEER = 'b'.repeat(32);
+
+test('federazione: la cella in scope porta la tupla, quella fuori scope non lascia ne\' voce ne\' identificatori', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  // seconda cella viva con un lancio proprio
+  const defs = JSON.parse(fs.readFileSync(w.defsPath, 'utf8'));
+  defs.cells.push({ ...defs.cells[0], id: 'Nascosta', tmuxSession: 'cloud-Nascosta' });
+  scriviDefs(w.defsPath, defs);
+  fs.writeFileSync(w.tmuxBin, `#!${process.execPath}
+const args = process.argv.slice(2);
+if (args.includes('list-sessions')) { process.stdout.write('cloud-Cella\\t1\\ncloud-Nascosta\\t1\\n'); }
+process.exit(0);
+`, { mode: 0o755 });
+  const LANCIO_VISIBILE = L1; const LANCIO_NASCOSTO = 'fedcba9876543210';
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: LANCIO_VISIBILE, canale: 'none' });
+  registraLancioCorrente(w.filesRoot, 'cloud-Nascosta', { launchId: LANCIO_NASCOSTO, canale: 'none' });
+  scriviTerminale(w, { generation: 4 });
+  const dirNascosta = path.join(w.filesRoot, 'cloud-Nascosta');
+  fs.mkdirSync(dirNascosta, { recursive: true, mode: 0o700 });
+  scriviRecordPrompt(dirNascosta, {
+    version: 1, event: 'prompt-delivery', launchId: LANCIO_NASCOSTO, generation: 7, state: 'submitted', ts: Date.now(),
+  });
+  const lease = {
+    status: () => ({ state: 'live' }),
+    readPromptSnapshot: async (cellId) => (cellId === 'Cella'
+      ? { ok: true, launchId: LANCIO_VISIBILE, applicable: true, generation: 4, epoch: 1, leaseId: 'x' }
+      : { ok: true, launchId: LANCIO_NASCOSTO, applicable: true, generation: 7, epoch: 1, leaseId: 'x' }),
+    promptSnapshotBinding: () => true,
+  };
+  const rt = w.apri(lease);
+  const store = { nodeId: NODO_LOCALE, nodes: [{
+    name: 'peer', nodeId: NODO_PEER, visibility: 'network', shared: true, cellVisibility: 'selected', cells: ['Cella'],
+  }] };
+  const app = express();
+  app.use(express.json());
+  app.use(createCellScopeGuard({
+    nodesPath: '/finto', loadStoreImpl: () => store,
+    cellForSession: (s) => (s && s.startsWith('cloud-') ? s.slice('cloud-'.length) : null),
+    resolveOrigin: (req) => (req.headers['x-test-visited']
+      ? { ok: true, trust: 'federated', visited: String(req.headers['x-test-visited']).split(',') }
+      : { ok: true, trust: 'local-bridge' }),
+  }));
+  // route imitata sul provider VERO: stessa composizione di GET /api/fleet/status
+  app.get('/fleet/status', async (_req, res) => res.json(await rt.status({})));
+  const srv = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
+  const get = async (visited) => {
+    const rs = await fetch(`http://127.0.0.1:${srv.address().port}/fleet/status`, {
+      headers: visited ? { 'x-test-visited': visited.join(',') } : {},
+    });
+    return { status: rs.status, testo: await rs.text() };
+  };
+  try {
+    const prima = fotoFs(w.root);
+    const remoto = await get([NODO_PEER, NODO_LOCALE]);
+    assert.equal(remoto.status, 200);
+    const corpo = JSON.parse(remoto.testo);
+    assert.deepEqual(corpo.cells.map((c) => c.cell), ['Cella'], 'solo la cella in scope');
+    assert.deepEqual(corpo.cells[0].promptDelivery, {
+      state: 'submitted', launchId: LANCIO_VISIBILE, generation: 4, ts: corpo.cells[0].promptDelivery.ts,
+    });
+    assert.equal(remoto.testo.includes(LANCIO_NASCOSTO), false, 'launchId di una cella nascosta non esce');
+    assert.equal(remoto.testo.includes('"generation":7'), false, 'generation di una cella nascosta non esce');
+    assert.equal(remoto.testo.includes('Nascosta'), false);
+    // locale: entrambe le celle, la GET non scrive nulla
+    const locale = JSON.parse((await get(null)).testo);
+    assert.deepEqual(locale.cells.map((c) => c.cell).sort(), ['Cella', 'Nascosta']);
+    assert.deepEqual(fotoFs(w.root), prima, 'nessuna scrittura dalla GET');
+  } finally { srv.close(); }
+});
