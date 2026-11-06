@@ -37,8 +37,7 @@ export function upActionNotice(result) {
   if (result && typeof result === 'object' && result.vlPromptDegraded === true) {
     return { code: 'VL_PROMPT_DEGRADED', recovery: null, text: t('fleet-vl-prompt-degraded') };
   }
-  // D-558 FIX1b (R3): esito della consegna del prompt iniziale vl di QUESTO
-  // avvio. Il payload puo' arrivare da un nodo remoto federato: si accettano
+  // L'esito della consegna del prompt iniziale vl di QUESTO avvio. Il payload puo' arrivare da un nodo remoto federato: si accettano
   // SOLO stati/reasons closed enum (slug `[a-z0-9-]`) e il testo e' i18n
   // locale. Lo skip NORMALE ('skipped', respawn/riattacco nello stesso avvio)
   // e l'esito 'submitted' NON generano avviso; 'failed', 'uncertain' e il non
