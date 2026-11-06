@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Le azioni cella del workspace desktop (kill, visibilità, boot, conferma
 // power) devono chiedere il refresh della ROUTE toccata dopo l'azione: il
@@ -168,5 +168,28 @@ describe('risposta persa: una rilettura differita per tupla, nessun replay', () 
     await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3), { timeout: 4000 });
     await new Promise((r) => setTimeout(r, 200));
     expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+  });
+});
+
+// Il 409 «sessione già in esecuzione» è un esito NOTO, non una risposta persa:
+// la lettura immediata basta e non deve partire anche una differita.
+describe('esito noto: nessuna lettura differita', () => {
+  const duplicate = () => {
+    const e = new Error('already running');
+    e.status = 409;
+    e.data = { error: 'already running', code: 'SESSION_DUPLICATE' };
+    return e;
+  };
+
+  it('un 409 di sessione duplicata non arma una lettura differita', async () => {
+    mocks.fleetUp.mockRejectedValue(duplicate());
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'an outcome that is known is not a lost response').toBe(prima);
   });
 });

@@ -1410,9 +1410,10 @@ export default function App() {
     const benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: mostraAvvisoDeck });
     // Con la risposta persa (timeout client, 502 o 504 del peer) lo stato si è
     // mosso senza che noi lo sapessimo: una rilettura sola, in differita, per
-    // QUESTA tupla. Il 409 «già in esecuzione» non ne ha bisogno: la sessione
-    // c'era già e la rilettura immediata qui sotto la vede.
-    if (benign && benign.code !== 'FLEET_SESSION_DUPLICATE') {
+    // QUESTA tupla. Il 409 «già in esecuzione» è un esito NOTO, non una
+    // risposta persa: la sessione c'era già e la lettura immediata la vede.
+    // Il codice lo restituisce l'helper come `benign.benign`, non `benign.code`.
+    if (benign && benign.benign !== 'FLEET_SESSION_DUPLICATE') {
       rilettureDifferite.current.programma(
         `${route.length ? route.join('/') : 'local'}|${cell}`,
         () => refreshFleetRoute(route, token),
