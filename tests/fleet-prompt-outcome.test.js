@@ -300,6 +300,63 @@ test('scriviDurabile: il fsync di un antenato creato che fallisce -> false (dest
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+// --- 6c. La ripubblicazione identica non attesta da sola la durabilita' ----------
+function fsDirFsyncRotto() {
+  return fsCon({
+    fsyncSync: (fd) => {
+      if (fs.fstatSync(fd).isDirectory()) { const e = new Error('inject dir fsync'); e.code = 'EIO'; throw e; }
+      return fs.fsyncSync(fd);
+    },
+  });
+}
+function fsContaFsync() {
+  const conteggi = { file: 0, dir: 0 };
+  const f = fsCon({
+    fsyncSync: (fd) => {
+      conteggi[fs.fstatSync(fd).isDirectory() ? 'dir' : 'file'] += 1;
+      return fs.fsyncSync(fd);
+    },
+  });
+  return { f, conteggi };
+}
+
+for (const [nome, record] of [
+  ['pending', () => pending()],
+  ['terminale', () => terminale({ state: 'submitted' })],
+]) {
+  test(`ripubblicazione identica di un ${nome} dopo un fsync di directory fallito: riattesta, non certifica dal read-back`, () => {
+    const root = tmpRoot(); const dir = dirSessione(root);
+    try {
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record(), { fsImpl: fsDirFsyncRotto() }), false,
+        'prima pubblicazione: durabilita\' non attestata');
+      const file = path.join(dir, nomeRecordPrompt(LAUNCH));
+      assert.equal(fs.existsSync(file), true, 'la destinazione resta visibile');
+      const prima = fs.readFileSync(file, 'utf8'); const mtime = fs.statSync(file).mtimeMs;
+      // Seconda pubblicazione, filesystem sano: deve RIATTESTARE (fsync del file
+      // e della directory), non limitarsi a leggere un contenuto uguale.
+      const { f, conteggi } = fsContaFsync();
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record(), { fsImpl: f }), true);
+      assert.ok(conteggi.file >= 1, 'fsync del file');
+      assert.ok(conteggi.dir >= 1, 'fsync della directory');
+      assert.equal(fs.readFileSync(file, 'utf8'), prima, 'contenuto invariato');
+      assert.equal(fs.statSync(file).mtimeMs, mtime, 'mtime invariato: nessuna riscrittura');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test(`ripubblicazione identica di un ${nome} con il fsync ancora rotto -> false`, () => {
+    const root = tmpRoot(); const dir = dirSessione(root);
+    try {
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record(), { fsImpl: fsDirFsyncRotto() }), false);
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record(), { fsImpl: fsDirFsyncRotto() }), false,
+        'una ripubblicazione non attesta una durabilita\' che la prima non ha avuto');
+      const file = path.join(dir, nomeRecordPrompt(LAUNCH));
+      const f = fsCon({ fsyncSync: () => { const e = new Error('inject file fsync'); e.code = 'EIO'; throw e; } });
+      assert.equal(activityFiles.scriviRecordPrompt(dir, record(), { fsImpl: f }), false, 'fsync del file fallito');
+      assert.equal(fs.existsSync(file), true, 'il record non si cancella');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
 // --- 7. Nessun contenuto grezzo nel file --------------------------------------
 test('record: nessun testo del prompt nel file, solo chiavi ammesse', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
