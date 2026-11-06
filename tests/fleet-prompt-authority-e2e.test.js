@@ -357,3 +357,73 @@ test('E2E restart del demone: prima della nuova fotografia unknown, dopo il recu
     assert.equal(sup.consegne(), 1, 'nessuna consegna ripetuta dal restart del demone');
   } finally { sup.chiudi(); fs.rmSync(w.root, { recursive: true, force: true }); }
 });
+
+// ── Demone A e demone B in PROCESSI distinti, supervisore rimasto vivo ───────
+const DAEMON = path.join(__dirname, 'helpers', 'prompt-daemon-child.cjs');
+
+function processoFiglio(script, arg) {
+  const proc = spawn(process.execPath, [script, JSON.stringify(arg)], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const eventi = leggiEventi(proc);
+  return {
+    proc, eventi,
+    chiedi: async (cmd, ev, timeoutMs = 8000) => {
+      const n = eventi.length;
+      proc.stdin.write(`${cmd}\n`);
+      return finche(() => eventi.slice(n).find((e) => e.ev === ev), { timeoutMs });
+    },
+    chiudi: () => { try { proc.stdin.write('quit\n'); } catch (_) {} try { proc.kill('SIGKILL'); } catch (_) {} },
+  };
+}
+
+test('E2E demone B in un processo NUOVO: unknown, poi la stessa tupla dal supervisore vivo; nessun armControl, nessun replay', { timeout: 120000 }, async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  const leaseHome = fs.mkdtempSync(path.join(os.tmpdir(), 'promptauth-dprocs-'));
+  const launchId = 'a1b2c3d4e5f60718';
+  fs.mkdirSync(w.dirSessione, { recursive: true, mode: 0o700 });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId, canale: 'none' });
+  const baseArg = { leaseHome, defsPath: w.defsPath, tmuxBin: w.tmuxBin, home: w.home, filesRoot: w.filesRoot, cellId: CELLA };
+  const A = processoFiglio(DAEMON, { ...baseArg, role: 'A' });
+  let B = null; let sup = null;
+  try {
+    const ascolto = await finche(() => A.eventi.find((e) => e.ev === 'listening'));
+    assert.ok(ascolto, 'demone A in ascolto');
+    const logPath = path.join(w.root, 'deliveries.log');
+    fs.writeFileSync(logPath, '');
+    sup = spawn(process.execPath, [CHILD, JSON.stringify({
+      port: ascolto.port, cellId: CELLA, stablePath: ascolto.stablePath, launchEpoch: ascolto.launchEpoch,
+      dir: w.dirSessione, launchId, logPath,
+    })], { stdio: ['pipe', 'pipe', 'inherit'] });
+    leggiEventi(sup);
+    assert.ok(await finche(() => leggiRecordPrompt(w.dirSessione, launchId)
+      && leggiRecordPrompt(w.dirSessione, launchId).state === 'submitted'), 'terminale gen0 su disco');
+    const stA = await finche(async () => { const s = await A.chiedi('status', 'status'); return s && s.lease === 'live' && s.promptDelivery ? s : null; });
+    assert.equal(stA.promptDelivery.state, 'submitted');
+    assert.equal(stA.promptDelivery.generation, 0);
+    // il demone A muore (SIGKILL): supervisore e file restano
+    A.proc.kill('SIGKILL');
+    await new Promise((r) => setTimeout(r, 400));
+    B = processoFiglio(DAEMON, { ...baseArg, role: 'B' });
+    assert.ok(await finche(() => B.eventi.find((e) => e.ev === 'booted')), 'demone B avviato su un processo nuovo');
+    const prima = await B.chiedi('status', 'status');
+    assert.equal(prima.lease, 'none');
+    assert.deepEqual(prima.promptDelivery, { state: 'unknown', launchId }, 'senza prova: unknown, mai il terminale vecchio');
+    assert.equal(leggiRecordPrompt(w.dirSessione, launchId).state, 'submitted', 'la storia resta leggibile');
+    // il supervisore si riconnette a B con le prove gia' previste
+    const dopo = await finche(async () => {
+      const s = await B.chiedi('status', 'status');
+      return s && s.lease === 'live' && s.promptDelivery && s.promptDelivery.state === 'submitted' ? s : null;
+    }, { timeoutMs: 60000 });
+    assert.ok(dopo, 'la stessa tupla dopo il recupero');
+    assert.equal(dopo.promptDelivery.launchId, launchId);
+    assert.equal(dopo.promptDelivery.generation, 0);
+    assert.equal(dopo.armato, false, 'nessun armControl dalla lettura');
+    assert.equal(dopo.eventi, 0, 'nessun replay diagnostico al riavvio del demone');
+    assert.equal(fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length, 1, 'nessuna consegna ripetuta');
+  } finally {
+    try { A.chiudi(); } catch (_) {}
+    try { if (B) B.chiudi(); } catch (_) {}
+    try { if (sup) { sup.stdin.write('quit\n'); sup.kill('SIGKILL'); } } catch (_) {}
+    fs.rmSync(w.root, { recursive: true, force: true });
+    fs.rmSync(leaseHome, { recursive: true, force: true });
+  }
+});
