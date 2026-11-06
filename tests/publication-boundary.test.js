@@ -465,7 +465,7 @@ test('workcodes: an old test file name carrying a work order fails the verifier'
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
     });
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
-    assert.match(result.stderr, /fleet-vl-bootstrap-d558-runtime/);
+    assert.match(result.stderr, /d558-runtime/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -541,11 +541,32 @@ test('workcodes: a code glued to another word in the file name fails the verifie
   }
 });
 
+// La forma numerica dei codici di lavoro (`NC_0952`, `nc-0980`) non ha la
+// lettera `d`: la classe la copriva zero. Il numero resta a tre o quattro
+// cifre, cosi' una versione di prodotto come `nc-15.1` non viene presa.
+test('workcodes: a numeric work-order code fails the verifier, in content and in a name', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-numeric-'));
+  try {
+    const files = [
+      { rel: 'tests/demo.test.js', data: '// vedi NC_0952 per la forma del pacchetto\n' },
+      { rel: 'tests/nc-0980-clean.test.js', data: 'const x = 1;\n' },
+    ];
+    const manifest = path.join(dir, 'manifest.json');
+    const result = runVerifier({
+      staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /NC_0952/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // Il positivo: i nomi neutri non sono codici e non devono accendere il gate.
 test('workcodes: neutral fixture and file names pass', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-public-wc-neutral-'));
   try {
-    const files = [{ rel: 'tests/demo.test.js', data: "const a = 'nc-group-post-';\\nconst b = 'nc-claim-outcome-';\\nconst c = 'nc-sentinel';\nconst d = 'ncdemo-';\\n// provato con seam in fleet-vl-bootstrap-claim-runtime.test.js\\n" }];
+    const files = [{ rel: 'tests/demo.test.js', data: "const a = 'nc-group-post-';\\nconst b = 'nc-claim-outcome-';\\nconst c = 'nc-sentinel';\nconst d = 'ncdemo-';\nconst e = 'nc-15.1';\nconst f = 'chunk-d123abc4.js';\\n// provato con seam in fleet-vl-bootstrap-claim-runtime.test.js\\n" }];
     const manifest = path.join(dir, 'manifest.json');
     const result = runVerifier({
       staging: syntheticStaging(dir, files), exclude: emptyExclude(dir), manifest, source: syntheticSource(files),

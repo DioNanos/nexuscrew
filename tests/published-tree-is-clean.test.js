@@ -370,7 +370,7 @@ const PERCORSI_VIETATI_NEL_MIRROR = [
   // nulla, e il nome non passa dal filtro sul contenuto: la classe va
   // esercitata anche qui. Confini `[a-z0-9]` come sopra: nei percorsi `-` e `_`
   // sono separatori normali e non devono tagliare il match.
-  { re: /(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}|(?:[a-z0-9]+-)+d[0-9]{3,4})[a-z0-9_-]*/i,
+  { re: /(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?(?:d[0-9]{1,4}|[0-9]{3,4})|d[0-9]{3,4}(?![a-z0-9]))[a-z0-9_-]*/i,
     perche: 'codice di lavoro nel nome del file' },
 ];
 
@@ -408,6 +408,9 @@ test('i divieti sui percorsi mordono i casi giusti e solo quelli', () => {
     ['tests/fixture_nc-d582.test.js', true, 'codice dopo un underscore'],
     ['docs/notes_sentinella-d582.md', true, 'codice dopo un underscore'],
     ['lib/xfleet-d558.js', true, 'codice attaccato a un altra parola'],
+    ['tests/nc-0980-clean.test.js', true, 'codice numerico nel nome'],
+    ['frontend/dist/assets/chunk-d123abc4.js', false, 'hash di asset, non un codice'],
+    ['docs/nc-15.1-notes.md', false, 'versione di prodotto, non un codice'],
   ];
   const sbagliati = casi
     .filter(([rel, atteso]) => morde(rel) !== atteso)

@@ -64,7 +64,7 @@
       "reason": "internal work document path"
     },
     {
-      "source": "(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}|(?:[a-z0-9]+-)+d[0-9]{3,4})[a-z0-9_-]*",
+      "source": "(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?(?:d[0-9]{1,4}|[0-9]{3,4})|d[0-9]{3,4}(?![a-z0-9]))[a-z0-9_-]*",
       "flags": "i",
       "reason": "internal work-order code in a file name"
     }
@@ -121,7 +121,7 @@
         "reason": "internal audit hash or plan reference (never exempt)"
       },
       "LOWERCASE_ID": {
-        "source": "(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?d[0-9]{1,4}|(?:[a-z0-9]+-)+d[0-9]{3,4})[a-z0-9_-]*",
+        "source": "(?<![a-z0-9])(?:(?:nc|sentinella)[-_]?(?:d[0-9]{1,4}|[0-9]{3,4})|d[0-9]{3,4}(?![a-z0-9]))[a-z0-9_-]*",
         "flags": "i",
         "reason": "internal work-order code in a fixture or file name"
       }
