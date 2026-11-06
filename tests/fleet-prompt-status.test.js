@@ -139,3 +139,178 @@ test('unknown derivato dal lettore (pending scaduto, nessuna autorita\') non e\'
     applicable: true, launchId: L1, generation: 3, letto: unk, persistito: esitoPromptEPersistito(unk),
   }).terminalPersisted, true);
 });
+
+// ── cellStatus: campo `promptDelivery` (GET passivo) ─────────────────────────
+const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
+const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
+const { registraLancioCorrente } = require('../lib/files/activity.js');
+
+const SESSIONE = 'cloud-Cella';
+
+function mondoStato({ engineExtra = {}, prompt = 'ciao' } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pst-'));
+  const home = path.join(root, 'home');
+  const filesRoot = path.join(home, 'NexusFiles');
+  fs.mkdirSync(path.join(home, 'Cella'), { recursive: true });
+  fs.mkdirSync(filesRoot, { recursive: true });
+  const stato = path.join(root, 'stato.json');
+  fs.writeFileSync(stato, JSON.stringify({ viva: true, errore: null }));
+  const tmuxBin = path.join(root, 'tmux.cjs');
+  fs.writeFileSync(tmuxBin, `#!${process.execPath}
+const fs = require('node:fs');
+const args = process.argv.slice(2);
+const st = JSON.parse(fs.readFileSync(${JSON.stringify(stato)}, 'utf8'));
+if (args.includes('list-sessions')) {
+  if (st.errore) { process.stderr.write(st.errore + '\\n'); process.exit(1); }
+  if (st.viva) process.stdout.write(${JSON.stringify(SESSIONE)} + '\\t1\\n');
+  process.exit(0);
+}
+process.exit(0);
+`, { mode: 0o755 });
+  fs.chmodSync(tmuxBin, 0o755);
+  const client = path.join(home, 'client');
+  fs.writeFileSync(client, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const defsPath = path.join(root, 'fleet.json');
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{
+      id: 'client', label: 'Client', rc: false, command: client, args: [], env: {},
+      promptMode: 'send-keys', ...engineExtra,
+    }],
+    cells: [{ id: 'Cella', tmuxSession: SESSIONE, cwd: path.join(home, 'Cella'), engine: 'client', boot: false, prompt }],
+  });
+  const imposta = (p) => fs.writeFileSync(stato, JSON.stringify({ ...JSON.parse(fs.readFileSync(stato, 'utf8')), ...p }));
+  const apri = (leaseManager) => createBuiltinRuntime({
+    cfg: { filesRoot, activityHooks: false, log: () => {}, env: {} },
+    home, defsPath, tmuxBin, readonly: () => false,
+    launchBroker: { issue: async () => ({ socketPath: '/x', nonce: 'n'.repeat(64) }), revoke: async () => {}, close: async () => {} },
+    ...(leaseManager ? { leaseManager } : {}),
+    boot: loadDefinitions(defsPath),
+  });
+  return { root, home, filesRoot, imposta, apri, dirSessione: path.join(filesRoot, SESSIONE) };
+}
+
+function leaseFinto({ launchId = L1, generation = 1, applicable = true, vivo = true, binding = true, foto } = {}) {
+  const chiamate = { snapshot: 0 };
+  return {
+    chiamate,
+    status: () => ({ state: vivo ? 'live' : 'none' }),
+    readPromptSnapshot: async () => {
+      chiamate.snapshot += 1;
+      return foto || { ok: true, launchId, applicable, generation, epoch: 1, leaseId: 'x' };
+    },
+    promptSnapshotBinding: () => binding,
+  };
+}
+
+function scriviTerminale(w, over = {}) {
+  fs.mkdirSync(w.dirSessione, { recursive: true, mode: 0o700 });
+  return scriviRecordPrompt(w.dirSessione, {
+    version: 1, event: 'prompt-delivery', launchId: L1, generation: 1, state: 'submitted', ts: Date.now(), ...over,
+  });
+}
+
+function fotoFs(dir) {
+  const out = {};
+  const giro = (d) => {
+    if (!fs.existsSync(d)) return;
+    for (const v of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, v.name);
+      if (v.isDirectory()) giro(p);
+      else out[p] = fs.statSync(p).mtimeMs;
+    }
+  };
+  giro(dir);
+  return out;
+}
+
+async function statoCella(w, lease) {
+  const rt = w.apri(lease);
+  const st = await rt.status({});
+  return st.cells[0];
+}
+
+test('cellStatus: terminale della generazione attestata dal proprietario esce come tupla', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  assert.equal(scriviTerminale(w, { generation: 1 }), true);
+  const lease = leaseFinto({ generation: 1 });
+  const c = await statoCella(w, lease);
+  assert.equal(lease.chiamate.snapshot, 1);
+  assert.deepEqual(Object.keys(c.promptDelivery).sort(), ['generation', 'launchId', 'state', 'ts']);
+  assert.equal(c.promptDelivery.state, 'submitted');
+  assert.equal(c.promptDelivery.launchId, L1);
+  assert.equal(c.promptDelivery.generation, 1);
+});
+
+test('cellStatus: il vecchio submitted gen0 non e\' mai quello corrente se il proprietario ha ammesso gen1', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 0 });
+  const c = await statoCella(w, leaseFinto({ generation: 1 }));
+  assert.deepEqual(c.promptDelivery, {
+    state: 'unknown', reason: 'generation-not-recorded', launchId: L1, generation: 1,
+  });
+});
+
+test('cellStatus: senza fotografia (nessun lease) la consegna possibile e\' unknown, mai il terminale vecchio', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 0 });
+  for (const lease of [undefined, leaseFinto({ vivo: false })]) {
+    const c = await statoCella(w, lease);
+    assert.deepEqual(c.promptDelivery, { state: 'unknown', launchId: L1 });
+  }
+});
+
+test('cellStatus: fotografia di un altro lancio o connessione non piu\' legata: unknown, nessun dato', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 1 });
+  for (const lease of [leaseFinto({ launchId: L2 }), leaseFinto({ binding: false }), leaseFinto({ foto: { ok: false, reason: 'timeout' } })]) {
+    const c = await statoCella(w, lease);
+    assert.deepEqual(c.promptDelivery, { state: 'unknown', launchId: L1 });
+  }
+});
+
+test('cellStatus: campo omesso se non applicabile; unknown senza id se manca il registro e la consegna e\' possibile', async () => {
+  const legacy = mondoStato();                         // send-keys senza opt-in
+  registraLancioCorrente(legacy.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  assert.equal(Object.hasOwn(await statoCella(legacy, undefined), 'promptDelivery'), false);
+  // snapshot attesta che la consegna NON e' posseduta: omesso
+  const c2 = await statoCella(legacy, leaseFinto({ applicable: false }));
+  assert.equal(Object.hasOwn(c2, 'promptDelivery'), false);
+  const senzaRegistro = mondoStato({ engineExtra: { submit: 'enter' } });
+  assert.deepEqual((await statoCella(senzaRegistro, undefined)).promptDelivery, { state: 'unknown' });
+  const senzaPrompt = mondoStato({ engineExtra: { submit: 'enter' }, prompt: '' });
+  assert.equal(Object.hasOwn(await statoCella(senzaPrompt, undefined), 'promptDelivery'), false);
+});
+
+test('cellStatus: cella spenta, omesso solo con chiusura attestata', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 1 });
+  w.imposta({ viva: false, errore: 'no server running on /tmp/tmux-1000/default' });
+  assert.equal(Object.hasOwn(await statoCella(w, leaseFinto()), 'promptDelivery'), false);
+  w.imposta({ viva: false, errore: 'protocol version mismatch' });
+  const c = await statoCella(w, leaseFinto());
+  assert.deepEqual(c.promptDelivery, { state: 'unknown', launchId: L1 });
+});
+
+test('cellStatus: un lancio nuovo non eredita il terminale del vecchio', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L2, canale: 'none' });
+  scriviTerminale(w, { generation: 1 });               // record di L1
+  const c = await statoCella(w, leaseFinto({ launchId: L2, generation: 1 }));
+  assert.deepEqual(c.promptDelivery, { state: 'unknown', launchId: L2, generation: 1 });
+});
+
+test('cellStatus e\' passivo: nessun file creato, modificato o potato; nessuna scrittura nel mondo', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 1 });
+  const prima = fotoFs(w.root);
+  await statoCella(w, leaseFinto());
+  await statoCella(w, leaseFinto({ generation: 3 }));
+  assert.deepEqual(fotoFs(w.root), prima);
+});
