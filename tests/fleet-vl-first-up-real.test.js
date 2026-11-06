@@ -363,7 +363,17 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   // condiviso e ha sempre altre sessioni: la sentinella riproduce quella
   // condizione senza toccare il prodotto. Il server del test viene chiuso per
   // pid nel cleanup, sentinella compresa.
-  const sentinella = tmuxTest(['new-session', '-d', '-s', 'sentinella-d582', 'sleep', '3600']);
+  // Il socket va detto esplicitamente: la flotta non usa il default dentro
+  // TMUX_TMPDIR ma `<TMUX_TMPDIR>/tmux-<uid>/default` (sharedTmuxSocketPath).
+  // Senza `-S` la sentinella finirebbe su un SECONDO server, quello della cella
+  // resterebbe solo e uscirebbe comunque alla kill-session.
+  const sentinella = spawnSync(TMUX, [
+    '-S', sharedTmuxSocketPath(),
+    'new-session', '-d', '-s', 'sentinella-d582', 'sleep', '3600',
+  ], {
+    encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, TMUX_TMPDIR: tmuxd, TMUX: '' },
+  });
   assert.equal(sentinella.status, 0,
     `sessione sentinella non creata: ${String(sentinella.stderr || '').trim()}`);
 
