@@ -913,6 +913,32 @@ test('store diagnostico: launchId e generation con validatori esatti, DENIED_KEY
   assert.deepEqual(sanitizeMeta({ prompt: 'x', terminal: 'x', path: '/x', file: 'f' }), {});
 });
 
+test('supervisore: l\'osservazione MCP resta in memoria, per generazione, con nomi validati e liste bounded', async () => {
+  const promptMcp = { generation: -1, mcp: null };
+  const lunghi = Array.from({ length: 30 }, (_, i) => `srv${i}`);
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'ciao', readyMs: 0, readyWaitMs: 1000, client: 'claude' },
+    2, { exited: false },
+    {
+      promptOutcome: fxPromptOutcome('5d6e7f8091a2b3c4'),
+      promptGate: { ultimaGenerazioneAmmessa: -1 },
+      promptMcp,
+      setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {},
+      tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+      deliverBootstrapPrompt: async () => ({
+        delivered: true, state: 'submitted', notReady: '',
+        mcp: { state: 'degraded', failed: [...lunghi, '../ostile', 'x'.repeat(80)], pending: ['ok-1'] },
+      }),
+    },
+  );
+  await ctl.settled;
+  assert.equal(promptMcp.generation, 2);
+  assert.equal(promptMcp.mcp.state, 'degraded');
+  assert.equal(promptMcp.mcp.failed.length, 16, 'massimo 16 nomi');
+  assert.ok(promptMcp.mcp.failed.every((n) => /^srv\d+$/.test(n)), 'nomi ostili scartati, non copiati');
+  assert.deepEqual(promptMcp.mcp.pending, ['ok-1']);
+});
+
 test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', async () => {
   const { waitDeliveryReport } = require('../lib/fleet/prompt-delivery.js');
   const mk = (out) => async () => ({ err: null, stdout: out, stderr: '', code: 0 });

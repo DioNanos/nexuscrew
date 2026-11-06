@@ -344,3 +344,18 @@ process.exit(0);
     assert.deepEqual(fotoFs(w.root), prima, 'nessuna scrittura dalla GET');
   } finally { srv.close(); }
 });
+
+test('MCP accessorio: visibile in cellStatus per la stessa tupla, separato da promptDelivery e senza liste nei log/stato del prompt', async () => {
+  const w = mondoStato({ engineExtra: { submit: 'enter' } });
+  registraLancioCorrente(w.filesRoot, SESSIONE, { launchId: L1, canale: 'none' });
+  scriviTerminale(w, { generation: 1 });
+  const mcp = { state: 'degraded', failed: ['alfa'], pending: ['beta'] };
+  const lease = leaseFinto({ generation: 1, foto: { ok: true, launchId: L1, applicable: true, generation: 1, mcp, epoch: 1, leaseId: 'x' } });
+  const c = await statoCella(w, lease);
+  assert.deepEqual(c.promptMcp, { launchId: L1, generation: 1, state: 'degraded', failed: ['alfa'], pending: ['beta'] });
+  assert.equal(JSON.stringify(c.promptDelivery).includes('alfa'), false, 'le liste non entrano nello stato del prompt');
+  assert.equal(c.promptDelivery.state, 'submitted', 'MCP degraded non promuove ne\' riscrive il prompt');
+  // senza osservazione: campo assente
+  const senza = await statoCella(w, leaseFinto({ generation: 1 }));
+  assert.equal(Object.hasOwn(senza, 'promptMcp'), false);
+});
