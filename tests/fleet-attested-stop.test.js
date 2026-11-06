@@ -366,6 +366,7 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
           await attendi(() => serverSide);
           assert.equal(w.mgr.attachInitial('CellaAtt', serverSide, { generation: 0 }), true);
           let morto = false;
+          let timerRitardo = null;
           const coord = gruppo.creaCoordinatore({
             token: control.token, launchId: control.launchId,
             monoNow: () => Number(process.hrtime.bigint() / 1000000n),
@@ -387,7 +388,7 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
                   try { fs.writeFileSync(w.marker.morte, '1'); } catch (_) {}
                 }
               };
-              if (ritardoUscitaMs > 0) { setTimeout(chiudi, ritardoUscitaMs); return; }
+              if (ritardoUscitaMs > 0) { timerRitardo = setTimeout(chiudi, ritardoUscitaMs); return; }
               chiudi();
             },
             osserva: () => {
@@ -415,6 +416,9 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
           // contatore dei comandi stop ricevuti dal supervisore: gli assert
           // «zero doppio stop» del recupero nella stessa down lo interrogano
           const conta = { stop: 0 };
+          // Il kill ritardato non deve sopravvivere al test (la sua finestra
+          // scrive nel mondo gia' rimosso).
+          t.after(() => { if (timerRitardo) clearTimeout(timerRitardo); });
           var leaseCtl = startLeaseClient(clientSide, {
             stablePath: path.join(w.root, 'no-lease.sock'),
             launchEpoch: hexId(),
@@ -623,6 +627,42 @@ test('fence anche sul percorso eccezionale: il fallimento tardivo non marca il r
   assert.equal(dopo.stato, 'presente');
   assert.equal(dopo.record.launchId, 'abcdef0123456789');
   assert.notEqual(dopo.record.incerto, true, 'il fallimento tardivo non deve marcare il lancio nuovo');
+});
+
+test('uscita provata DOPO 1200 ms: la prova aspetta il residuo della down e il down chiude', async (t) => {
+  // Uscita del supervisore oltre la vecchia finestra fissa di 500 ms: con la
+  // prova tagliata a 500 il down rifiutava con i conti del supervisore
+  // (stop-unknown, conti noti 0/0). Col residuo della deadline la prova arriva.
+  // L'attestazione di sola lettura e' iniettata: qui si misura la PROVA
+  // D'USCITA, non il suo seguito.
+  const w = creaMondo(t, { attestaNuova: async () => ({ attestato: true, motivo: 'incarnazione-morta' }) });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true, ritardoUscitaMs: 1200 });
+  assert.ok(sup);
+  affollaProc(t);
+  const esito = await w.runtime.down('CellaAtt');
+  assert.equal(esito.ok, true, `down: ${JSON.stringify(esito)}`);
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'assente');
+});
+
+test('uscita OLTRE la deadline: resta stop-unknown, nessun falso pulito', async (t) => {
+  // Controllo negativo della prova d'uscita: il processo esce dopo 3 s, la
+  // down ha 2 s. La prova non arriva entro la deadline e non si dichiara nulla.
+  const w = creaMondo(t, {
+    cfgExtra: { groupStopBudgetMs: 2000 },
+    attestaNuova: async () => ({ attestato: true, motivo: 'incarnazione-morta' }),
+  });
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: true, ritardoUscitaMs: 3000 });
+  assert.ok(sup);
+  affollaProc(t);
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.notEqual(err.data && err.data.outcome, 'killed-clean', 'nessun esito pulito senza prova');
+  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
 });
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
