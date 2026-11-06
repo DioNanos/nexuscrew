@@ -662,6 +662,9 @@ test('uscita OLTRE la deadline: resta stop-unknown, nessun falso pulito', async 
   assert.ok(err, 'il down doveva rifiutare');
   assert.equal(err.fleetCode, 'STOP_UNKNOWN');
   assert.notEqual(err.data && err.data.outcome, 'killed-clean', 'nessun esito pulito senza prova');
+  // Il rifiuto deve dire QUALE prova e' mancata.
+  assert.equal(err.data.uscito, false);
+  assert.equal(err.data.motivoUscita, 'scaduta');
   assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente');
 });
 

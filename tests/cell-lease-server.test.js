@@ -951,19 +951,24 @@ test('attendiUscita: returns false when panePid is absent or invalid (no socket 
     pair.end();
 
     const r1 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111' });
-    assert.equal(r1, false, 'without panePid must return false');
+    assert.equal(r1.provato, false, 'without panePid must return false');
+    assert.equal(r1.motivo, 'pid');
 
     const r2 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: null });
-    assert.equal(r2, false, 'null panePid must return false');
+    assert.equal(r2.provato, false, 'null panePid must return false');
+    assert.equal(r2.motivo, 'pid');
 
     const r3 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: 0 });
-    assert.equal(r3, false, 'zero panePid must return false');
+    assert.equal(r3.provato, false, 'zero panePid must return false');
+    assert.equal(r3.motivo, 'pid');
 
     const r4 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: -1 });
-    assert.equal(r4, false, 'negative panePid must return false');
+    assert.equal(r4.provato, false, 'negative panePid must return false');
+    assert.equal(r4.motivo, 'pid');
 
     const r5 = await mgr.attendiUscita('Dev', { launchId: '1111111111111111', panePid: '123' });
-    assert.equal(r5, false, 'string panePid must return false');
+    assert.equal(r5.provato, false, 'string panePid must return false');
+    assert.equal(r5.motivo, 'pid');
   } finally {
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -985,7 +990,8 @@ test('attendiUscita: returns false when procfs is unavailable', async () => {
       panePid: 12345,
       starttime: 1000,
     });
-    assert.equal(res, false, 'unavailable procfs must return false');
+    assert.equal(res.provato, false, 'unavailable procfs must return false');
+    assert.equal(res.motivo, 'proc');
   } finally {
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -1045,7 +1051,8 @@ test('attendiUscita: returns false when process remains alive with matching star
       panePid: 12345,
       starttime: 1000,
     });
-    assert.equal(res, false, 'process still alive with matching starttime must return false');
+    assert.equal(res.provato, false, 'process still alive with matching starttime must return false');
+    assert.equal(res.motivo, 'scaduta');
   } finally {
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -1119,7 +1126,8 @@ test('attendiUscita: unreadable procfs or malformed stat cannot prove exit', asy
       panePid: 12345,
       starttime: 1000,
     });
-    assert.equal(resEacces, false, 'unreadable procfs must fail closed');
+    assert.equal(resEacces.provato, false, 'unreadable procfs must fail closed');
+    assert.equal(resEacces.motivo, 'scaduta');
 
     mode = 'malformed';
     const resMalformed = await mgr.attendiUscita('Dev', {
@@ -1127,7 +1135,8 @@ test('attendiUscita: unreadable procfs or malformed stat cannot prove exit', asy
       panePid: 12345,
       starttime: 1000,
     });
-    assert.equal(resMalformed, false, 'malformed procfs stat must fail closed');
+    assert.equal(resMalformed.provato, false, 'malformed procfs stat must fail closed');
+    assert.equal(resMalformed.motivo, 'scaduta');
   } finally {
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
@@ -1152,14 +1161,16 @@ test('attendiUscita: missing pre-stop starttime cannot prove exit', async () => 
       launchId: '1111111111111111',
       panePid: 12345,
     });
-    assert.equal(r1, false, 'missing starttime must return false');
+    assert.equal(r1.provato, false, 'missing starttime must return false');
+    assert.equal(r1.motivo, 'starttime');
 
     const r2 = await mgr.attendiUscita('Dev', {
       launchId: '1111111111111111',
       panePid: 12345,
       starttime: null,
     });
-    assert.equal(r2, false, 'null starttime must return false');
+    assert.equal(r2.provato, false, 'null starttime must return false');
+    assert.equal(r2.motivo, 'starttime');
   } finally {
     try { if (mgr) mgr.close(); } catch (_) {}
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
