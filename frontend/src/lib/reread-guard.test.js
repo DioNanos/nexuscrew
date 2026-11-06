@@ -7,11 +7,16 @@ describe('guardia della lettura differita', () => {
   const atteso = { token: 't1', owner: 'owner-a' };
   const cell = 'TestCell';
 
+  // Lo snapshot è quello del treno, nella forma che il produttore emette: le
+  // celle stanno in `fs.cells` (fs è il risultato di fleetStatus), non alla
+  // radice dell'oggetto.
+  const snapshot = (celle) => ({ at: 1, sessionsJson: { sessions: [] }, sessionsError: null, fs: { available: true, cells: celle }, fleetError: null });
+
   it('lascia passare lo stesso contesto, senza stato terminale', () => {
     expect(puoRileggere({ atteso, contesto: { token: 't1', owner: 'owner-a' }, snapshot: null, cell })).toBe(true);
     expect(puoRileggere({
       atteso, contesto: { token: 't1', owner: 'owner-a' },
-      snapshot: { cells: [{ cell, tmux: true }] }, cell,
+      snapshot: snapshot([{ cell, tmux: true }]), cell,
     })).toBe(true);
   });
 
@@ -31,15 +36,20 @@ describe('guardia della lettura differita', () => {
   it('rifiuta quando la cella ha già una ragione terminale', () => {
     expect(puoRileggere({
       atteso, contesto: { token: 't1', owner: 'owner-a' },
-      snapshot: { cells: [{ cell, terminal: { reason: 'lease-lost', ts: 1 } }] }, cell,
+      snapshot: snapshot([{ cell, terminal: { reason: 'lease-lost', ts: 1 } }]), cell,
     })).toBe(false);
   });
 
   it('non guarda il terminale di un altra cella', () => {
     expect(puoRileggere({
       atteso, contesto: { token: 't1', owner: 'owner-a' },
-      snapshot: { cells: [{ cell: 'Altra', terminal: { reason: 'lease-lost', ts: 1 } }] }, cell,
+      snapshot: snapshot([{ cell: 'Altra', terminal: { reason: 'lease-lost', ts: 1 } }]), cell,
     })).toBe(true);
+  });
+
+  it('con lo snapshot assente o senza elenco non inventa un esito', () => {
+    expect(puoRileggere({ atteso, contesto: { token: 't1', owner: 'owner-a' }, snapshot: null, cell })).toBe(true);
+    expect(puoRileggere({ atteso, contesto: { token: 't1', owner: 'owner-a' }, snapshot: snapshot(null), cell })).toBe(true);
   });
 
   it('rifiuta input incompleti, invece di indovinare', () => {

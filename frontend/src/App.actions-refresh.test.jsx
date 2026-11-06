@@ -37,6 +37,10 @@ vi.mock('./lib/fleet-poll.js', () => ({
   subscribeFleetRoute: mocks.subscribeFleetRoute, readFleetRoute: mocks.readFleetRoute,
   refreshFleetRoute: mocks.refreshFleetRoute,
 }));
+// L'owner di una route arriva da qui: il test del contesto deve poterlo
+// cambiare mentre il POST è in volo, come succede quando il roster si aggiorna.
+const hookNodes = vi.hoisted(() => ({ list: [] }));
+vi.mock('./hooks/useNodes.js', () => ({ useNodes: () => hookNodes.list }));
 vi.mock('./lib/sw-update.js', () => ({ reportServerVersions: vi.fn() }));
 vi.mock('./components/Terminal.jsx', () => ({ default: () => null }));
 vi.mock('./components/KeyBar.jsx', () => ({ default: () => null }));
@@ -94,6 +98,7 @@ beforeEach(() => {
   mocks.fleetBoot.mockResolvedValue({ ok: true });
   mocks.fleetUp.mockResolvedValue({ committed: true });
   mocks.refreshFleetRoute.mockClear();
+  hookNodes.list = [];
 });
 
 const agisci = async (testid) => {
@@ -226,12 +231,58 @@ describe('contesto cambiato: la lettura differita non parte', () => {
     expect(mocks.refreshFleetRoute.mock.calls.length, 'a deferred read survived the closed view').toBe(prima);
   });
 
+  // Lo snapshot che readFleetRoute emette davvero: le celle stanno in `fs`,
+  // sotto il risultato di fleetStatus, non alla radice dell'oggetto.
+  const snapshotVero = (celle, extra = {}) => ({
+    at: 1, sessionsJson: { sessions: [] }, sessionsError: null,
+    fs: { available: true, cells: celle }, fleetError: null, ...extra,
+  });
+
+
+  it('un owner cambiato mentre il POST è in volo non autorizza la differita', async () => {
+    let rigetta;
+    mocks.fleetUp.mockImplementation(() => new Promise((resolve, reject) => { rigetta = reject; }));
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(1));
+    // l'owner della stessa route cambia mentre il POST è ancora pendente
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'b'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    vista.rerender(<App />);
+    vi.useFakeTimers();
+    await act(async () => { rigetta(peerTimeout()); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'old action scheduled a read for the replacement owner').toBe(prima);
+  });
+
+  it('dopo la sostituzione, un azione nuova sulla stessa route legge una volta sola', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    await screen.findByTestId('act-confirm');
+    mocks.refreshFleetRoute.mockClear();
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    // l'owner cambia, e poi arriva un'azione NUOVA su quel contesto
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'b'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    vista.rerender(<App />);
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    // due letture immediate (una per azione) e UNA differita, quella dell'azione
+    // nuova: la vecchia non le ruba il posto con la chiave della tupla
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+  });
+
   it('una ragione terminale già arrivata toglie senso alla lettura', async () => {
     mocks.fleetUp.mockRejectedValue(peerTimeout());
-    mocks.readFleetRoute.mockReturnValue({
-      available: true,
-      cells: [{ cell: 'TestCell', tmuxSession: 'cloud-TestCell', terminal: { reason: 'lease-lost', ts: 1 } }],
-    });
+    mocks.readFleetRoute.mockReturnValue(snapshotVero([
+      { cell: 'TestCell', tmuxSession: 'cloud-TestCell', terminal: { reason: 'lease-lost', ts: 1 } },
+    ]));
     render(<App />);
     fireEvent.click(await screen.findByTestId('open-power'));
     vi.useFakeTimers();

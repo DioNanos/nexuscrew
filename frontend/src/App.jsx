@@ -1410,6 +1410,11 @@ export default function App() {
     if (!powerCell) return;
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
+    const routeKey = JSON.stringify(route);
+    // Il contesto si congela QUI, prima dell'await: se l'owner della route
+    // cambia mentre il POST è in volo, alla risposta non si ricostruisce
+    // l'autorità di questa azione dall'owner nuovo.
+    const contestoAzione = { token, owner: contestoRiletture.current.owners.get(routeKey) || null };
     // Stesso percorso del roster mobile: esiti benigni (timeout client,
     // sessione già attiva) come notice a SCADENZA su una riga sua sotto la
     // barra — mai dentro la barra, dove il messaggio copriva i chip e non
@@ -1423,17 +1428,15 @@ export default function App() {
     // risposta persa: la sessione c'era già e la lettura immediata la vede.
     // Il codice lo restituisce l'helper come `benign.benign`, non `benign.code`.
     if (benign && benign.benign !== 'FLEET_SESSION_DUPLICATE') {
-      const routeKey = JSON.stringify(route);
-      const atteso = {
-        token,
-        owner: contestoRiletture.current.owners.get(routeKey) || null,
-      };
+      // La chiave porta il contesto: una lettura armata per un owner non deve
+      // assorbire (per coalescenza) quella di un'azione nuova nata dopo la
+      // sostituzione, né il contrario.
       rilettureDifferite.current.programma(
-        `${route.length ? route.join('/') : 'local'}|${cell}`,
+        `${contestoAzione.owner || '-'}|${routeKey}|${cell}`,
         () => {
           const ora = contestoRiletture.current;
           const contesto = { token: ora.token, owner: ora.owners.get(routeKey) || null };
-          if (!puoRileggere({ atteso, contesto, snapshot: readFleetRoute(route, token), cell })) return;
+          if (!puoRileggere({ atteso: contestoAzione, contesto, snapshot: readFleetRoute(route, token), cell })) return;
           refreshFleetRoute(route, token);
         },
       );
