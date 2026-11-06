@@ -520,8 +520,10 @@ test('la morte del server non chiude un lancio cambiato durante l\'attesa', asyn
   assert.ok(err, 'il down doveva rifiutare');
   assert.equal(err.fleetCode, 'IDENTITY_UNVERIFIED');
   assert.match(err.message, /identita' del lancio e' cambiata/);
-  assert.equal(launchTarget.leggi(w.filesRoot, NOME).stato, 'presente',
-    'il record del lancio nuovo non si tocca');
+  const dopo = launchTarget.leggi(w.filesRoot, NOME);
+  assert.equal(dopo.stato, 'presente', 'il record del lancio nuovo non si tocca');
+  assert.notEqual(dopo.record && dopo.record.incerto, true,
+    'l\'incertezza del lancio vecchio non deve finire sul lancio nuovo');
 });
 
 // --- (a) /proc affollato: recupero NELLA STESSA down (uscita provata) -------
