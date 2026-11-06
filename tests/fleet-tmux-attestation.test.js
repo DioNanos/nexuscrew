@@ -204,7 +204,7 @@ test('enumerazione che CONTIENE il nostro id non attesta (contraddizione con has
 });
 
 test('elenco oltre CAP_FRAME con il target in coda: troncato, non attesta', async (t) => {
-  // Controprova dell'audit: 12.000 id piu' il nostro in coda superano il tetto
+  // Controprova: 12.000 id piu' il nostro in coda superano il tetto
   // del frame (64 KiB). Il canale tronca l'elenco ma lo dichiara completo, e
   // senza il target nella parte letta si attestava l'assenza: falso pulito.
   const elenco = Array.from({ length: 12000 }, (_, i) => '$' + (10000 + i));
