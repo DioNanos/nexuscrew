@@ -587,11 +587,11 @@ test('supervisore: dopo il terminale la retention lascia 8 record TOTALI con il 
 // --- Fix R2: un pending incompleto trattiene l'effetto ---------------------------
 // Il mondo e' quello di startGenerationPrompt con i seams; solo fs.writeSync e'
 // sostituito, e SOLO durante l'ammissione sincrona (il pending si scrive li').
-function ammissione(root, { config = {}, generation = 0, gate = { ultimaGenerazioneAmmessa: -1 }, deliver, over = {} } = {}) {
+function ammissione(root, { config = {}, generation = 0, gate = { ultimaGenerazioneAmmessa: -1 }, deliver, over = {}, child = { exited: false } } = {}) {
   const errs = []; let timer = null; const consegne = [];
   const ctl = startGenerationPrompt(
     { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'p', readyMs: 0, client: 'kimi', readyWaitMs: 1000, ...config },
-    generation, { exited: false },
+    generation, child,
     {
       promptOutcome: canale(root), promptGate: gate,
       setTimeout: (fn) => { timer = fn; return { unref() {} }; }, clearTimeout: () => {},
@@ -710,5 +710,179 @@ test('lettore: l\'autorita\' puo\' arrivare anche dal chiamante (altro processo)
     for (const generation of [-1, 1.5, '1', NaN]) {
       assert.equal(leggi({ launchId: LAUNCH, generation }), null, String(generation));
     }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- Fix R2: ogni conclusione del proprietario chiude il pending ammesso ----------
+const letto = (root) => activityFiles.leggiRecordPrompt(path.join(root, 'cloud-T'), LAUNCH);
+const CUSTOM = { client: '', submit: true };
+function conConsegnaBloccata(root, { config, esito, cancellaDue = false }) {
+  // Il proprietario e' DENTRO la consegna quando arriva il cancel; poi la
+  // consegna ritorna `esito`.
+  let entrato; let rilascia;
+  const dentro = new Promise((r) => { entrato = r; });
+  const finita = new Promise((r) => { rilascia = r; });
+  const blocca = async () => { entrato(); return finita; };
+  const a = ammissione(root, {
+    config,
+    over: config.submit
+      ? { submitPromptWithEnter: blocca, attestBracketedPaste: () => ({ attested: true }) }
+      : { deliverBootstrapPrompt: blocca },
+  });
+  return {
+    a,
+    async esegui() {
+      const run = a.fire();
+      await dentro;
+      a.ctl.cancel();
+      if (cancellaDue) a.ctl.cancel();
+      rilascia(esito);
+      await run; await a.ctl.settled;
+    },
+  };
+}
+
+test('cancel PRIMA del timer: il pending ammesso si chiude skipped/cancelled-pre-paste (e la doppia cancel e\' inerte)', async () => {
+  const root = tmpRoot();
+  try {
+    const a = ammissione(root);
+    assert.equal(letto(root).state, 'pending');
+    a.ctl.cancel();
+    await a.ctl.settled;
+    const chiuso = letto(root);
+    assert.equal(chiuso.state, 'skipped');
+    assert.equal(chiuso.reason, 'cancelled-pre-paste');
+    assert.equal(chiuso.generation, 0);
+    const bytes = fs.readFileSync(path.join(root, 'cloud-T', `prompt-${LAUNCH}.json`), 'utf8');
+    a.ctl.cancel();
+    assert.equal(fs.readFileSync(path.join(root, 'cloud-T', `prompt-${LAUNCH}.json`), 'utf8'), bytes, 'seconda cancel: nulla di nuovo');
+    assert.deepEqual(a.errs, [], 'nessuna riga di errore');
+    assert.equal(a.consegne.length, 0, 'zero paste');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cancel prima del timer con pending NON persistito: nessuna scrittura tentata, nessun rumore', async () => {
+  const root = tmpRoot(); const dir = path.join(root, 'cloud-T');
+  try {
+    const ripristina = rotturaApertura(dir);
+    let a;
+    try { a = ammissione(root); } finally { ripristina(); }
+    const prima = a.errs.length;
+    a.ctl.cancel(); await a.ctl.settled;
+    assert.equal(a.errs.length, prima, 'nessuna seconda riga «not persisted»');
+    assert.equal(letto(root), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cancel di una generazione SUPERATA: non scrive sulla generazione nuova', async () => {
+  const root = tmpRoot();
+  try {
+    const gate = { ultimaGenerazioneAmmessa: -1 };
+    const vecchia = ammissione(root, { generation: 0, gate });
+    const nuova = ammissione(root, { generation: 1, gate });
+    assert.equal(letto(root).generation, 1);
+    const bytes = fs.readFileSync(path.join(root, 'cloud-T', `prompt-${LAUNCH}.json`), 'utf8');
+    vecchia.ctl.cancel(); await vecchia.ctl.settled;
+    assert.equal(fs.readFileSync(path.join(root, 'cloud-T', `prompt-${LAUNCH}.json`), 'utf8'), bytes);
+    assert.deepEqual(vecchia.errs, [], 'nessun rumore dalla vecchia');
+    nuova.ctl.cancel(); await nuova.ctl.settled;
+    assert.equal(letto(root).reason, 'cancelled-pre-paste');
+    assert.equal(letto(root).generation, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('child uscito prima del timer: il pending si chiude cancelled-pre-paste, zero paste', async () => {
+  const root = tmpRoot();
+  try {
+    const a = ammissione(root, { child: { exited: true } });
+    await a.fire(); await a.ctl.settled;
+    assert.equal(letto(root).state, 'skipped');
+    assert.equal(letto(root).reason, 'cancelled-pre-paste');
+    assert.equal(a.consegne.length, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('submit custom cancellato con esito certo pre-paste -> skipped/cancelled-pre-paste', async () => {
+  const root = tmpRoot();
+  try {
+    const w = conConsegnaBloccata(root, { config: CUSTOM, esito: { state: 'cancelled' } });
+    await w.esegui();
+    assert.equal(letto(root).state, 'skipped');
+    assert.equal(letto(root).reason, 'cancelled-pre-paste');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('submit custom cancellato due volte, esito certo pre-paste: un solo terminale', async () => {
+  const root = tmpRoot();
+  try {
+    const w = conConsegnaBloccata(root, { config: CUSTOM, esito: { state: 'cancelled' }, cancellaDue: true });
+    await w.esegui();
+    assert.equal(letto(root).state, 'skipped');
+    assert.equal(letto(root).reason, 'cancelled-pre-paste');
+    assert.deepEqual(w.a.errs, []);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const stato of ['delivery-unknown', 'staged-not-submitted']) {
+  test(`submit custom cancellato con effetti possibili (${stato}) -> unknown/${stato}`, async () => {
+    const root = tmpRoot();
+    try {
+      const w = conConsegnaBloccata(root, { config: CUSTOM, esito: { state: stato } });
+      await w.esegui();
+      assert.equal(letto(root).state, 'unknown');
+      assert.equal(letto(root).reason, stato);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('controllo positivo: il percorso classificato cancellato post-paste chiude unknown', async () => {
+  const root = tmpRoot();
+  try {
+    const w = conConsegnaBloccata(root, { config: {}, esito: { state: 'delivery-unknown' } });
+    await w.esegui();
+    assert.equal(letto(root).state, 'unknown');
+    assert.equal(letto(root).reason, 'delivery-unknown');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// reprompt:false: lo stage del paste decide; uno stage ignoto non attesta nulla.
+async function repromptFalse(root, res, { cancella = false } = {}) {
+  let entrato; let rilascia;
+  const dentro = new Promise((r) => { entrato = r; });
+  const finita = new Promise((r) => { rilascia = r; });
+  const a = ammissione(root, {
+    config: { client: '', reprompt: false },
+    over: { securePaste: async () => { entrato(); return finita; } },
+  });
+  const run = a.fire();
+  await dentro;
+  if (cancella) a.ctl.cancel();
+  rilascia(res);
+  await run; await a.ctl.settled;
+  return a;
+}
+
+for (const [nome, res, atteso] of [
+  ['stage ignoto', { ok: false, stage: 'strano' }, { state: 'unknown' }],
+  ['stage assente', { ok: false }, { state: 'unknown' }],
+  ['stage paste', { ok: false, stage: 'paste' }, { state: 'unknown', reason: 'delivery-unknown' }],
+  ['stage pre-paste', { ok: false, stage: 'load' }, { state: 'skipped', reason: 'failed-pre-paste-load' }],
+]) {
+  test(`reprompt:false, ${nome} -> il terminale non resta pending`, async () => {
+    const root = tmpRoot();
+    try {
+      await repromptFalse(root, res);
+      const r = letto(root);
+      assert.equal(r.state, atteso.state);
+      assert.equal(r.reason, atteso.reason);
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+}
+
+test('reprompt:false cancellato con stage ignoto -> unknown, non pending', async () => {
+  const root = tmpRoot();
+  try {
+    await repromptFalse(root, { ok: false, stage: 'strano' }, { cancella: true });
+    assert.equal(letto(root).state, 'unknown');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
