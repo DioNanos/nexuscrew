@@ -1,7 +1,7 @@
 'use strict';
 // Sonda del gruppo a segnale ZERO (lato demone, dopo l'uscita provata).
 //
-// Il difetto D-582: `osservaProduzione` conta le VOCI lette, non i membri, e
+// Il censimento post-uscita: `osservaProduzione` conta le VOCI lette, non i membri, e
 // con piu' di CAP_SCAN voci estranee il censimento resta `almeno` per sempre.
 // Su un nodo carico il down non puo' quindi mai dichiarare il gruppo vuoto.
 // La sonda `kill(-pgrp, 0)` risponde alla domanda «il gruppo e' vuoto?» dal
