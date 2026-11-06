@@ -18,6 +18,7 @@ const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { main: cellExecMain, startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+const { scriviCanonico, attestaProprietario } = require('./helpers/prompt-canonico.js');
 
 // Fixture del canale del record del prompt (adattamento del supervised
 // fixture: la consegna supervisionata richiede il canale dedicato, anche con
@@ -532,7 +533,7 @@ switch (cmd) {
   return p;
 }
 
-function makeManagedWorld({ client, provider, delivery, env = {} }) {
+function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, readyWaitMs = 30, mcp = undefined }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpd-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
@@ -558,12 +559,19 @@ function makeManagedWorld({ client, provider, delivery, env = {} }) {
   const tmuxBin = writeFakeTmux(root, { delivery });
   let ticket = null;
   const launchBroker = {
-    issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+    issue: async (payload) => {
+      ticket = payload;
+      // Il supervisore finto riferisce l'esito come il vero: record canonico
+      // nel canale del payload, generazione 0 (nessun marcatore volatile).
+      scriviCanonico(payload, canon || delivery);
+      return { socketPath: '/x', nonce: 'n'.repeat(64) };
+    },
     close: async () => {},
   };
+  const leaseManager = attestaProprietario({ track: async () => null }, () => ticket, { mcp });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: 30, sendKeysReadyMs: 10, env },
-    home, defsPath, tmuxBin, readonly: () => false, launchBroker,
+    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env },
+    home, defsPath, tmuxBin, readonly: () => false, launchBroker, leaseManager,
     boot: loadDefinitions(defsPath),
   });
   const log = () => (fs.existsSync(path.join(root, 'tmux.log'))
@@ -576,14 +584,15 @@ test('up kimi.native report submitted: prompt consegnato dal supervisore; runtim
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, true);
     assert.equal(res.prompt.state, 'submitted');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(res.prompt.launchId, w.ticket().promptOutcome.launchId);
     assert.equal(res.actionRequired, undefined);
     const lines = w.log();
     assert.equal(lines.filter((l) => l.startsWith('paste-buffer')).length, 0, 'runtime non paste-a (owner = cell-exec)');
     assert.equal(lines.filter((l) => l.startsWith('send-keys')).length, 0, 'runtime non manda Enter');
     assert.equal(lines.filter((l) => l.startsWith('kill-session')).length, 0);
-    assert.ok(lines.some((l) => l.includes('@nc_delivery')), 'lettura report bounded dal pane');
+    assert.ok(!lines.some((l) => l.includes('@nc_delivery')), 'lo stato viene dal record canonico, non dal marcatore del pane');
     const t = w.ticket();
     assert.ok(t, 'ticket broker emesso');
     assert.ok(!t.args.includes('bootstrap segreto di sistema'), 'prompt mai in argv del child');
@@ -597,8 +606,9 @@ test('up kimi.native report logged-out: NOT_READY bounded, sessione VIVA, recove
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true, 'up non fallisce: la cella resta utilizzabile');
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.reason, 'not-ready');
+    assert.equal(res.prompt.notReady, 'not-ready-auth');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-cli-login');
     const lines = w.log();
@@ -617,8 +627,8 @@ test('up claude.kimi-code report consenso pendente: recovery consenso (mai /logi
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.notReady, 'not-ready-consent');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-consent-yes');
     assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
@@ -635,7 +645,8 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
   });
   try {
     const res = await w.runtime.up('Dev');
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.notReady, 'not-ready-auth');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-config-custom-api-key');
     assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
@@ -656,17 +667,72 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
   } finally { w.cleanup(); }
 });
 
-test('up kimi.native senza report entro il bound: report-timeout onesto, sessione viva', async () => {
+test('up kimi.native senza record canonico: unknown onesto e IMMEDIATO, sessione viva', async () => {
   const w = makeManagedWorld({ client: 'kimi', provider: 'native', delivery: '' });
   try {
+    const t0 = process.hrtime.bigint();
     const res = await w.runtime.up('Dev');
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 2000, 'nessuna attesa del report');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'report-timeout');
-    assert.equal(res.prompt.reason, 'report-timeout');
+    assert.equal(res.prompt.state, 'unknown');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(Object.hasOwn(res.prompt, 'ts'), false, 'nessun ts inventato');
     assert.equal(res.actionRequired, undefined, 'nessuna azione utente provata');
     assert.equal(w.log().filter((l) => l.startsWith('kill-session')).length, 0);
   } finally { w.cleanup(); }
+});
+
+// ── 0.9.80 strato 2c: `up` risponde subito dal canonico ─────────────────────
+test('up con finestra di report dichiarata 120 s e nessun record: risposta immediata, unknown, nessuna attesa', async () => {
+  const w = makeManagedWorld({ client: 'kimi', provider: 'native', delivery: '', readyWaitMs: 120000 });
+  try {
+    const t0 = process.hrtime.bigint();
+    const res = await w.runtime.up('Dev');
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 2000, `up doveva rispondere subito, ha impiegato ${ms} ms`);
+    assert.equal(res.ok, true);
+    assert.equal(res.prompt.state, 'unknown');
+    assert.equal(w.ticket().restartPrompt.readyWaitMs, 120000, 'la finestra dichiarata viaggia nel payload');
+    assert.ok(!w.log().some((l) => l.includes('@nc_delivery')), 'nessuna attesa del marcatore volatile');
+  } finally { w.cleanup(); }
+});
+
+test('up con pending valido: pending con launchId e generation, nessun actionRequired o bootstrap inventato', async () => {
+  const w = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: '', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+    canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.prompt.state, 'pending');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(res.prompt.launchId, w.ticket().promptOutcome.launchId);
+    assert.equal(Object.hasOwn(res.prompt, 'deadlineTs'), false, 'deadlineTs non esce');
+    assert.equal(res.actionRequired, undefined);
+    assert.equal(res.vlBootstrap, undefined);
+  } finally { w.cleanup(); }
+});
+
+test('up: l\'osservazione MCP gia\' nota alla risposta si conserva; se non nota e\' assente, senza attesa', async () => {
+  const noto = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: 'submitted', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+    mcp: { state: 'degraded', failed: ['alfa'], pending: ['beta'] },
+  });
+  try {
+    const res = await noto.runtime.up('Dev');
+    assert.equal(res.readinessDegraded, true);
+    assert.deepEqual(res.mcpDegraded, { failed: ['alfa'], pending: ['beta'] });
+    assert.equal(res.prompt.state, 'submitted');
+    assert.equal(JSON.stringify(res.prompt).includes('alfa'), false, 'le liste MCP non entrano nello stato del prompt');
+  } finally { noto.cleanup(); }
+  const ignoto = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: 'submitted', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+  });
+  try {
+    const res = await ignoto.runtime.up('Dev');
+    assert.equal(res.mcpDegraded, undefined);
+    assert.equal(res.readinessDegraded, undefined);
+  } finally { ignoto.cleanup(); }
 });
 
 test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', async () => {

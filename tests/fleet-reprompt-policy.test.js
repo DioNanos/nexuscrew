@@ -26,6 +26,7 @@ const { validPayload } = require('../lib/fleet/cell-exec.js');
 const { startGenerationPrompt, main: cellExecMain } = require('../lib/fleet/cell-exec.js');
 const { waitDeliveryReport, DELIVERY_STATES } = require('../lib/fleet/prompt-delivery.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { scriviCanonico, attestaProprietario } = require('./helpers/prompt-canonico.js');
 
 const MIN = () => ({
   schemaVersion: 1,
@@ -545,15 +546,22 @@ async function upWith(t, opts = {}) {
   if (opts.markerValue !== undefined) fs.writeFileSync(w.marker, `${opts.markerValue}\n`);
   let ticket = null;
   const launchBroker = {
-    issue: async (payload) => { ticket = payload; return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'b'.repeat(64) }; },
+    issue: async (payload) => {
+      ticket = payload;
+      // Il supervisore riferisce l'esito nel canale canonico del payload.
+      if (opts.markerValue) scriviCanonico(payload, opts.markerValue);
+      return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'b'.repeat(64) };
+    },
     revoke: async () => {}, close: async () => {},
   };
   const fleet = await createBuiltinFleet({
+    cellLeaseEnabled: true,
     home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'win32', env: {},
     launchReadyMs: 0, sendKeysReadyMs: 0, bootstrapReadyWaitMs: 0,
   });
   t.after(() => fleet.close().catch(() => {}));
+  attestaProprietario(fleet.lease, () => ticket);
   const result = await fleet.up('Dev');
   return { w, result, calls: w.calls(), ticket: () => ticket };
 }
@@ -561,8 +569,8 @@ async function upWith(t, opts = {}) {
 test('runtime: custom restartReprompt:false — zero paste/Enter dal runtime, esito letto dal report', async (t) => {
   const { result, calls } = await upWith(t, { engineExtra: { restartReprompt: false }, markerValue: 'paste-delivered' });
   assert.ok(result && result.ok);
-  assert.equal(result.prompt.state, 'paste-delivered', 'il runtime riporta l esito del supervisore');
-  assert.equal(result.prompt.delivered, false, 'paste-only non e submitted');
+  assert.equal(result.prompt.state, 'unknown', 'il runtime riporta l esito del supervisore');
+  assert.equal(result.prompt.reason, 'paste-only-no-enter', 'paste-only non e submitted');
   assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0, 'zero paste dal runtime');
   assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0, 'zero Enter dal runtime');
 });
@@ -581,10 +589,11 @@ test('runtime: legacy senza campo — NESSUNA chiave reprompt nel payload', asyn
   assert.equal('reprompt' in tkt.restartPrompt, false, 'assente = comportamento di oggi');
 });
 
-test('runtime: custom restartReprompt:false — il runtime NON digita quando il report manca', async (t) => {
+test('runtime: custom restartReprompt:false — il runtime NON digita quando il record manca', async (t) => {
   const { result, calls } = await upWith(t, { engineExtra: { restartReprompt: false } });
   assert.ok(result && result.ok);
-  assert.equal(result.prompt.state, 'report-timeout', 'esito onesto senza report');
+  assert.equal(result.prompt.state, 'unknown', 'esito onesto senza record canonico');
+  assert.equal(Object.hasOwn(result.prompt, 'reason'), false, 'nessuna ragione inventata');
   assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0, 'mai un paste dal runtime');
   assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0, 'mai un tasto dal runtime');
 });

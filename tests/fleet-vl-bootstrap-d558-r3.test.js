@@ -27,6 +27,8 @@ const cellExec = require('../lib/fleet/cell-exec.js');
 const FX_DIRS = [];
 process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} } });
 
+const { scriviCanonico, attestaProprietario, finche } = require('./helpers/prompt-canonico.js');
+
 const SESSIONE = 'cloud-CellaProva';
 const PROMPT = 'Leggi CLAUDE.md e parti';
 
@@ -161,6 +163,9 @@ process.exit(0);
   const launchBroker = {
     issue: async (payload) => {
       tickets.push(payload);
+      // Il supervisore finto riferisce l'esito come il vero: record canonico
+      // nella directory del canale del payload, generazione 0.
+      scriviCanonico(payload, fs.readFileSync(deliveryPath, 'utf8'));
       return { socketPath: path.join(root, 'broker.sock'), nonce: 'a'.repeat(64) };
     },
     revoke: async () => {},
@@ -170,6 +175,7 @@ process.exit(0);
     home, fleetDefsPath: defsPath, tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'linux', env: {},
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
+    cellLeaseEnabled: true,
     now: clock.now, monotonicNow: clock.now,
     // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
     identityOwnerInstanceId: OWNER_INSTANCE_ID,
@@ -188,6 +194,8 @@ process.exit(0);
     async fleet() {
       const f = await createBuiltinFleet(cfgBase);
       t.after(() => f.close().catch(() => {}));
+      // Il proprietario attesta la generazione 0 del lancio corrente.
+      attestaProprietario(f.lease, () => tickets[tickets.length - 1]);
       return f;
     },
   };
@@ -236,6 +244,8 @@ test('runtime reale: submitted — la claim per avvio si settle in submitted e n
   const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
   assert.equal(res.prompt.state, 'submitted');
+  assert.equal(res.prompt.generation, 0);
+  assert.equal(res.prompt.launchId, w.tickets[0].promptOutcome.launchId);
   assert.deepEqual(res.vlBootstrap, { state: 'submitted' }, 'esito nel risultato di up()');
   const rp = w.tickets[0].restartPrompt;
   const s = supervisorSeams(SUBMITTED);
@@ -283,7 +293,8 @@ test('runtime reale: TUI non pronta — motivo notReady NEL risultato di up()', 
   const fleet = await w.fleet();
   const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
-  assert.equal(res.prompt.state, 'skipped-not-ready');
+  assert.equal(res.prompt.state, 'skipped');
+  assert.equal(res.prompt.reason, 'not-ready');
   assert.equal(res.prompt.notReady, 'not-ready-consent', 'il motivo non si scarta più');
   assert.deepEqual(res.vlBootstrap,
     { state: 'failed', reason: 'skipped-not-ready', notReady: 'not-ready-consent' });

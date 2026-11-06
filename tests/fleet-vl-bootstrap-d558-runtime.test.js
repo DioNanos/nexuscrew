@@ -15,6 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { scriviCanonico, attestaProprietario } = require('./helpers/prompt-canonico.js');
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 const cellExec = require('../lib/fleet/cell-exec.js');
@@ -153,6 +154,9 @@ process.exit(0);
   const launchBroker = {
     issue: async (payload) => {
       tickets.push(payload);
+      // Il supervisore finto riferisce submitted come il vero: record canonico
+      // nel canale del payload, generazione 0.
+      scriviCanonico(payload, 'submitted');
       return { socketPath: path.join(root, 'broker.sock'), nonce: 'a'.repeat(64) };
     },
     revoke: async () => {},
@@ -162,6 +166,7 @@ process.exit(0);
     home, fleetDefsPath: defsPath, tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'linux', env: {},
     launchReadyMs: 0, vlLaunchCooldownMs: 0,
+    cellLeaseEnabled: true,
     now: clock.now, monotonicNow: clock.now,
     // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
     identityOwnerInstanceId: OWNER_INSTANCE_ID,
@@ -185,6 +190,7 @@ process.exit(0);
     async fleet() {
       const f = await createBuiltinFleet(cfgBase);
       t.after(() => f.close().catch(() => {}));
+      attestaProprietario(f.lease, () => tickets[tickets.length - 1]);
       return f;
     },
   };
@@ -231,7 +237,8 @@ test('runtime reale: host GIA\' ESISTENTE — up consegna il prompt, eligible pe
   const fleet = await w.fleet();
   const res = await fleet.up('CellaProva');
   assert.equal(res.ok, true);
-  assert.equal(res.prompt.state, 'submitted', 'report del supervisore letto dal runtime');
+  assert.equal(res.prompt.state, 'submitted', 'esito canonico del supervisore letto dal runtime');
+  assert.equal(res.prompt.generation, 0);
   const vb = w.tickets[0].restartPrompt.vlBootstrap;
   assert.equal(vb.eligible, true, 'host esistente: idoneo comunque (requisito DAG)');
   assert.equal(vb.reason, 'launch');

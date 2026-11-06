@@ -214,7 +214,9 @@ exec ${TMUX} "$@"
   assert.equal(String(ctx1.serverRoot).includes('nc-vl-cap-'), false);
   assert.equal(ctx1.hostIdentity && ctx1.hostIdentity.state, 'live');
   assert.equal(tickets.length, 1, 'un solo ticket al primo up');
-  assert.equal(up1.prompt && up1.prompt.delivered, true, `prompt: ${JSON.stringify(up1.prompt)}`);
+  // Strato 2c: `up` risponde subito dal record canonico, senza attendere il
+  // report: lo stato e' uno dei quattro, la consegna completa si osserva dopo.
+  assert.ok(up1.prompt && ['pending', 'submitted', 'unknown'].includes(up1.prompt.state), `prompt: ${JSON.stringify(up1.prompt)}`);
 
   const down1 = await fleet.down('Mai');
   assert.equal(down1.ok, true, `down: ${JSON.stringify(down1)}`);

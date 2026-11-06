@@ -11,6 +11,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { scriviCanonico, attestaProprietario } = require('./helpers/prompt-canonico.js');
 
 // Supervised-delivery fixture: the prompt-outcome channel is required. The
 // ephemeral dirs it creates are removed when the test process exits.
@@ -115,17 +116,31 @@ async function up(opts = {}) {
   // il fake legge un file che NESSUNO ha scritto: il report e' muto.
   const w = world(opts);
   const launchBroker = {
-    issue: async () => ({ socketPath: path.join(w.root, 'broker.sock'), nonce: 'b'.repeat(64) }),
+    issue: async (payload) => {
+      ticket = payload;
+      // Il supervisore riferisce l'esito nel canale CANONICO del payload:
+      // percorso produttore vero (R01) oppure valore scritto dal test.
+      if (opts.producer) {
+        const { ctl } = publishFromProducer(path.join(w.root, 'producer-marker'), payload.promptOutcome);
+        await ctl.settled;
+      } else if (opts.markerValue) {
+        scriviCanonico(payload, opts.markerValue);
+      }
+      return { socketPath: path.join(w.root, 'broker.sock'), nonce: 'b'.repeat(64) };
+    },
     revoke: async () => {},
     close: async () => {},
   };
+  let ticket = null;
   const fleet = await createBuiltinFleet({
+    cellLeaseEnabled: true,
     home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'win32', env: {},
     launchReadyMs: 0,
     // Nessuna attesa cieca nella prova: il fake risponde subito.
     sendKeysReadyMs: 0, bootstrapReadyWaitMs: 0,
   });
+  attestaProprietario(fleet.lease, () => ticket);
   try {
     const result = await fleet.up('Dev');
     return { w, result, calls: w.calls() };
@@ -139,7 +154,7 @@ async function up(opts = {}) {
 // file che il PRODUTTORE vero (startGenerationPrompt) scrive, e se il
 // produttore non scrive, l'up() arriva alla deadline e ripiega su
 // report-timeout. E' la prova che il test precedente non faceva.
-function publishFromProducer(markerFile) {
+function publishFromProducer(markerFile, canale = null) {
   const fsx = require('node:fs');
   const argv = [];
   const exec = async (_bin, args) => {
@@ -158,7 +173,7 @@ function publishFromProducer(markerFile) {
     { exited: false },
     // Canale del record del prompt: la consegna supervisionata lo richiede.
     {
-      promptOutcome: { dir: fxDir, launchId: '3c4d5e6f70819203' },
+      promptOutcome: canale || { dir: fxDir, launchId: '3c4d5e6f70819203' },
       setTimeout: (fn) => { fn(); return 1; },
       clearTimeout: () => {},
       tmuxExec: exec,
@@ -176,12 +191,12 @@ test('R01: il rifiuto del produttore arriva al consumer come transport-unsupport
   assert.equal(delivered, 'transport-unsupported', 'il produttore pubblica il proprio esito');
   assert.equal(argv.filter((a) => a.startsWith('send-keys')).length, 0, 'rifiuto = zero digitazione');
 
-  const { w, result, calls } = await up({ markerFile });
+  const { w, result, calls } = await up({ producer: true });
   try {
     assert.ok(result && result.ok, 'il lancio riesce comunque');
-    assert.equal(result.prompt.state, 'transport-unsupported',
-      'up legge il report vero, non un report-timeout');
-    assert.equal(result.prompt.delivered, false);
+    assert.equal(result.prompt.state, 'skipped');
+    assert.equal(result.prompt.reason, 'transport-unsupported',
+      'up legge l\'esito canonico scritto dal produttore vero, non un unknown');
     assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0, 'zero paste');
     assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0, 'zero Enter, zero tasti');
   } finally { w.cleanup(); w0.cleanup(); }
@@ -191,12 +206,12 @@ test('R01: il rifiuto del produttore arriva al consumer come transport-unsupport
 // trasporto disabilitato il produttore non puo' emettere questi due stati).
 // Serve a fissare che il runtime non RIFORMULA l'esito del supervisore.
 test('consumer: il runtime riporta l\'esito del supervisore senza riformularlo', async () => {
-  for (const [state, delivered] of [['submitted', true], ['delivery-unknown', false]]) {
-    const { w, result, calls } = await up({ markerValue: state });
+  for (const [valore, state, reason] of [['submitted', 'submitted', undefined], ['delivery-unknown', 'unknown', 'delivery-unknown']]) {
+    const { w, result, calls } = await up({ markerValue: valore });
     try {
       assert.ok(result && result.ok);
       assert.equal(result.prompt.state, state);
-      assert.equal(result.prompt.delivered, delivered, 'incerto non significa consegnato');
+      assert.equal(result.prompt.reason, reason, 'incerto non significa consegnato');
       assert.equal(calls.filter((args) => args[0] === 'paste-buffer').length, 0);
       assert.equal(calls.filter((args) => args[0] === 'send-keys').length, 0);
     } finally { w.cleanup(); }
