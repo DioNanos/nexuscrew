@@ -291,6 +291,17 @@ function finLease(comportamento) {
   return mgr;
 }
 
+test('classifica: senza uscita PROVATA la sonda non conta, nemmeno se dice zero', () => {
+  const conti = { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' };
+  // La sonda e' un'osservazione DOPO l'uscita: senza la prova di uscita non e'
+  // una chiusura, e' solo un'assenza di contraddizione. Mai `killed-clean`.
+  assert.equal(gruppo.classificaEsito({ ready: { conti }, dopo: conti, uscito: false }).outcome, 'stop-unknown');
+  assert.equal(gruppo.classificaEsito({ ready: { conti }, dopo: conti }).outcome, 'stop-unknown');
+  assert.equal(gruppo.classificaEsito({ commit: { conti }, dopo: conti, uscito: false }).outcome, 'stop-unknown');
+  // Controllo positivo: con la prova di uscita lo stesso zero chiude.
+  assert.equal(gruppo.classificaEsito({ ready: { conti }, dopo: conti, uscito: true }).outcome, 'killed-clean');
+});
+
 test('classifica: un\'osservazione che esplode non diventa un residuo positivo inventato', async () => {
   const mgr = finLease(({ emetti, chiudi, frame }) => {
     emetti({ op: 'ready-to-exit', payload: { stopRequestId: frame.requestId, conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } } });
