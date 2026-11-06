@@ -31,7 +31,7 @@ function reply(status, payload) {
 // e' falso per una ragione che non c'entra con la sonda, e il test non
 // proverebbe nulla.
 function fakeHome(client) {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncd6home-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-endpoint-home-'));
   const p = path.join(home, '.local', 'bin', client);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
@@ -309,7 +309,7 @@ test('prontezza: host:porta nel messaggio, con la porta di default se assente', 
 
 test('integrazione: il fleet risponde alla prova su un engine dichiarato, non 404', async (t) => {
   const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncd6-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-endpoint-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
   fs.mkdirSync(path.join(home, 'Dev'));
