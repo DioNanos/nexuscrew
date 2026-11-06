@@ -43,15 +43,32 @@ fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(process.argv.slice(
 const scrivi = (s) => process.stdout.write(s);
 const frameOk = (n, testo) => scrivi('%begin 1 ' + n + ' 1\\n' + (testo ? testo + '\\n' : '') + '%end 1 ' + n + ' 1\\n');
 const frameErr = (n, testo) => scrivi('%begin 1 ' + n + ' 1\\n' + testo + '\\n%error 1 ' + n + ' 1\\n');
+// FEDELTA' AL VERO: tmux esegue i comandi nell'ordine dell'argv e si FERMA
+// al primo che fallisce. I frame seguono l'argv, non l'ordine che il codice
+// si aspetta: cosi' un ordine sbagliato si vede subito.
 if (cfg.modo === 'muto') { setTimeout(() => {}, 60000); }
 else if (cfg.modo === 'eof') { frameOk(0, String(cfg.pid)); process.exit(0); }
 else {
   frameOk(0, String(cfg.pid));
-  if (cfg.modo === 'errore') frameErr(1, 'no such client');
-  else if (cfg.modo === 'presente') frameOk(1, '');
-  else frameErr(1, cfg.assenza || ('can\\'t find session: ' + ${JSON.stringify(SESSIONE)}));
-  if (cfg.elencoErrore) frameErr(2, 'no such client');
-  else frameOk(2, (cfg.elenco || []).join('\\n'));
+  let n = 1;
+  let fermo = false;
+  for (const tok of process.argv.slice(2)) {
+    if (tok === 'has-session') {
+      if (cfg.modo === 'presente') frameOk(n, '');
+      else {
+        frameErr(n, cfg.modo === 'errore'
+          ? 'no such client'
+          : (cfg.assenza || ('can\\'t find session: ' + ${JSON.stringify(SESSIONE)})));
+        fermo = true;
+      }
+      n += 1;
+    } else if (tok === 'list-sessions') {
+      if (cfg.elencoErrore) { frameErr(n, 'no such client'); fermo = true; }
+      else frameOk(n, (cfg.elenco || []).join('\\n'));
+      n += 1;
+    }
+    if (fermo) break;
+  }
   process.exit(0);
 }
 `, { mode: 0o755 });
