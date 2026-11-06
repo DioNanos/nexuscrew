@@ -124,9 +124,17 @@ for arg in "$@"; do
     break
   fi
 done
-exec ${TMUX} "$@"
+exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
 `, { mode: 0o755 });
   fs.chmodSync(tmuxBin, 0o755);
+  // Supervisore OSSERVABILE senza toccare la produzione: lo stderr del
+  // supervisore e il TUI vivono nel pane, quindi il pane si registra su un file
+  // del test fin dalla nascita (hook del server privato, letto solo all'avvio
+  // del server). Il file e' nel TMPDIR/root del test e sparisce con lui.
+  const logPane = path.join(root, 'pane-cloud-Mai.log');
+  fs.writeFileSync(logPane, '', { mode: 0o600 });
+  fs.writeFileSync(path.join(root, 'tmux-osserva.conf'),
+    `set-hook -g after-new-session "pipe-pane -o 'cat >> ${logPane}'"\n`, { mode: 0o600 });
 
   process.env.HOME = home;
   process.env.TMUX_TMPDIR = tmuxd;
@@ -253,6 +261,9 @@ exec ${TMUX} "$@"
     const [paneId, panePid] = String(lpm.stdout || '').trim().split('\n')[0].split('\t');
     f.paneId = paneId || null;
     f.panePid = panePid || null;
+    // Se l'hook del server non ha registrato il pane, si registra da qui in poi
+    // (-o: non fa nulla se la pipe c'e' gia').
+    if (paneId && !fotografie.length) tmuxTest(['pipe-pane', '-o', '-t', paneId, `cat >> ${logPane}`]);
     const cap = paneId ? tmuxTest(['capture-pane', '-p', '-t', paneId]) : { status: 1, stderr: 'nessun pane nel listing' };
     f.pane = cap.status === 0 ? ultime(cap.stdout, 30) : `<assente: ${String(cap.stderr || '').trim().slice(0, 120)}>`;
     if (panePid && /^[0-9]+$/.test(panePid)) {
@@ -316,6 +327,20 @@ exec ${TMUX} "$@"
     });
     await fotografa('al timeout');
     for (const f of fotografie) process.stderr.write(`[diagnostica first-up] ${JSON.stringify(f)}\n`);
+    // Ultime 80 righe del pane registrato dalla nascita (supervisore + TUI),
+    // ripulite da escape e caratteri di controllo.
+    try {
+      const grezzo = fs.readFileSync(logPane, 'utf8');
+      const pulito = grezzo
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+        .replace(/\x1b\[[0-9;?<>=:]*[ -\/]*[@-~]/g, '')
+        .replace(/\x1b[()][A-Za-z0-9]/g, '')
+        .replace(/\x1b[=>78cDEHMNOZ]/g, '')
+        .replace(/\r/g, '\n')
+        .replace(/[\x00-\x08\x0b-\x1a\x1c-\x1f\x7f]/g, '');
+      const righe = pulito.split('\n').map((r) => r.replace(/\s+$/, '')).filter((r) => r !== '');
+      process.stderr.write(`[diagnostica first-up] pane registrato (${grezzo.length} byte, ultime ${Math.min(80, righe.length)} righe):\n${righe.slice(-80).map((r) => r.slice(0, 300)).join('\n')}\n`);
+    } catch (e) { process.stderr.write(`[diagnostica first-up] log del pane illeggibile: ${e.code || e.message}\n`); }
     process.stderr.write(`[diagnostica first-up] ultimo promptDelivery: ${JSON.stringify(ultimaTupla)}\n`);
     process.stderr.write(`[diagnostica first-up] pane cloud-Mai (exit ${cattura.status}):\n${String(cattura.stdout || cattura.stderr || '').slice(0, 4000)}\n`);
   }
