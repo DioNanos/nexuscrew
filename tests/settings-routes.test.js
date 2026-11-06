@@ -998,3 +998,93 @@ test('attesa: setter ASINCRONO che rigetta -> 200, salvato, applied null, restar
   assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
 });
 
+// --- collegamento vero: server -> provider -> builtin -> runtime --------------
+
+const { createDiagnostics } = require('../lib/diagnostics/store.js');
+
+test('attesa: la diagnostica arriva nello store con verbose SPENTO, dal percorso vero', async (t) => {
+  const diagnostics = createDiagnostics();
+  // Il fleet e' fail-closed senza definizioni valide: si fornisce un fleet.json
+  // minimo, cosi' il percorso server -> provider -> builtin -> runtime arriva
+  // davvero alla creazione del runtime (dove vive la diagnostica di boot).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncset-diag-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const defsPath = path.join(configDir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [{ id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'CellaDiag', tmuxSession: 'nc-diag-cell', cwd: dir, engine: 'eg', boot: false }],
+  }));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} });
+  const { base, token } = await boot(t, {
+    home: dir,
+    configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    fleetDefsPath: defsPath,
+    fleetEnabled: true,
+    diagnostics,
+    bootstrapReadyWaitMs: 'abc',
+    tmuxBin: '/bin/true',
+    launchBroker: {
+      issue: async () => { throw new Error('no-broker'); },
+      revoke: async () => {},
+      close: async () => {},
+    },
+  });
+  // La GET chiede il valore effettivo al runtime: forza la creazione del fleet
+  // (server -> provider -> builtin -> runtime) e quindi la diagnostica di boot.
+  await fetch(`${base}/api/settings`, { headers: H(token) });
+  assert.equal(diagnostics.status().verbose, false, 'verbose spento: la voce c\'e\' comunque');
+  const voci = diagnostics.logs().records.filter((r) => r.code === 'BOOTSTRAP_WAIT_INVALID');
+  assert.equal(voci.length, 1, 'una sola voce per configurazione effettiva');
+  assert.equal(voci[0].level, 'warn');
+});
+
+test('attesa: un POST cambia il valore usato dalla UP successiva, attraverso le copie di cfg', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncset-s4-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const defsPath = path.join(configDir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [{ id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'CellaS4', tmuxSession: 'nc-s4-cell', cwd: dir, engine: 'eg', boot: false, prompt: 'bootstrap' }],
+  }));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} });
+
+  // Il broker cattura il payload e ferma l'up: cio' che conta e' il valore che
+  // il runtime ha letto per QUESTA up.
+  let payload = null;
+  const broker = {
+    issue: async (req) => { payload = req; throw new Error('stop-after-payload'); },
+    revoke: async () => {},
+    close: async () => {},
+  };
+  const { base, token } = await boot(t, {
+    home: dir,
+    configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    fleetDefsPath: defsPath,
+    fleetEnabled: true,
+    tmuxBin: '/bin/false',
+    launchBroker: broker,
+  });
+  const up = () => fetch(`${base}/api/fleet/up`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'CellaS4' }),
+  });
+
+  await up().catch(() => {});
+  assert.ok(payload, 'il payload del primo lancio deve esistere');
+  assert.equal(payload.restartPrompt.readyWaitMs, 15000, 'valore di partenza: default');
+
+  const salvato = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(salvato.status, 200);
+  const corpo = await salvato.json();
+  assert.deepEqual(corpo.applied, { bootstrapReadyWaitMs: 60000 }, 'applicato dal runtime vero');
+
+  await up().catch(() => {});
+  assert.equal(payload.restartPrompt.readyWaitMs, 60000, 'la up successiva usa il valore applicato');
+});
