@@ -16,6 +16,9 @@ export function puoRileggere({ atteso, contesto, snapshot, cell }) {
   if (!atteso || !contesto) return false;
   if (atteso.token !== contesto.token) return false;
   if ((atteso.owner || null) !== (contesto.owner || null)) return false;
+  // La generazione del contesto distingue due azioni sulla stessa tupla quando
+  // la credenziale e' cambiata: un'attesa vecchia non vale per quella nuova.
+  if ((atteso.gen ?? null) !== (contesto.gen ?? null)) return false;
   const celle = snapshot && snapshot.fs && Array.isArray(snapshot.fs.cells) ? snapshot.fs.cells : null;
   // Snapshot assente o senza elenco: non si sa nulla, quindi la lettura serve
   // ancora. È lo stato della cella a toglierle senso, non la sua assenza.

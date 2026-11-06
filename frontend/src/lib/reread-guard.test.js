@@ -28,6 +28,23 @@ describe('guardia della lettura differita', () => {
     expect(puoRileggere({ atteso, contesto: { token: 't1', owner: 'owner-b' }, snapshot: null, cell })).toBe(false);
   });
 
+  it('rifiuta quando la generazione del contesto è cambiata', () => {
+    // stessa credenziale e stesso owner non bastano: la generazione distingue
+    // due azioni separate da un cambio di contesto
+    expect(puoRileggere({
+      atteso: { token: 't1', owner: 'owner-a', gen: 1 },
+      contesto: { token: 't1', owner: 'owner-a', gen: 2 },
+      snapshot: null, cell,
+    })).toBe(false);
+    expect(puoRileggere({
+      atteso: { token: 't1', owner: 'owner-a', gen: 2 },
+      contesto: { token: 't1', owner: 'owner-a', gen: 2 },
+      snapshot: null, cell,
+    })).toBe(true);
+    // senza generazione da nessuna delle due parti non si inventa un conflitto
+    expect(puoRileggere({ atteso, contesto: { token: 't1', owner: 'owner-a' }, snapshot: null, cell })).toBe(true);
+  });
+
   it('rifiuta quando l owner è comparso o sparito', () => {
     expect(puoRileggere({ atteso: { token: 't1', owner: null }, contesto: { token: 't1', owner: 'owner-a' }, snapshot: null, cell })).toBe(false);
     expect(puoRileggere({ atteso, contesto: { token: 't1', owner: null }, snapshot: null, cell })).toBe(false);

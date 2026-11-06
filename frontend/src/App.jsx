@@ -1015,11 +1015,19 @@ export default function App() {
   // Il contesto che una lettura differita deve poter ancora vedere: la
   // credenziale e l'owner della route. Se cambiano fra la richiesta e la
   // scadenza, la lettura non riguarda più questa vista.
-  const contestoRiletture = useRef({ token: null, owners: new Map() });
-  contestoRiletture.current = {
-    token,
-    owners: new Map((deckOwners || []).map((o) => [JSON.stringify(o.route || []), o.instanceId])),
-  };
+  // `gen` e' una GENERAZIONE locale del contesto: cambia quando cambia la
+  // credenziale o l'owner di una route, e serve a distinguere due azioni che
+  // hanno la stessa tupla ma non lo stesso contesto. Non e' il token: quello
+  // non entra in chiavi, diagnostiche o log.
+  const contestoRiletture = useRef({ token: null, owners: new Map(), gen: 0 });
+  {
+    const precedente = contestoRiletture.current;
+    const owners = new Map((deckOwners || []).map((o) => [JSON.stringify(o.route || []), o.instanceId]));
+    const ownersCambiati = owners.size !== precedente.owners.size
+      || [...owners].some(([k, v]) => (precedente.owners.get(k) || null) !== (v || null));
+    const gen = (token !== precedente.token || ownersCambiati) ? precedente.gen + 1 : precedente.gen;
+    contestoRiletture.current = { token, owners, gen };
+  }
   useEffect(() => () => { if (rilettureDifferite.current) rilettureDifferite.current.chiudi(); }, []);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
@@ -1414,7 +1422,11 @@ export default function App() {
     // Il contesto si congela QUI, prima dell'await: se l'owner della route
     // cambia mentre il POST è in volo, alla risposta non si ricostruisce
     // l'autorità di questa azione dall'owner nuovo.
-    const contestoAzione = { token, owner: contestoRiletture.current.owners.get(routeKey) || null };
+    const contestoAzione = {
+      token,
+      owner: contestoRiletture.current.owners.get(routeKey) || null,
+      gen: contestoRiletture.current.gen,
+    };
     // Stesso percorso del roster mobile: esiti benigni (timeout client,
     // sessione già attiva) come notice a SCADENZA su una riga sua sotto la
     // barra — mai dentro la barra, dove il messaggio copriva i chip e non
@@ -1432,10 +1444,10 @@ export default function App() {
       // assorbire (per coalescenza) quella di un'azione nuova nata dopo la
       // sostituzione, né il contrario.
       rilettureDifferite.current.programma(
-        `${contestoAzione.owner || '-'}|${routeKey}|${cell}`,
+        `${contestoAzione.gen}|${contestoAzione.owner || '-'}|${routeKey}|${cell}`,
         () => {
           const ora = contestoRiletture.current;
-          const contesto = { token: ora.token, owner: ora.owners.get(routeKey) || null };
+          const contesto = { token: ora.token, owner: ora.owners.get(routeKey) || null, gen: ora.gen };
           if (!puoRileggere({ atteso: contestoAzione, contesto, snapshot: readFleetRoute(route, token), cell })) return;
           refreshFleetRoute(route, token);
         },

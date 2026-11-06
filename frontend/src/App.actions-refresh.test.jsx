@@ -293,3 +293,38 @@ describe('contesto cambiato: la lettura differita non parte', () => {
     expect(mocks.refreshFleetRoute.mock.calls.length, 'a cell with a terminal reason needed no reread').toBe(prima);
   });
 });
+
+
+// Un cambio di credenziale apre una finestra nuova: la lettura differita della
+// vecchia azione non deve assorbire (per coalescenza) quella dell'azione nuova,
+// che è di un altro contesto. La chiave porta una generazione locale del
+// contesto — mai il token, che non deve finire in chiavi o diagnostiche.
+describe('rilettura dopo un cambio di credenziale', () => {
+  it.each([true, false])('nuova credenziale, vecchio timer ancora pendente=%s', async (pendente) => {
+    hookNodes.list = [{ name: 'hub', label: 'Fixture', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504; e.data = { reason: 'federation-peer-timeout' };
+    mocks.fleetUp.mockRejectedValue(e);
+    mocks.readFleetRoute.mockReturnValue(null);
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    if (!pendente) await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    // la credenziale diventa invalida: compare il form di accesso vero
+    await act(async () => { window.dispatchEvent(new CustomEvent('nc:auth-invalid', { detail: { token: 't' } })); });
+    const campo = screen.getByLabelText('token');
+    await act(async () => {
+      fireEvent.change(campo, { target: { value: 'token-2' } });
+      fireEvent.click(screen.getByRole('button', { name: 'ok' }));
+    });
+    // seconda azione, stesso owner, route e cella, con la credenziale nuova
+    await act(async () => { fireEvent.click(screen.getByTestId('open-power')); });
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    expect(mocks.fleetUp).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    const nuove = mocks.refreshFleetRoute.mock.calls.filter((args) => args[1] === 'token-2');
+    expect(nuove.length, 'the old credential swallowed the new action deferred read').toBe(2);
+  });
+});
