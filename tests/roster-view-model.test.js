@@ -186,6 +186,9 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
     type: 'cell', value: cells[0], key: positionKey([], 'local-live'), label: 'Live Cell',
     live: true, fresh: true, activity: 20, working: true, stato: 'ignoto',
     subtitle: `${t('cell-unknown')} · Implement activity UI`,
+    // la consegna del prompt e' una riga ACCOSTATA allo stato della cella:
+    // senza campo dal nodo resta «non disponibile», mai un invito dedotto
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
     searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
@@ -213,6 +216,22 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   assert.deepEqual(buildLocalRoster([], [], new Map(), storage), []);
 });
 
+test('the roster carries the prompt delivery as its own row, beside the cell state', async () => {
+  const { buildLocalRoster, cellRuntime } = await model();
+  const storage = makeStorage();
+  const byName = new Map();
+  const conConsegna = { cell: 'Live Cell', tmuxSession: 'local-live', tmux: true, engine: 'claude',
+    promptDelivery: { state: 'skipped', reason: 'prompt-rejected', launchId: 'abcdef0123456789' } };
+  const senza = { cell: 'Off Cell', tmuxSession: 'local-off', tmux: false, engine: 'claude' };
+  const items = buildLocalRoster([conConsegna, senza], [], byName, storage);
+  assert.equal(items[0].prompt.badge, 'action', 'una risposta serve: la riga lo dice');
+  assert.equal(items[0].prompt.key, 'prompt-badge-action');
+  assert.equal(items[1].prompt.badge, 'unavailable', 'senza campo dal nodo non si deduce nulla');
+  // e lo stato della cella resta quello che era: la consegna non lo riscrive
+  assert.equal(items[0].working, cellRuntime(conConsegna, {}).working);
+  assert.equal(items[0].subtitle, cellRuntime(conConsegna, {}).subtitle);
+});
+
 test('buildRemoteRoster qualifies keys with the node route and falls back to cell preview/activity', async () => {
   const { buildRemoteRoster } = await model();
   const { t } = await i18n();
@@ -234,6 +253,7 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
     live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-unknown'),
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
     searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.

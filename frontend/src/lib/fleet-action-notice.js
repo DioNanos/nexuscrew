@@ -37,6 +37,25 @@ export function upActionNotice(result) {
   if (result && typeof result === 'object' && result.vlPromptDegraded === true) {
     return { code: 'VL_PROMPT_DEGRADED', recovery: null, text: t('fleet-vl-prompt-degraded') };
   }
+  // L'esito della consegna del prompt iniziale vl di QUESTO avvio. Il payload puo' arrivare da un nodo remoto federato: si accettano
+  // SOLO stati/reasons closed enum (slug `[a-z0-9-]`) e il testo e' i18n
+  // locale. Lo skip NORMALE ('skipped', respawn/riattacco nello stesso avvio)
+  // e l'esito 'submitted' NON generano avviso; 'failed', 'uncertain' e il non
+  // consegnato (anche per TUI non pronta, notReady bounded) si'. Il recupero
+  // e' sempre RIAVVIARE la cella: un avvio nuovo porta una consegna nuova,
+  // non esiste reinvio automatico nello stesso avvio.
+  if (result && typeof result === 'object' && result.vlBootstrap
+    && typeof result.vlBootstrap === 'object' && !Array.isArray(result.vlBootstrap)) {
+    const vb = result.vlBootstrap;
+    const slug = (v) => typeof v === 'string' && /^[a-z0-9-]{1,32}$/.test(v);
+    if (['failed', 'uncertain', 'not-delivered'].includes(vb.state) && slug(vb.reason)
+      && (vb.notReady === undefined || slug(vb.notReady))) {
+      const notReadyCase = vb.state === 'failed' && typeof vb.notReady === 'string' && vb.notReady;
+      const key = notReadyCase ? 'fleet-vl-bootstrap-not-ready'
+        : vb.state === 'uncertain' ? 'fleet-vl-bootstrap-uncertain' : 'fleet-vl-bootstrap-failed';
+      return { code: 'VL_BOOTSTRAP_FAILED', recovery: null, text: t(key) };
+    }
+  }
   // R27 #3: /fleet/up porta readinessDegraded:true quando una cella vl parte
   // senza marcatore di prontezza (DEC1 in runtime.js: degrada e procede).
   // Quel risultato veniva scartato e la cella appariva semplicemente «attiva»:
@@ -68,10 +87,14 @@ export function upActionNotice(result) {
 //   dal roster;
 // - 502 «upstream-timeout» del proxy federato (PROXY_TIMEOUT_MS): la cella
 //   remota può essere ancora in avvio mentre il proxy ha già risposto;
+// - 504 «federation-peer-timeout» del proxy federato: il peer non ha risposto
+//   entro il tetto della GET. È la stessa incertezza del 502 legacy, con lo
+//   stesso testo, ma il codice nei dati resta distinto per la diagnostica:
+//   chi indaga deve poter dire se l'attesa è scaduta qui o là.
 // - 409 SESSION_DUPLICATE su 'up' (preflight del runtime: la sessione esiste
 //   già). La cella è viva, non serve rilanciare.
-// 'down' non ha il 409: è idempotente per progetto (la kill di una sessione
-// assente non è errore) e risolve sempre con ok.
+// In nessuno di questi casi si ripete il POST: l'azione può essere già passata,
+// e un secondo invio non è una riprova ma una seconda azione.
 export function fleetActionErrorNotice(error, action) {
   if (!error) return null;
   // Due facce della stessa attesa: il timeout client (FLEET_ACTION_TIMEOUT_MS)
@@ -81,9 +104,11 @@ export function fleetActionErrorNotice(error, action) {
   // notice avvisa, l'esito reale arriva dal roster.
   const slowRoute = error.status === 502
     && error.data && error.data.cause === 'upstream-timeout';
-  if (error.name === 'TimeoutError' || slowRoute) {
+  const peerTimeout = error.status === 504
+    && error.data && error.data.reason === 'federation-peer-timeout';
+  if (error.name === 'TimeoutError' || slowRoute || peerTimeout) {
     return {
-      code: 'FLEET_ACTION_TIMEOUT',
+      code: peerTimeout ? 'FLEET_PEER_TIMEOUT' : 'FLEET_ACTION_TIMEOUT',
       recovery: null,
       text: t(action === 'down' ? 'fleet-down-slow' : 'fleet-up-slow'),
     };

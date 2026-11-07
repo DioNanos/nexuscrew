@@ -71,15 +71,58 @@ test('runtime env: an explicit Termux tmux socket remains authoritative', () => 
   assert.equal(env.TMUX_TMPDIR, '/data/data/com.termux/files/usr/var/run-custom');
 });
 
-test('runtime env: local macOS PTY gets UTF-8 while preserving its tmux context', () => {
+test('runtime env: local macOS PTY gets UTF-8 while the inherited tmux selector is dropped', () => {
   const source = { HOME: '/Users/test', PATH: '/usr/bin', TMUX: '/tmp/tmux,1,0', LANG: 'C' };
   const env = attachEnv(source, 'darwin');
-  assert.equal(env.TMUX, source.TMUX);
+  assert.equal(env.TMUX, undefined);
   assert.equal(env.LANG, 'en_US.UTF-8');
   assert.equal(env.LC_CTYPE, 'UTF-8');
   assert.deepEqual(withUtf8Locale({ LANG: 'it_IT.UTF-8' }, { platform: 'darwin' }), {
     LANG: 'it_IT.UTF-8', LC_CTYPE: 'it_IT.UTF-8', TERM: 'xterm-256color',
   });
+});
+
+// Single socket-selection policy: TMUX never reaches a tmux client spawned by
+// NexusCrew, so a bare client always resolves the configured default
+// ($TMUX_TMPDIR, otherwise /tmp/tmux-<uid>/default) like sharedTmuxSocketPath.
+test('runtime env: minimal runtime env drops TMUX while keeping TMUX_TMPDIR', () => {
+  const env = minimalRuntimeEnv({
+    HOME: '/home/test', PATH: '/usr/bin',
+    TMUX: '/tmp/tmux-1000/default,6083,0', TMUX_TMPDIR: '/custom/tmux-run',
+  });
+  assert.equal(env.TMUX, undefined);
+  assert.equal(env.TMUX_TMPDIR, '/custom/tmux-run');
+});
+
+test('runtime env: tmuxClientEnv removes only TMUX and leaves the rest intact', () => {
+  const source = { HOME: '/home/test', PATH: '/usr/bin', TMUX: '/tmp/other.sock,7,1', TMUX_PANE: '%12', LANG: 'C' };
+  const env = require('../lib/runtime/env.js').tmuxClientEnv(source);
+  assert.equal(env.TMUX, undefined);
+  assert.equal(env.TMUX_PANE, '%12');
+  assert.equal(env.HOME, '/home/test');
+  assert.equal(env.PATH, '/usr/bin');
+  assert.equal(env.LANG, 'C');
+  assert.equal(source.TMUX, '/tmp/other.sock,7,1', 'la sorgente non viene mutata');
+});
+
+test('runtime env: tmuxClientEnv drops a relative or empty TMUX_TMPDIR and keeps an absolute one', () => {
+  const { tmuxClientEnv, sharedTmuxSocketPath } = require('../lib/runtime/env.js');
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  const base = { HOME: '/home/test', PATH: '/usr/bin', TMUX: '/tmp/trap.sock,9,0' };
+  const relativo = tmuxClientEnv({ ...base, TMUX_TMPDIR: 'run' });
+  assert.equal(relativo.TMUX, undefined);
+  assert.equal(relativo.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: 'run' }), `/tmp/tmux-${uid}/default`);
+  const vuoto = tmuxClientEnv({ ...base, TMUX_TMPDIR: '' });
+  assert.equal(vuoto.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: '' }), `/tmp/tmux-${uid}/default`);
+  const assente = tmuxClientEnv({ ...base });
+  assert.equal(assente.TMUX_TMPDIR, undefined);
+  assert.equal(sharedTmuxSocketPath({ ...base }), `/tmp/tmux-${uid}/default`);
+  const assoluto = tmuxClientEnv({ ...base, TMUX_TMPDIR: '/var/run/tmux' });
+  assert.equal(assoluto.TMUX_TMPDIR, '/var/run/tmux');
+  assert.equal(sharedTmuxSocketPath({ ...base, TMUX_TMPDIR: '/var/run/tmux' }), `/var/run/tmux/tmux-${uid}/default`);
+  assert.equal(base.TMUX, '/tmp/trap.sock,9,0', 'la sorgente non viene mutata');
 });
 
 // --- Tranche A: Termux LD_PRELOAD fail-closed filter ---

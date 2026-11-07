@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Le azioni cella del workspace desktop (kill, visibilità, boot, conferma
 // power) devono chiedere il refresh della ROUTE toccata dopo l'azione: il
@@ -37,6 +37,10 @@ vi.mock('./lib/fleet-poll.js', () => ({
   subscribeFleetRoute: mocks.subscribeFleetRoute, readFleetRoute: mocks.readFleetRoute,
   refreshFleetRoute: mocks.refreshFleetRoute,
 }));
+// L'owner di una route arriva da qui: il test del contesto deve poterlo
+// cambiare mentre il POST è in volo, come succede quando il roster si aggiorna.
+const hookNodes = vi.hoisted(() => ({ list: [] }));
+vi.mock('./hooks/useNodes.js', () => ({ useNodes: () => hookNodes.list }));
 vi.mock('./lib/sw-update.js', () => ({ reportServerVersions: vi.fn() }));
 vi.mock('./components/Terminal.jsx', () => ({ default: () => null }));
 vi.mock('./components/KeyBar.jsx', () => ({ default: () => null }));
@@ -94,6 +98,7 @@ beforeEach(() => {
   mocks.fleetBoot.mockResolvedValue({ ok: true });
   mocks.fleetUp.mockResolvedValue({ committed: true });
   mocks.refreshFleetRoute.mockClear();
+  hookNodes.list = [];
 });
 
 const agisci = async (testid) => {
@@ -122,5 +127,204 @@ describe('le azioni cella chiedono il refresh della route toccata', () => {
     // Il foglio power porta la SUA route: prima si apre, poi si conferma.
     fireEvent.click(await screen.findByTestId('open-power'));
     await agisci('act-confirm');
+  });
+});
+
+// Con la risposta persa l'azione può essere passata comunque. Il roster si
+// rilegge UNA volta, in differita, per la tupla toccata: non si ripete il POST
+// (sarebbe una seconda azione, non una riprova) e due richieste ravvicinate non
+// raddoppiano la lettura.
+describe('risposta persa: una rilettura differita per tupla, nessun replay', () => {
+  const peerTimeout = () => {
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504;
+    e.data = { error: 'peer non risponde entro il timeout', reason: 'federation-peer-timeout' };
+    return e;
+  };
+
+  const conferma = async () => {
+    fireEvent.click(await screen.findByTestId('open-power'));
+    await screen.findByTestId('act-confirm');
+    mocks.refreshFleetRoute.mockClear();
+    fireEvent.click(screen.getByTestId('act-confirm'));
+  };
+
+  it('dopo un 504 il POST non si ripete e la rilettura arriva una volta', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    render(<App />);
+    await conferma();
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledWith(HUB, 't'));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
+    // la differita arriva dopo la finestra, e solo una volta
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2), { timeout: 4000 });
+    expect(mocks.fleetUp).toHaveBeenCalledTimes(1);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2);
+  });
+
+  it('due richieste ravvicinate sulla stessa tupla: una sola rilettura differita', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    render(<App />);
+    await conferma();
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(2));
+    // due letture immediate (una per azione) e UNA SOLA differita: la seconda
+    // richiesta cade nella stessa finestra e viene coalesciuta, non raddoppiata
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+  });
+});
+
+// Il 409 «sessione già in esecuzione» è un esito NOTO, non una risposta persa:
+// la lettura immediata basta e non deve partire anche una differita.
+describe('esito noto: nessuna lettura differita', () => {
+  const duplicate = () => {
+    const e = new Error('already running');
+    e.status = 409;
+    e.data = { error: 'already running', code: 'SESSION_DUPLICATE' };
+    return e;
+  };
+
+  it('un 409 di sessione duplicata non arma una lettura differita', async () => {
+    mocks.fleetUp.mockRejectedValue(duplicate());
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'an outcome that is known is not a lost response').toBe(prima);
+  });
+});
+
+// La differita non deve nascere dopo la chiusura della vista, e non deve
+// sopravvivere a un contesto che non è più quello che l'ha chiesta: un'altra
+// credenziale, un altro owner della stessa route, una ragione terminale già
+// arrivata. Sono i casi in cui la lettura non riguarda più questa vista.
+describe('contesto cambiato: la lettura differita non parte', () => {
+  const peerTimeout = () => {
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504;
+    e.data = { error: 'peer non risponde entro il timeout', reason: 'federation-peer-timeout' };
+    return e;
+  };
+
+  it('una risposta arrivata dopo la chiusura della vista non arma nulla', async () => {
+    let rigetta;
+    mocks.fleetUp.mockImplementation(() => new Promise((resolve, reject) => { rigetta = reject; }));
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(1));
+    vi.useFakeTimers();
+    vista.unmount();
+    await act(async () => {
+      rigetta(peerTimeout());
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'a deferred read survived the closed view').toBe(prima);
+  });
+
+  // Lo snapshot che readFleetRoute emette davvero: le celle stanno in `fs`,
+  // sotto il risultato di fleetStatus, non alla radice dell'oggetto.
+  const snapshotVero = (celle, extra = {}) => ({
+    at: 1, sessionsJson: { sessions: [] }, sessionsError: null,
+    fs: { available: true, cells: celle }, fleetError: null, ...extra,
+  });
+
+
+  it('un owner cambiato mentre il POST è in volo non autorizza la differita', async () => {
+    let rigetta;
+    mocks.fleetUp.mockImplementation(() => new Promise((resolve, reject) => { rigetta = reject; }));
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    fireEvent.click(screen.getByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(1));
+    // l'owner della stessa route cambia mentre il POST è ancora pendente
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'b'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    vista.rerender(<App />);
+    vi.useFakeTimers();
+    await act(async () => { rigetta(peerTimeout()); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'old action scheduled a read for the replacement owner').toBe(prima);
+  });
+
+  it('dopo la sostituzione, un azione nuova sulla stessa route legge una volta sola', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const vista = render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    await screen.findByTestId('act-confirm');
+    mocks.refreshFleetRoute.mockClear();
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    // l'owner cambia, e poi arriva un'azione NUOVA su quel contesto
+    hookNodes.list = [{ name: 'hub', label: 'Hub', route: HUB, instanceId: 'b'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    vista.rerender(<App />);
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    // due letture immediate (una per azione) e UNA differita, quella dell'azione
+    // nuova: la vecchia non le ruba il posto con la chiave della tupla
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+  });
+
+  it('una ragione terminale già arrivata toglie senso alla lettura', async () => {
+    mocks.fleetUp.mockRejectedValue(peerTimeout());
+    mocks.readFleetRoute.mockReturnValue(snapshotVero([
+      { cell: 'TestCell', tmuxSession: 'cloud-TestCell', terminal: { reason: 'lease-lost', ts: 1 } },
+    ]));
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    const prima = mocks.refreshFleetRoute.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    expect(mocks.refreshFleetRoute.mock.calls.length, 'a cell with a terminal reason needed no reread').toBe(prima);
+  });
+});
+
+
+// Un cambio di credenziale apre una finestra nuova: la lettura differita della
+// vecchia azione non deve assorbire (per coalescenza) quella dell'azione nuova,
+// che è di un altro contesto. La chiave porta una generazione locale del
+// contesto — mai il token, che non deve finire in chiavi o diagnostiche.
+describe('rilettura dopo un cambio di credenziale', () => {
+  it.each([true, false])('nuova credenziale, vecchio timer ancora pendente=%s', async (pendente) => {
+    hookNodes.list = [{ name: 'hub', label: 'Fixture', route: HUB, instanceId: 'a'.repeat(32), status: 'up', sessions: [], cells: [] }];
+    const e = new Error('peer non risponde entro il timeout');
+    e.status = 504; e.data = { reason: 'federation-peer-timeout' };
+    mocks.fleetUp.mockRejectedValue(e);
+    mocks.readFleetRoute.mockReturnValue(null);
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    if (!pendente) await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    // la credenziale diventa invalida: compare il form di accesso vero
+    await act(async () => { window.dispatchEvent(new CustomEvent('nc:auth-invalid', { detail: { token: 't' } })); });
+    const campo = screen.getByLabelText('token');
+    await act(async () => {
+      fireEvent.change(campo, { target: { value: 'token-2' } });
+      fireEvent.click(screen.getByRole('button', { name: 'ok' }));
+    });
+    // seconda azione, stesso owner, route e cella, con la credenziale nuova
+    await act(async () => { fireEvent.click(screen.getByTestId('open-power')); });
+    await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
+    expect(mocks.fleetUp).toHaveBeenCalledTimes(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
+    vi.useRealTimers();
+    const nuove = mocks.refreshFleetRoute.mock.calls.filter((args) => args[1] === 'token-2');
+    expect(nuove.length, 'the old credential swallowed the new action deferred read').toBe(2);
   });
 });

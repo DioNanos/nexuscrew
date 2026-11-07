@@ -345,7 +345,7 @@ test('E2E fail-closed (ricevente 0.9.51/0.9.52): la GET della riconciliazione no
   assert.equal(snap, null, 'nessun corpo raggiunge la decisione del ricevente vecchio: chiusura impossibile');
 });
 
-// --- DIFETTO nc-0953: asks.json ESISTENTE ma MALFORMATO ----------------------
+// --- DIFETTO snapshot: asks.json ESISTENTE ma MALFORMATO ----------------------
 // Il 503 di 6d05d1f scatta solo se list() LANCIA. Ma un JSON malformato (virgola
 // finale) o un `asks` non array fanno tornare [] a list() SILENZIOSAMENTE: il
 // produttore spediva 200 con asks:[] autorevole e i riceventi chiudevano alias
@@ -371,7 +371,7 @@ function openOwnerAsk() {
   return { id: OWNER_ASK_ID, question: 'aperta e leggibile', session, ts: Date.now(), answered: false, dismissed: false };
 }
 
-test('E2E nc-0953 (porta): asks.json malformato (virgola finale) — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
+test('E2E snapshot (porta): asks.json malformato (virgola finale) — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-mal-door-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, ownerSnapshot, aliasRecord } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: false });
@@ -387,7 +387,7 @@ test('E2E nc-0953 (porta): asks.json malformato (virgola finale) — produttore 
   assert.notEqual(rec.dismissed, true, 'uno snapshot di un produttore con store malformato NON chiude mai un alias');
 });
 
-test('E2E nc-0953 (via sottoscritta): asks.json malformato — view stale su 503, alias APERTO', async (t) => {
+test('E2E snapshot (via sottoscritta): asks.json malformato — view stale su 503, alias APERTO', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-mal-view-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, aliasRecord, feedView } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: true });
@@ -407,7 +407,7 @@ test('E2E nc-0953 (via sottoscritta): asks.json malformato — view stale su 503
     + Array.from(new Set(observed.seen)).join(', ') + ')');
 });
 
-test('E2E nc-0953 (porta): asks non array — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
+test('E2E snapshot (porta): asks non array — produttore 503, la riconciliazione NON chiude l\'alias', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-nonarr-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, ownerSnapshot, aliasRecord } = await pairReal(t, root, { ownerRaw: nonArrayOwnerRaw(), subscribed: false });
@@ -420,7 +420,7 @@ test('E2E nc-0953 (porta): asks non array — produttore 503, la riconciliazione
   assert.notEqual(rec.dismissed, true, 'uno snapshot di un produttore con asks non array NON chiude mai un alias');
 });
 
-test('E2E nc-0953 (risanamento): ripara il file sull\'owner — lo snapshot torna 200 con la domanda e l\'alias resta APERTO', async (t) => {
+test('E2E snapshot (risanamento): ripara il file sull\'owner — lo snapshot torna 200 con la domanda e l\'alias resta APERTO', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncfc-repair-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, selfB, ownerSnapshot, aliasRecord, ownerDir } = await pairReal(t, root, { ownerRaw: malformedOwnerRaw(), subscribed: false });

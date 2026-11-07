@@ -316,7 +316,39 @@ function writeFakeTmux(dir, cfg) {
   const body = `#!/usr/bin/env node
 'use strict';
 const cfg = ${JSON.stringify(cfg)};
-const cmd = process.argv[2] || '';
+let argv = process.argv.slice(2);
+if (argv[0] === '-S') argv = argv.slice(2);
+if (argv[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
+  const { spawnSync } = require('node:child_process');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+const cmd = argv[0] || '';
 const out = (s) => process.stdout.write(s);
 const er = (s) => process.stderr.write(s);
 switch (cmd) {
@@ -324,12 +356,13 @@ switch (cmd) {
     if (cfg.duplicate) { er('duplicate session: work-build'); process.exit(1); }
     if (cfg.newSessionError) { er(cfg.newSessionError); process.exit(2); }
     // il runtime passa -P -F '#{session_id}\t#{window_id}\t#{pane_id}': 3 ID
-    if (process.argv.includes('-P')) out('$1\\t@1\\t' + (cfg.paneId || '%0') + '\\n');
+    if (argv.includes('-P')) out('$1\\t@1\\t' + (cfg.paneId || '%0') + '\\n');
     else if (cfg.paneId) out(cfg.paneId + '\\n');
     process.exit(0);
   case 'has-session':
     process.exit(cfg.alive === false ? 1 : 0);
   case 'display-message':
+    if (process.argv.join(' ').includes('pane_pid')) { out('4242\\t2222\\n'); process.exit(0); }
     out((cfg.paneDead || 0) + '\\t' + (cfg.paneStatus == null ? '' : cfg.paneStatus) + '\\t' + (cfg.paneId || '%0') + '\\n');
     process.exit(0);
   case 'capture-pane':

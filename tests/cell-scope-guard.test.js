@@ -240,3 +240,47 @@ test('vl-new-session-state: la cella fuori scope e\' rifiutata, quella dentro pa
   const dentro = await call(srv, 'GET', '/fleet/vl-new-session-state?cell=CellaProva2', { visited: chain });
   assert.equal(dentro.status, 200, 'cella dentro scope: passa');
 });
+
+// --- La superficie del lancio interrotto (launch-state / reconcile) --------
+
+test('launch-state: bersaglio dalla QUERY — fuori scope rifiutata, dentro passa, il body non conta', async (t) => {
+  // Lo stato del lancio e' l'altra domanda per-cella via GET: il bersaglio
+  // sta nella query. Una cella nel body di una GET NON e' il bersaglio
+  // dichiarato: non allarga lo scope e non lo sposta.
+  const app = appWith(RESTRICTED());
+  app.get('/fleet/launch-state', (_req, res) => res.json({ cell: _req.query.cell, classification: 'none' }));
+  const srv = await listen(app);
+  t.after(() => srv.close());
+  const chain = [PEER, LOCAL];
+  assert.equal((await call(srv, 'GET', '/fleet/launch-state?cell=CellaProva', { visited: chain })).status, 403,
+    'cella fuori scope nella query: lo stato del lancio non esce');
+  assert.equal((await call(srv, 'GET', '/fleet/launch-state?cell=CellaProva2', { visited: chain })).status, 200,
+    'cella dentro scope nella query: passa');
+  // Altri parametri di query non disturbano il bersaglio, e senza cella nella
+  // query il guard non nega (nessun bersaglio dichiarato): e' la route a
+  // rispondere 400. Il body di una GET non viene nemmeno parsato dal guard.
+  assert.equal((await call(srv, 'GET', '/fleet/launch-state?cell=CellaProva2&x=1', { visited: chain })).status, 200,
+    'parametri estranei nella query non spostano il bersaglio');
+  assert.equal((await call(srv, 'GET', '/fleet/launch-state', { visited: chain })).status, 200,
+    'senza cella nella query il guard non nega: e\' la route a rispondere 400');
+});
+
+test('reconcile: bersaglio dal BODY — fuori scope rifiutata, dentro passa', async (t) => {
+  // La riconciliazione esplicita chiude la pratica di UN lancio di UNA cella:
+  // il bersaglio e' body.cell come ogni azione di ciclo di vita, e il
+  // launchId conferma la pratica senza spostare il bersaglio.
+  const app = appWith(RESTRICTED());
+  app.post('/fleet/reconcile', (_req, res) => res.json({ ok: true, outcome: 'not-needed' }));
+  const srv = await listen(app);
+  t.after(() => srv.close());
+  const chain = [PEER, LOCAL];
+  assert.equal((await call(srv, 'POST', '/fleet/reconcile', {
+    body: { cell: 'CellaProva', launchId: 'ab'.repeat(8) }, visited: chain,
+  })).status, 403, 'cella fuori scope: la pratica non si chiude da fuori');
+  assert.equal((await call(srv, 'POST', '/fleet/reconcile', {
+    body: { cell: 'CellaProva2', launchId: 'ab'.repeat(8) }, visited: chain,
+  })).status, 200, 'cella dentro scope: passa');
+  assert.equal((await call(srv, 'POST', '/fleet/reconcile', {
+    body: { launchId: 'ab'.repeat(8) }, visited: chain,
+  })).status, 200, 'senza cella il guard non nega: e\' la route a rispondere 400');
+});

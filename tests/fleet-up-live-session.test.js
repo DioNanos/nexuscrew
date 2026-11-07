@@ -54,7 +54,41 @@ function mondo(t, { vive = [], pronto = true, broker = null } = {}) {
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
+if (args[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
+  const { spawnSync } = require('node:child_process');
+  let n = 0; let buf = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
+      n += 1;
+      const r = spawnSync(process.execPath,
+        [__filename, '-S', process.argv[3] || 'x'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      } else {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+      }
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+
 const STATO = ${JSON.stringify(statoPath)};
 const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
@@ -68,15 +102,27 @@ if (cmd === 'new-session') {
   fs.writeFileSync(STATO, vive().concat([${JSON.stringify(SESSIONE)}]).join('\\n') + '\\n');
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
-if (cmd === 'display-message') { process.stdout.write(${JSON.stringify(pronto ? '0\t\t%9\n' : '1\t\t%9\n')}); process.exit(0); }
-if (cmd === 'has-session') process.exit(0);
+if (cmd === 'display-message') {
+  const iF = args.indexOf('-F');
+  const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
+  if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
+  if (fmt.includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
+  process.stdout.write(${JSON.stringify(pronto ? '0\t\t%9\n' : '1\t\t%9\n')}); process.exit(0);
+}
+if (cmd === 'has-session') {
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
+}
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 if (cmd === 'kill-session') {
   // La sessione muore DAVVERO: senza questo, list-sessions continuerebbe a
   // riportarla e un restart (down + up) troverebbe una sessione viva che non
-  // c'e' piu' - un fake che mente sul proprio stato.
+  // c'e' piu' - un fake che mente sul proprio stato. Il bersaglio puo' essere
+  // il NOME o l'ID ($5) della sessione creata da questo fake.
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
-  fs.writeFileSync(STATO, vive().filter((n) => n !== bersaglio).map((n) => n + '\\n').join(''));
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
   process.exit(0);
 }
 if (cmd === 'set-option' || cmd === 'respawn-pane') process.exit(0);
@@ -193,13 +239,19 @@ test('up su una cella spenta: generazione NUOVA nel payload, e su disco non scri
 // --- 4. restart: rilancio vero, generazione nuova e coerente --------------
 
 test('restart: la cella muore e rinasce, con una generazione nuova e coerente', async (t) => {
-  const w = mondo(t, { vive: [SESSIONE] });
+  // Lancio VERO: il down del restart usa la connessione di controllo posseduta
+  // dal lancio stesso (nessuna sessione simulata: senza quel canale il down
+  // rifiuterebbe — correttamente — per identita' non dimostrabile).
+  const w = mondo(t, { vive: [] });
+  await w.runtime.up('CellaProva');
+  // La generazione su disco e' di cell-exec, non di up: la si simula DOPO il
+  // lancio, come la scriverebbe il client dentro la sessione.
   genera(w, 'gen-del-lancio-vero');
 
   await w.runtime.restart('CellaProva');
 
-  assert.equal(w.ticket.length, 1, 'un ticket, un lancio');
-  const dopo = w.ticket[0].activity.generation;
+  assert.equal(w.ticket.length, 2, 'due ticket: il lancio e il rilancio');
+  const dopo = w.ticket[1].activity.generation;
   assert.notEqual(dopo, 'gen-del-lancio-vero', 'un restart e\' un lancio nuovo');
   assert.equal(fs.readFileSync(w.genPath, 'utf8'), 'gen-del-lancio-vero',
     'e la scrittura su disco resta di cell-exec, non di up');

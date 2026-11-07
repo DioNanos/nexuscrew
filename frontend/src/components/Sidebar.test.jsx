@@ -593,3 +593,33 @@ describe('Sidebar — badge Live', () => {
     expect(screen.getByTestId('live-badge').getAttribute('data-mode')).toBe('native');
   });
 });
+
+describe('prompt delivery badge in the desktop sidebar', () => {
+  const props = (celle) => ({
+    cells: celle,
+    sessions: celle.map((c) => ({ name: c.tmuxSession, preview: '' })),
+    nodeGroups: [],
+    onPick: vi.fn(),
+    onAddTile: vi.fn(),
+    onSettings: vi.fn(),
+  });
+
+  it('mostra lo stato della consegna accanto alla cella, senza cambiare il suo stato', () => {
+    render(<Sidebar {...props([
+      { cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, engine: 'vl', key: 'native',
+        promptDelivery: { state: 'skipped', reason: 'failed-pre-paste', launchId: 'abcdef0123456789' } },
+    ])} />);
+    expect(screen.getByText('delivery failed')).toBeTruthy();
+    expect(screen.getByText('Local Cell')).toBeTruthy();
+  });
+
+  it('non mostra come corrente il record di un lancio sostituito', () => {
+    render(<Sidebar {...props([
+      { cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true,
+        launchId: 'bbbbbbbbbbbbbbbb',
+        promptDelivery: { state: 'submitted', launchId: 'aaaaaaaaaaaaaaaa', generation: 1 } },
+    ])} />);
+    expect(screen.getByText('earlier launch')).toBeTruthy();
+    expect(screen.queryByText('delivered')).toBeNull();
+  });
+});

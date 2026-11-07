@@ -86,6 +86,72 @@ saved, the *truth on the node* at every launch.
   or unknown level refuses the start with a declared error instead of being
   ignored or promoted to another level.
 
+### Choosing the model of a `vl.native` cell: the profiles of the node
+
+On `vl.native` the model is chosen among the **profiles of the node that runs the
+cell**, not among models NexusCrew knows. The list comes from two commands of the
+binary that will actually run, started with the cell's own environment and
+without a turn: `vl status` (the gate) and `vl models --json` (the inventory).
+NexusCrew never reads the profile catalog itself.
+
+- **Capability gate.** A profile name goes in `VL_MODEL` only when `vl status`
+  declares `capabilities.model_selector = "profile"`. The version number is never
+  consulted: an old and a new `vl` both say 0.4.0, and an old one would send the
+  name to the provider as a model id. A binary that does not declare it, or whose
+  `vl status` does not answer, never receives a profile name in `VL_MODEL`: if the
+  value names a profile of the cell's catalog the launch uses the bridge
+  `-p <profile>` with `VL_MODEL` absent, otherwise the raw model travels as it
+  always did.
+- **Inventory.** The document is validated before use — `schema_version` 1, every
+  value inside its closed vocabulary, every id and model shaped like an
+  identifier — and refused whole otherwise, naming the field and never echoing the
+  value. Only id, provider, model, context, output limit, source and
+  `key: present|absent|not_needed` leave NexusCrew; no key value, endpoint, path
+  or environment can, whatever the document carries. Profiles that share a model
+  (accounts A and P) stay two entries.
+- **The selector is opaque.** On `vl.native` without a fixed profile the saved
+  value (and the per-cell override) is a profile **selector**: it is stored and
+  passed exactly as typed. The model aliases that map a legacy model name to its
+  new name never apply to it — a legacy name can be the id of another profile — and
+  the exact, case-sensitive profile id is matched before any comparison by model.
+  Every other client, and every remote variant, keeps its aliases.
+- **UI.** The engine editor and the cell editor list `<model> · <profile id>`; the
+  profile **id** is what is saved and passed. A profile with no key on the node is
+  listed and marked, not hidden: the choice is the operator's, and `key: present`
+  is a view of the node's credentials, not proof that the credential works. The
+  profiles the node declares it could not list (`excluded`) are shown as a count.
+- **Only what the operator declared.** The built-in presets are never offered and
+  never accepted by the preflight, whatever the inventory kind: the runtime
+  resolves them by name (`preset_names_resolvable`, information about the runtime,
+  not permission for NexusCrew to propose them). When the configuration declares no
+  profile at all the inventory is the built-in catalog; the editors then say
+  "no profile declared" and offer nothing, and the preflight refuses with the same
+  reason.
+- **A new engine.** The list of a `vl.native` engine that is not saved yet comes
+  with the node's definitions (`vlProfilesDefault`): the default `vl` binary of
+  the node that serves them, with the operator's catalog. A form that declares its
+  own binary, catalog file or fixed profile never reuses it — it would describe
+  another binary or catalog — and says the list is not read there; the same holds
+  when a saved engine's binary, catalog or profile is edited. The form also says
+  when the node is being read, when the node gave no list, and when its binary is
+  old or its inventory invalid. In any state but a ready listing the editor offers
+  no option at all: a list read for another binary, catalog or fixed profile —
+  including the one a saved engine had before the edit — is never suggested. A
+  binary without the profile capability (old) is the one exception: it keeps the
+  plain raw-model list it always had, because those models were read for that
+  very binary.
+- **Preflight.** At launch the value must be the id of a profile of the inventory
+  or the model of exactly one: an unknown value, or a model shared by several
+  profiles, refuses the start naming the available profiles, instead of failing
+  inside the cell. A missing key does not refuse the start (the runtime says what
+  is missing); the launch diagnostics carry its state.
+- **Unchanged, and what is checked where.** Remote and custom variants
+  (`VL_PROVIDER` + `VL_BASE_URL`) keep the raw model. With a declared catalog file
+  (`vlConfigFile`) there is no list; the launch checks the choice against the
+  catalog copied into the cell. With a fixed `vlProfile` the model is a plain model
+  override and the launch only checks that the profile exists in the catalog: the
+  inventory preflight does not apply.
+
 Every `vl` cell also gets its own identity directory under the NexusCrew state
 tree, keyed by owner instance id and cell id, with private `XDG_STATE_HOME`,
 `XDG_DATA_HOME` and `XDG_CONFIG_HOME`. Two cells on the same engine are
@@ -118,6 +184,32 @@ prompt only, at most once per process generation:
   publishes on the pane). There is no automatic retry after a paste attempt;
   a supervised restart delivers the prompt at most once again for the new
   process generation.
+
+### Bootstrap prompt delivery (VL cells)
+
+Every launch of a `vl` cell (`up`: generation 0 of a new supervisor) delivers
+`cell.prompt` exactly once, on a new host and on an existing one alike — that
+is what NexusCrew was built for. Respawns of the TUI inside the same launch
+(generation > 0, reattach) never re-deliver: the VL conversation is the same.
+Each launch is guarded by a per-launch claim file under the private `nc/`
+directory next to the cell root (`<base>/nc/bootstrap-<launchId>.json`).
+
+The transport outcome of that one delivery is settled on the claim file and
+surfaces in the `up` result (`vlBootstrap`) and in the UI. Bounded claim
+states: `pending` (no outcome yet — a crash without an outcome stays pending
+and reads as uncertain), `submitted` (paste+Enter succeeded — transport only,
+not "the model executed it"), `failed` (certain failure before any paste,
+including a not-ready TUI), `uncertain` (paste may have happened).
+
+**Recovery procedure.** With the per-launch rule, recovery is to **restart
+the cell**: a new launch performs a new, single delivery. There is never an
+automatic resend inside the same launch after an uncertain outcome. When the
+UI reports the initial VL prompt as `failed`, `uncertain`, not delivered, or
+not delivered because the TUI was not ready (`notReady`), the operator
+resolves the terminal condition if any (e.g. a login/consent dialog), then
+restarts the cell from the fleet panel. A normal skip (respawn/reattach of
+the same launch) is not a failure and raises no notice. Deleting a claim file
+by hand is never part of recovery.
 
 MCP servers started by an AI CLI inherit that process's environment according
 to the CLI's own configuration and behavior; that inheritance is owned by the

@@ -21,6 +21,30 @@ const os = require('node:os');
 const path = require('node:path');
 const { atomicWrite } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { OWNER_INSTANCE_ID, STATO_HOST_ATTESTATO } = require('./helpers/vl-attestato.js');
+const STATO_SONDA_NONE = JSON.stringify({
+  state: 'none',
+  capabilities: ['host_stop_v1', 'host_peer_identity_v1', 'host_stop_expected_v1'],
+  peer_identity_support: 'supported',
+});
+function scriptVlMatrice(version) {
+  return `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '${version}\\n'; fi
+if [ "$1" = "host" ]; then
+  root=""
+  prev=""
+  for a in "$@"; do
+    if [ "$prev" = "--server-root" ]; then root=$a; fi
+    prev=$a
+  done
+  case $root in
+    *nc-vl-cap-*) printf '%s\\n' '${STATO_SONDA_NONE}' ;;
+    *) printf '%s\\n' '${STATO_HOST_ATTESTATO}' ;;
+  esac
+fi
+exit 0
+`;
+}
 
 // Come un valore sembra un segreto: stessi casi del logger di produzione.
 const REDACT_RE = /^(sk-|secret|token|bearer |key-|ghp_)/i;
@@ -54,9 +78,13 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
   fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
 
   // Il binario vl nel PATH: serve a findBinary (il gate di `configured`), ma
-  // il binario REALE che gira e' quello dichiarato in vlBinary.
+  // il binario REALE che gira e' quello dichiarato in vlBinary. Risponde anche
+  // a 'host status': il preflight di capacita' dell'up chiede al binario
+  // pinnato le tre capacita' peer/stop, e la registrazione all'up vuole lo
+  // stesso status con host LIVE e peer_identity verified (contratto del
+  // binario attestato, condiviso con gli altri test runtime del fleet).
   const pathBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(pathBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nexit 0\n`, { mode: 0o755 });
+  fs.writeFileSync(pathBin, scriptVlMatrice(version), { mode: 0o755 });
   fs.chmodSync(pathBin, 0o755);
 
   const statoPath = path.join(root, 'sessions.txt');
@@ -65,7 +93,38 @@ function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraM
   fs.writeFileSync(tmuxBin, `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
+if (args[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
+  const { spawnSync } = require('node:child_process');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
 const STATO = ${JSON.stringify(statoPath)};
 const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
@@ -76,6 +135,7 @@ if (cmd === 'new-session') {
   fs.writeFileSync(STATO, vive().concat([nome]).join('\\n') + '\\n');
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
+if (cmd === 'display-message' && process.argv.join(' ').includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
 if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
 if (cmd === 'capture-pane') {
   // Il marcatore di pronta della TUI VL: senza questo il gate di readiness
@@ -120,6 +180,9 @@ process.exit(0);
         launchReadyMs: 0,
         now: clock.now,
         vlLaunchCooldownMs: 0,
+        // L'owner della tuple attestata: hex32, non `local`, o la
+        // registrazione rifiuta l'up per contratto.
+        identityOwnerInstanceId: OWNER_INSTANCE_ID,
         launchBroker: {
           issue: async (payload) => {
             tickets.push({
@@ -156,7 +219,10 @@ function binarioConSpazi(home, version = 'vl 0.5.0') {
   const dir = path.join(home, 'vl tools', 'bin 0.5');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, 'vl Runner');
-  fs.writeFileSync(file, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nexit 0\n`, { mode: 0o755 });
+  // 'host status' dichiara le capacita' peer/stop che il preflight dell'up
+  // richiede al binario pinnato, e l'host attestato che la registrazione
+  // all'up esige dallo stesso status: stesso contratto del binario nel PATH.
+  fs.writeFileSync(file, scriptVlMatrice(version), { mode: 0o755 });
   fs.chmodSync(file, 0o755);
   return file;
 }

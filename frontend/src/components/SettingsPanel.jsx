@@ -14,6 +14,7 @@ import {
   getRouteConfig, ROSTER_READ_TIMEOUT_MS,
 } from '../lib/api.js';
 import { createPollGuard } from '../lib/poll-guard.js';
+import { parseSecondi, secondiDaMs } from '../lib/bootstrap-wait-input.js';
 import { saveBlobAs } from '../lib/download-blob.js';
 import { validateNodeForm, tunnelInfo, toSlug, isValidLabel } from '../lib/settings-model.js';
 import PairingCard from './PairingCard.jsx';
@@ -961,7 +962,115 @@ function reloadAfterRendererChange() {
   }
 }
 
-function SystemTab({ token, settings, readonly, refresh, roster, section, setSection }) {
+// --- attesa di prontezza del prompt -------------------------------------------
+// Un campo, un numero solo: i secondi che l'operatore scrive, i millisecondi
+// interi che il server accetta. La risposta del POST e' l'unica fonte di
+// «applicato»: un 200 dice che il file e' scritto, non che il nodo in esecuzione
+// l'abbia preso, e la UI non lo deduce.
+const ATTESA_PRONTEZZA_DEFAULT_MS = 15000;
+
+// Il separatore mostrato e' quello della lingua: chi legge "1.234" in inglese e
+// "1,234" in italiano scrive lo stesso millisecondo, e il parser accetta entrambi
+// proprio perche' la forma mostrata non diventi un vincolo.
+const separatoreAttesa = () => (getLang() === 'en' ? '.' : ',');
+
+const MOTIVI_ATTESA = {
+  vuoto: 'bootstrap-wait-reason-empty',
+  testo: 'bootstrap-wait-reason-text',
+  separatori: 'bootstrap-wait-reason-separators',
+  precisione: 'bootstrap-wait-reason-precision',
+  range: 'bootstrap-wait-reason-range',
+};
+
+function BootstrapWaitField({ token, settings, readonly, refresh, stale = false }) {
+  // La disponibilita' chiede TRE cose: che il nodo esponga il campo, che la
+  // lettura che lo ha portato sia corrente, e che non si sia in sola lettura.
+  const esposto = !!settings && Object.prototype.hasOwnProperty.call(settings, 'bootstrapReadyWaitMs');
+  const disponibile = esposto && !stale;
+  const salvato = settings && Number.isSafeInteger(settings.savedBootstrapReadyWaitMs)
+    ? settings.savedBootstrapReadyWaitMs : null;
+  const inUso = settings && Number.isSafeInteger(settings.bootstrapReadyWaitMs)
+    ? settings.bootstrapReadyWaitMs : null;
+  // Il form parte dal salvato valido; se manca, dal valore davvero in uso, e se
+  // anche quello non e' attestabile dal default — dichiarandolo, invece di
+  // mostrare 15 s come se li avesse scritti l'operatore.
+  const fonte = salvato !== null ? 'saved' : (inUso !== null ? 'effective' : 'default');
+  const inizialeMs = salvato !== null ? salvato : (inUso !== null ? inUso : ATTESA_PRONTEZZA_DEFAULT_MS);
+
+  const [testo, setTesto] = useState(() => secondiDaMs(inizialeMs, separatoreAttesa()));
+  const [modificato, setModificato] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errore, setErrore] = useState(null);
+  const [esito, setEsito] = useState(null);
+  const inCorso = useRef(false);
+
+  useEffect(() => {
+    if (modificato) return;
+    if (salvato !== null) setTesto(secondiDaMs(salvato, separatoreAttesa()));
+    else if (inUso !== null) setTesto(secondiDaMs(inUso, separatoreAttesa()));
+  }, [modificato, salvato, inUso]);
+
+  const salva = async () => {
+    if (inCorso.current) return;
+    setErrore(null);
+    setEsito(null);
+    const letto = parseSecondi(testo);
+    if (!letto.ok) {
+      setErrore(t('bootstrap-wait-invalid').replace('{reason}', t(MOTIVI_ATTESA[letto.motivo])));
+      return;
+    }
+    inCorso.current = true;
+    setBusy(true);
+    try {
+      const risposta = await saveConfig(token, { bootstrapReadyWaitMs: letto.ms });
+      const applicato = risposta && risposta.applied && Number.isSafeInteger(risposta.applied.bootstrapReadyWaitMs)
+        ? risposta.applied.bootstrapReadyWaitMs : null;
+      setEsito({ applied: applicato, applyState: risposta && risposta.applyState });
+      if (refresh) await refresh();
+    } catch (e) {
+      setErrore(String(e.message || e));
+    } finally {
+      inCorso.current = false;
+      setBusy(false);
+    }
+  };
+
+  const testoEsito = () => {
+    if (!esito) return null;
+    if (esito.applyState === 'applied') return t('bootstrap-wait-state-applied');
+    if (esito.applied !== null) return t('bootstrap-wait-state-restart');
+    return t('bootstrap-wait-state-notapplied');
+  };
+
+  return (
+    <div className="nc-bootstrap-wait">
+      <label className="nc-field">{t('bootstrap-wait-label')}
+        <input type="text" inputMode="decimal" autoComplete="off" spellCheck={false}
+          value={testo} disabled={readonly || busy || !disponibile}
+          onChange={(event) => { setModificato(true); setErrore(null); setTesto(event.target.value); }} />
+      </label>
+      <div className="nc-set-row">
+        <button type="button" className="nc-btn primary" disabled={readonly || busy || !disponibile}
+          onClick={salva}>{t('bootstrap-wait-save')}</button>
+      </div>
+      <small className="nc-set-hint">{t('bootstrap-wait-help')}</small>
+      {!esposto && <small className="nc-set-hint">{t('bootstrap-wait-unavailable')}</small>}
+      {esposto && stale && <small className="nc-set-hint">{t('bootstrap-wait-stale')}</small>}
+      {disponibile && fonte !== 'saved' && (
+        <small className="nc-set-hint">
+          {fonte === 'effective' ? t('bootstrap-wait-notsaved-effective') : t('bootstrap-wait-notsaved-default')}
+        </small>
+      )}
+      {inUso !== null && (
+        <small className="nc-set-hint">{t('bootstrap-wait-effective').replace('{value}', secondiDaMs(inUso, separatoreAttesa()))}</small>
+      )}
+      {esito && <small className="nc-set-hint">{testoEsito()}</small>}
+      {errore && <div className="nc-err">{errore}</div>}
+    </div>
+  );
+}
+
+function SystemTab({ token, settings, readonly, refresh, settingsStale = false, roster, section, setSection }) {
   const [rendererPreference, setRendererPreference] = useState(readRendererPreference);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
@@ -1197,6 +1306,7 @@ function SystemTab({ token, settings, readonly, refresh, roster, section, setSec
               onChange={(event) => toggleAlternateScreen(event.target.checked)} />
             <span><b>{t('alternate-screen')}</b><small>{t('alternate-screen-help')}</small></span>
           </label>
+          <BootstrapWaitField token={token} settings={settings} readonly={readonly} refresh={refresh} stale={settingsStale} />
         </div>
         <PreferencesBackup token={token} />
         <PreferencesJournal />
@@ -1242,6 +1352,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
   const [vlUnavailable, setVlUnavailable] = useState([]);
   const [readonly, setReadonly] = useState(false);
   const [loadErr, setLoadErr] = useState(null);
+  // La freschezza e' della LETTURA, non dell'oggetto conservato: quando la GET
+  // dei settings fallisce si tiene l'ultimo valore noto per mostrarlo, ma non
+  // lo si spaccia per corrente e non ci si scrive sopra.
+  const [settingsStale, setSettingsStale] = useState(false);
   const [aliasRevision, setAliasRevision] = useState(0);
   const roster = useNodes(token, true, aliasRevision);
 
@@ -1323,10 +1437,10 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
       // peer si pubblicano al LORO arrivo, senza aspettare le settings.
       const settingsTask = getSettings(token, opts).then((s) => {
         if (!guard.isCurrent(round)) return;
-        setSettings(s); setLoadErr(null);
+        setSettings(s); setLoadErr(null); setSettingsStale(false);
       }).catch((e) => {
         if (!guard.isCurrent(round)) return;
-        setLoadErr(String(e?.message || e));
+        setLoadErr(String(e?.message || e)); setSettingsStale(true);
       });
       const peersTask = getPeers(token, opts).then((j) => {
         if (!guard.isCurrent(round)) return;
@@ -1477,7 +1591,7 @@ export default function SettingsPanel({ token, onClose, initialTab = 'nodes', in
           {tab === 'audio' && <AudioTab token={token} readonly={readonly} nodes={nodes} settings={settings} />}
           {tab === 'input' && <InputTab />}
           {tab === 'system' && <SystemTab token={token} settings={settings} readonly={readonly} refresh={refresh}
-            roster={roster} section={systemSection} setSection={setSystemSection} />}
+            settingsStale={settingsStale} roster={roster} section={systemSection} setSection={setSystemSection} />}
         </div>
       </div>
     </div>

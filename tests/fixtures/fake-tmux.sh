@@ -2,20 +2,80 @@
 # fake-tmux — logga le chiamate e simula gli esiti che servono ai test route.
 LOG="${FAKE_TMUX_LOG:-${XDG_STATE_HOME:+$XDG_STATE_HOME/tmux.log}}"
 echo "$*" >> "${LOG:-/dev/null}"
+# Stato del finto server (marker «killed» della sessione). NON puo' stare
+# nella directory del socket: col server condiviso quella directory e' di
+# tmux — fuori harness e' quella del server VIVO della flotta — e un rm -rf
+# lì dentro cancellerebbe il socket reale. Lo stato vive nella HOME privata
+# del test, che l'env minimale garantisce identica al processo del canale e
+# ai comandi rieseguiti: stessa vista senza env extra. HOME assente (env
+# ridotto all'osso): fallback per-pid, mai la directory del socket.
+if [ -n "${HOME:-}" ] && [ -d "$HOME" ]; then
+  state="$HOME/.nc-fake-tmux-state"
+else
+  state="${TMPDIR:-/tmp}/nc-fake-tmux-state.$$"
+fi
+mkdir -p "$state" 2>/dev/null || true
+# Canale di controllo: tmux -S <socket> -C. Le righe su stdin sono comandi,
+# le risposte sono incorniciate.
+if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  sock="$2"
+  if [ "$4" = "new-session" ]; then
+    # Creazione posseduta: il PRIMO frame è l'esito del comando stesso, con
+    # gli id richiesti da -P -F. Nessun token di apertura: la creazione e il
+    # canale vivono sullo stesso client.
+    printf '%s\n' '%begin 1 0 1' '$1	@1	%42' '%end 1 0 1'
+  else
+    printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
+  n=0
+  errf="${TMPDIR:-/tmp}/ncfakecc.$$"
+  while IFS= read -r riga; do
+    n=$((n + 1))
+    [ -z "$riga" ] && continue
+    [ "$riga" = "display-message -p nc-control-open" ] && continue
+    out=$("$0" -S "$sock" $riga 2>"$errf")
+    rc=$?
+    printf '%%begin 1 %s 1\n' "$n"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if [ "$rc" = "0" ]; then printf '%%end 1 %s 1\n' "$n"
+    else cat "$errf" 2>/dev/null; printf '%%error 1 %s 1\n' "$n"; fi
+  done
+  rm -f "$errf"
+  rm -rf "$state"
+  exit 0
+fi
+if [ "$1" = "-S" ]; then
+  shift 2
+fi
 case "$1" in
   new-session)
     # il runtime passa -P -F '#{session_id}\t#{window_id}\t#{pane_id}': stampa i 3 ID
     if echo "$*" | grep -q ' -P '; then printf '%s\t%s\t%s\n' '$1' '@1' '%42'; fi
     exit 0 ;;
   display-message)
-    # readiness (pane vivo di default): dead=0, pane=%42
-    case "$*" in *pane_dead*) printf '0\t\t%%42\n' ;; esac
+    # readiness (pane vivo di default): dead=0, pane=%42.
+    # Il lancio chiede anche il socket del server: un path nuovo per chiamata,
+    # cosi' due test non condividono lo stato del canale.
+    case "$*" in
+      *pane_pid*) printf '4242\t2222\n'; exit 0 ;;
+      *socket_path*)
+        d=$(mktemp -d /tmp/nc-fake-tmux.XXXXXX) || exit 1
+        printf '%s/socket\t4242\n' "$d"
+        ;;
+      *pane_dead*) printf '0\t\t%%42\n' ;;
+    esac
     exit 0 ;;
   kill-session)
     case "$*" in *"=ghost"*) echo "can't find session ghost" >&2; exit 1 ;; esac
+    if [ -n "$state" ]; then : > "$state/killed"; fi
     exit 0 ;;
   has-session)
     case "$*" in *"=ghost"*) exit 1 ;; esac
+    if [ -n "$state" ] && [ -f "$state/killed" ]; then
+      for a in "$@"; do
+        if [ "$a" = '$1' ]; then exit 1; fi
+      done
+    fi
     exit 0 ;;
   list-sessions)
     if [ -n "${FAKE_TMUX_SESSIONS_STATE:-}" ]; then

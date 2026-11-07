@@ -19,9 +19,13 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 
 const { ensureVlCellDirs, writeVlCellCatalog } = require('../lib/fleet/managed.js');
+const { classifyPane } = require('../lib/fleet/prompt-delivery.js');
+// Percorso assoluto via __dirname: il modulo resta caricabile anche quando
+// questo file viene eseguito in un contesto con require reindirizzato.
+const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
 const REAL_BIN = (process.env.NEXUSCREW_VL_REAL_BIN || '').trim();
 const TMUX = (process.env.NEXUSCREW_TMUX_BIN || '/usr/bin/tmux').trim();
@@ -81,12 +85,48 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   if (!fs.existsSync(TMUX)) { t.skip('tmux non disponibile: la TUI reale richiede un terminale vero'); return; }
 
   // The per-cell tree ends in a unix socket: the whole path must fit in
-  // SUN_PATH_MAX, so the scratch root is short on purpose.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvl-'));
+  // SUN_PATH_MAX. The base is a LITERAL /tmp, not os.tmpdir(): under a private
+  // TMPDIR (the isolated suite runner, a release gate) os.tmpdir() nests this
+  // root one level deeper and the control socket overflows the limit before
+  // the host is ever asked to start. The peer-stop harness already does the
+  // same, for the same reason.
+  const root = fs.mkdtempSync('/tmp/ncvl-');
   const home = root;
   const owner = 'a'.repeat(32);
   const started = [];
   const sessions = [];
+
+  // A tmux server of our own, in the SHARED-SERVER form of production: a
+  // private TMUX_TMPDIR makes the «default» socket <root>/tmux-tmp/tmux-<uid>/
+  // default a real default socket of this harness alone, reached WITHOUT -S
+  // exactly like the fleet surfaces do. The live fleet server (its own
+  // TMUX_TMPDIR) stays unreachable even when this file runs outside the
+  // isolated suite runner: no inherited TMUX variable, no /tmp reliance, no
+  // shared socket by accident. The path stays short: it lives beside the
+  // per-cell roots and must fit in SUN_PATH_MAX like they do.
+  const tmuxSock = path.join(root, 'tmux-tmp', `tmux-${process.getuid()}`, 'default');
+  const tmuxHome = path.join(root, 'tmux-home');
+  fs.mkdirSync(tmuxHome, { recursive: true, mode: 0o700 });
+  const tmuxEnv = {
+    PATH: '/usr/bin:/bin',
+    HOME: tmuxHome,
+    XDG_CONFIG_HOME: path.join(tmuxHome, '.config'),
+    XDG_STATE_HOME: path.join(tmuxHome, '.state'),
+    XDG_DATA_HOME: path.join(tmuxHome, '.data'),
+    XDG_RUNTIME_DIR: path.join(tmuxHome, '.run'),
+    TMPDIR: path.join(root, 'tmux-tmp'),
+    TMUX_TMPDIR: path.join(root, 'tmux-tmp'),
+    TERM: 'xterm-256color',
+  };
+  fs.mkdirSync(tmuxEnv.TMPDIR, { recursive: true, mode: 0o700 });
+  // The private server exports XDG_RUNTIME_DIR to the panes, and the real
+  // binary refuses to start against a runtime dir that does not exist
+  // (unusable_xdg_runtime_dir): create it, 0700 like every other world dir.
+  fs.mkdirSync(tmuxEnv.XDG_RUNTIME_DIR, { recursive: true, mode: 0o700 });
+  // Every tmux invocation of this test goes through here: server and clients
+  // share the harness default socket under TMUX_TMPDIR, so the panes and the
+  // cleanup below can never touch a session, or a server, that is not ours.
+  const tmux = (args) => sh(TMUX, args, tmuxEnv);
 
   // The mock provider: it records every request (with the model it carries)
   // and answers with a distinguishable text. Nothing leaves the loopback.
@@ -148,42 +188,91 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
     `XDG_CONFIG_HOME=${dirs.env.XDG_CONFIG_HOME}`,
   ].join(' ');
 
+  // The same world as envLine, as an object, for every direct invocation of
+  // the real binary (status, select, shutdown). Spreading process.env here
+  // would leak the runner's own XDG trio into the probe: the binary then sees
+  // a server root outside any recognized base and refuses it (unsafe_root),
+  // and a probe must observe the cell it is asked about, not the machine.
+  const cellEnv = (dirs) => ({
+    PATH: '/usr/bin:/bin',
+    HOME: home,
+    TERM: 'xterm-256color',
+    XDG_STATE_HOME: dirs.env.XDG_STATE_HOME,
+    XDG_DATA_HOME: dirs.env.XDG_DATA_HOME,
+    XDG_CONFIG_HOME: dirs.env.XDG_CONFIG_HOME,
+  });
+
+  // The chain down to <state>/vl must exist and be private (unsafe_root
+  // otherwise): the real runtime prepares it 0700 before the launch, and so
+  // must this harness now that it runs the real binary. One step at a time,
+  // because a recursive mkdir would leave the intermediate level with the
+  // default mode. The server root itself (host-v1) must NOT be created here:
+  // an existing root is only opened when its tree is already complete, so an
+  // empty directory kills the host during startup, while an absent root is
+  // built by the host itself, complete and 0700.
+  const preparaHostRoot = (dirs) => {
+    const dir = path.join(dirs.env.XDG_STATE_HOME, 'vl');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: false, mode: 0o700 });
+  };
+
   const rootOf = (dirs) => path.join(dirs.env.XDG_STATE_HOME, 'vl', 'host-v1');
   const startTui = (label, dirs, extraArgs) => {
     const name = `nc-vl-${label}-${process.pid}-${started.length}`;
     sessions.push(name);
     const args = extraArgs || [];
-    sh(TMUX, ['new-session', '-d', '-s', name, '-x', '160', '-y', '50',
+    tmux(['new-session', '-d', '-s', name, '-x', '160', '-y', '50',
       `sh -c '${envLine(dirs)} ${REAL_BIN} ${args.join(' ')}; sleep 120'`]);
     started.push(name);
     return name;
   };
-  const pane = (name) => sh(TMUX, ['capture-pane', '-p', '-t', name]);
-  const send = (name, text) => sh(TMUX, ['send-keys', '-t', name, text, 'Enter']);
+  const pane = (name) => tmux(['capture-pane', '-p', '-t', name]);
+  const send = (name, text) => tmux(['send-keys', '-t', name, text, 'Enter']);
 
   t.after(() => {
-    for (const name of sessions) { try { sh(TMUX, ['kill-session', '-t', name]); } catch (_) { /* gone */ } }
+    for (const name of sessions) { try { tmux(['kill-session', '-t', name]); } catch (_) { /* gone */ } }
+    // The harness server dies with the test, closed for the exact PID read
+    // from its own default socket: nobody else can be attached to this
+    // socket, it was created by this run alone, and the exit is verified so
+    // no orphan server outlives the file.
+    let serverPid = null;
+    try {
+      const pidOut = spawnSync(TMUX, ['-S', tmuxSock, 'display-message', '-p', '#{pid}'], { encoding: 'utf8', timeout: 3000, env: tmuxEnv });
+      const n = Number(String(pidOut.stdout || '').trim());
+      if (Number.isInteger(n) && n > 0) serverPid = n;
+    } catch (_) { /* no server */ }
+    try { tmux(['kill-server']); } catch (_) { /* already gone */ }
+    if (serverPid) {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        try { process.kill(serverPid, 0); } catch (e) { if (e && e.code === 'ESRCH') break; }
+        spawnSync('sleep', ['0.05']);
+      }
+      try { process.kill(serverPid, 'SIGKILL'); } catch (_) { /* already gone */ }
+      verificaUscitaServer(spawnSync, serverPid);
+    }
     for (const dirs of [A, B]) {
-      try { sh(REAL_BIN, ['shutdown', '--server-root', rootOf(dirs)], { ...process.env, HOME: home }); } catch (_) { /* already stopped */ }
+      try { sh(REAL_BIN, ['shutdown', '--server-root', rootOf(dirs)], cellEnv(dirs)); } catch (_) { /* already stopped */ }
     }
     try { server.close(); } catch (_) { /* closed */ }
     try { fs.rmSync(root, { recursive: true, force: true }); } catch (_) { /* removed */ }
   });
 
   // --- two real hosts, distinct down to the socket --------------------------
+  preparaHostRoot(A);
+  preparaHostRoot(B);
   const tuiA = startTui('a', A);
   const tuiB = startTui('b', B);
 
   const live = async (dirs) => {
-    const out = sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(dirs)], { ...process.env, HOME: home });
+    const out = sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(dirs)], cellEnv(dirs));
     const m = /vl host: LIVE[\s\S]*?pid: (\d+)/.exec(out);
     return m ? { out, pid: Number(m[1]) } : null;
   };
   const hostA = await until(() => live(A), 30000);
   const hostB = await until(() => live(B), 30000);
   const panes = `\n--- pane A ---\n${pane(tuiA)}\n--- pane B ---\n${pane(tuiB)}`;
-  assert.ok(hostA, `host A non live:\n${sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(A)], { ...process.env, HOME: home })}${panes}`);
-  assert.ok(hostB, `host B non live:\n${sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(B)], { ...process.env, HOME: home })}${panes}`);
+  assert.ok(hostA, `host A non live:\n${sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(A)], cellEnv(A))}${panes}`);
+  assert.ok(hostB, `host B non live:\n${sh(REAL_BIN, ['host', 'status', '--server-root', rootOf(B)], cellEnv(B))}${panes}`);
   assert.notEqual(hostA.pid, hostB.pid, 'due host distinti, due processi distinti');
   assert.notEqual(rootOf(A), rootOf(B), 'due server-root distinti');
   const sockA = path.join(rootOf(A), 'server', '.vl', 'control.sock');
@@ -192,7 +281,7 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   assert.notEqual(sockA, sockB, 'socket distinti');
 
   // --- distinct preferences, one per cell -----------------------------------
-  const envSel = (dirs) => ({ ...process.env, HOME: home, XDG_CONFIG_HOME: dirs.env.XDG_CONFIG_HOME });
+  const envSel = cellEnv;
   sh(REAL_BIN, ['select', 'mock-a'], envSel(A));
   sh(REAL_BIN, ['select', 'mock-b'], envSel(B));
   const selA = path.join(A.env.XDG_CONFIG_HOME, 'vl', 'selected.toml');
@@ -215,12 +304,13 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   assert.ok(sizeAfterTurn > 0, 'il transcript di A non e\' vuoto');
 
   // --- restart: the transcript is resumed -----------------------------------
-  sh(TMUX, ['kill-session', '-t', tuiA]);
+  tmux(['kill-session', '-t', tuiA]);
   sessions.splice(sessions.indexOf(tuiA), 1);
   const tuiA2 = startTui('a2', A);
+  // Readiness is production's classifier: the real TUI renders "VL [o_o] ready", not the legacy "vivling" line.
   const afterRestart = await until(() => {
     const p = pane(tuiA2);
-    return p && p.includes('vivling') ? p : null;
+    return p && classifyPane(p, 'vl') === 'ready' ? p : null;
   }, 30000);
   assert.ok(afterRestart, 'la TUI riaggancia l\'host vivo');
   send(tuiA2, 'turno-dopo-il-restart');
@@ -235,9 +325,9 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   // The rotation is the supervisor's move: the previous TUI goes away, the
   // host is stopped cleanly, and only then the new one starts with --new. A
   // live host (or a TUI still attached) makes the rotation refuse itself.
-  sh(TMUX, ['kill-session', '-t', tuiA2]);
+  tmux(['kill-session', '-t', tuiA2]);
   sessions.splice(sessions.indexOf(tuiA2), 1);
-  sh(REAL_BIN, ['shutdown', '--server-root', rootOf(A)], { ...process.env, HOME: home });
+  sh(REAL_BIN, ['shutdown', '--server-root', rootOf(A)], cellEnv(A));
   await until(() => !live(A), 20000);
   const tuiANew = startTui('anew', A, ['--new']);
   const rotated = await until(() => {
@@ -249,7 +339,7 @@ test('due celle, stesso engine e stessa HOME: due host reali distinti, preferenz
   assert.ok(sameTree(treeBBefore, treeHashes(rootOf(B))), 'B e\' rimasto intatto: nessun file cambiato');
   const readyNew = await until(() => {
     const p = pane(tuiANew);
-    return p && p.includes('vivling') ? p : null;
+    return p && classifyPane(p, 'vl') === 'ready' ? p : null;
   }, 30000);
   assert.ok(readyNew, `la TUI dopo il --new non e\' pronta:\n${pane(tuiANew)}`);
   send(tuiANew, 'turno-dopo-il-new');

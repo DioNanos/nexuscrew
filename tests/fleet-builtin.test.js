@@ -71,19 +71,62 @@ DIAG=${shellQ(diagnostic)}
 SESS=${shellQ(sessions)}
 ALTSCREENFAIL=${shellQ(alternateScreenFail)}
 POISON=${shellQ(poison)}
+KILLED=${shellQ(path.join(root, 'killed'))}
+if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  if [ "$4" = "new-session" ]; then
+    # Creazione posseduta: il primo frame è l'esito del comando new-session
+    # stesso, eseguito da questa fixture in forma argv (log, veleno, -P -F).
+    errc="\${TMPDIR:-/tmp}/ncfakecr.$$"
+    outc=$( ( shift 3; "$0" "$@" ) 2>"$errc" )
+    rcc=$?
+    printf '%s\n' '%begin 1 0 1'
+    [ -n "$outc" ] && printf '%s\n' "$outc"
+    if [ "$rcc" = "0" ]; then printf '%s\n' '%end 1 0 1'
+    else errtxt=$(cat "$errc" 2>/dev/null); [ -n "$errtxt" ] && printf '%s\n' "$errtxt"; printf '%s\n' '%error 1 0 1'; fi
+    rm -f "$errc"
+  else
+    printf '%s\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
+  # control mode (canale di controllo del lancio): una riga per comando su
+  # stdin, risposta incorniciata (%begin/%end, %error sull'errore). Ogni riga
+  # viene eseguita dallo stesso script in forma argv.
+  sock="$2"
+  n=0
+  errf="\${TMPDIR:-/tmp}/ncfakecc.$$"
+  while IFS= read -r riga; do
+    n=$((n+1))
+    [ -z "$riga" ] && continue
+    [ "$riga" = "display-message -p nc-control-open" ] && continue
+    out=$("$0" -S "$sock" $riga 2>"$errf")
+    rc=$?
+    printf '%%begin 1 %s 1\n' "$n"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    if [ "$rc" = "0" ]; then printf '%%end 1 %s 1\n' "$n"
+    else cat "$errf" 2>/dev/null; printf '%%error 1 %s 1\n' "$n"; fi
+  done
+  rm -f "$errf"
+  exit 0
+fi
+if [ "$1" = "-S" ]; then shift 2; fi # -S <socket> in testa quando il canale respawn il comando
 cmd="\${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   has-session)
+    # la sessione finta ha id '$1': dopo un kill-session (file KILLED) non
+    # risulta piu' viva per quell'id; ALIVE=0 la dichiara morta sempre.
+    for a in "$@"; do
+      if [ "$a" = '$1' ] && [ -f "$KILLED" ]; then exit 1; fi
+    done
     [ -f "$ALIVE" ] && [ "\$(cat "$ALIVE" 2>/dev/null)" = "0" ] && exit 1
     exit 0 ;;
   list-sessions)
     [ -f "$SESS" ] && cat "$SESS"
     exit 0 ;;
   kill-session)
-    echo "kill-session" >> "$LOG"; exit 0 ;;
+    echo "kill-session" >> "$LOG"; : > "$KILLED"; exit 0 ;;
   new-session)
     env > "$CAP/launch-env.txt" 2>/dev/null || true
     printf '%s\\t' "new-session" >> "$LOG"; printf '%s\\t' "$@" >> "$LOG"; printf '\\n' >> "$LOG"
+    rm -f "$KILLED"
     if [ -s "$POISON" ]; then cat "$POISON" >&2; exit 2; fi
     # il runtime passa sempre -P -F '#{session_id}\t#{window_id}\t#{pane_id}':
     # stampa i 3 ID quando il flag -P e' presente (come tmux reale).
@@ -101,6 +144,9 @@ case "$cmd" in
     # format-aware: '#{session_name}\t#{pane_dead}\t#{pane_id}' (resolveSession-
     # Pane, parsing esatto 3 campi) vs legacy dead\tstatus\tpane (waitStablePane)
     last=""
+    for a in "$@"; do last="$a"; done
+    case "$last" in *socket_path*) printf '/tmp/nc-fake/socket\t4242\n'; exit 0 ;; esac
+    case "$last" in *pane_pid*) printf '4242\t2222\n'; exit 0 ;; esac
     for a in "$@"; do last="$a"; done
     tgt=""
     prev=""
@@ -405,7 +451,8 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
     assert.deepEqual(alternate, ['-t', '=work-build:', '-w', 'alternate-screen', 'off'],
       'alternate-screen disabilitato solo per la sessione Fleet');
     const hook = (byCmd['set-hook'] || []).find((a) => a.includes('after-new-window'));
-    assert.deepEqual(hook, ['-t', '=work-build:', 'after-new-window', 'set-option -w alternate-screen off'],
+    assert.equal((hook || []).join(' ').replace(/'/g, ''),
+      '-t =work-build: after-new-window set-option -w alternate-screen off',
       'nuove finestre della stessa sessione ereditano alternate-screen off');
     assert.equal([...alternate, ...hook].includes('-g'), false, 'nessuna opzione tmux globale viene toccata');
     // il vero child (cell-exec via broker) e' lanciato da respawn-pane sul %N esatto
@@ -465,9 +512,30 @@ test('early exit: cattura bounded/redacted, exit code e rimuove il pane diagnost
   try {
     const script = `#!/bin/sh
 LOG=${shellQ(w.log)}
+if [ "$1" = "-S" ] && [ "$3" = "-C" ]; then
+  if [ "$4" = "new-session" ]; then
+    printf '%s\\n' '%begin 1 0 1' '$1	@1	%9' '%end 1 0 1'
+  else
+    printf '%s\\n' '%begin 1 0 1' 'nc-control-open' '%end 1 0 1'
+  fi
+  sock="$2"
+  n=0
+  while IFS= read -r riga; do
+    n=$((n + 1))
+    [ -z "$riga" ] && continue
+    [ "$riga" = "display-message -p nc-control-open" ] && continue
+    out=$("$0" -S "$sock" $riga 2>/dev/null)
+    rc=$?
+    printf '%%begin 1 %s 1\\n' "$n"
+    [ -n "$out" ] && printf '%s\\n' "$out"
+    if [ "$rc" = "0" ]; then printf '%%end 1 %s 1\\n' "$n"; else printf '%%error 1 %s 1\\n' "$n"; fi
+  done
+  exit 0
+fi
+if [ "$1" = "-S" ]; then shift 2; fi
 case "$1" in
   new-session) printf '%s\\t%s\\t%s\\n' '$1' '@1' '%9'; exit 0 ;;
-  display-message) printf '1\\t7\\t%%9\\n'; exit 0 ;;
+  display-message) case "$*" in *pane_pid*) printf '4242\\t2222\\n'; exit 0 ;; esac; printf '1\\t7\\t%%9\\n'; exit 0 ;;
   capture-pane) printf 'failed in ${w.home}/Dev\\nANTHROPIC_API_KEY=sk-x\\nBearer hidden-token\\n'; exit 0 ;;
   kill-session) echo 'kill-session' >> "$LOG"; exit 0 ;;
   *) exit 0 ;;
@@ -800,9 +868,17 @@ test('removeCell attiva richiede stop esplicito', async () => {
     fs.writeFileSync(w.sessions, 'work-build\n');
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 409);
+    // Sessione omonima NON posseduta da questo NC (nessun lancio, quindi
+    // nessun record e nessuna connessione di controllo): anche con stop il
+    // down rifiuta onesto — non puo' dimostrare che quella sessione sia sua.
+    await assert.rejects(() => fleet.removeCell('Dev', { stop: true }),
+      (e) => e.status === 409 && e.fleetCode === 'IDENTITY_UNVERIFIED');
+    assert.equal(fleet.definitions().cells.length, 1, 'la cella resta: nessuna rimozione senza uno stop dichiarabile');
+    assert.ok(!readLog(w).lines.some((x) => x.startsWith('kill-session')), 'nessun kill su una sessione non posseduta');
+    // Cella gia' ferma: lo stop e' idempotente e la rimozione procede.
+    fs.writeFileSync(w.sessions, '');
     await fleet.removeCell('Dev', { stop: true });
     assert.equal(fleet.definitions().cells.length, 0);
-    assert.ok(readLog(w).lines.some((x) => x.startsWith('kill-session')));
   } finally { w.cleanup(); }
 });
 
@@ -1011,9 +1087,13 @@ test('restart (builtin): kill-session (down) prima di new-session (up)', async (
   const w = makeWorld();
   try {
     const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    // La cella nasce da UN lancio di questo NC: il down del restart agisce
+    // solo sul record del lancio posseduto (id $1 del fake), non per nome.
+    await fleet.up('Dev');
+    const base = readLog(w).lines.length;
     const res = await fleet.restart('Dev');
     assert.equal(res.ok, true);
-    const { lines } = readLog(w);
+    const lines = readLog(w).lines.slice(base);
     const kill = lines.findIndex((l) => l.startsWith('kill-session'));
     const ns = lines.findIndex((l) => l.startsWith('new-session\t'));
     assert.ok(kill >= 0, 'kill-session lanciato (down)');

@@ -18,6 +18,21 @@ const { createBuiltinRuntime } = require('../lib/fleet/runtime.js');
 const { resolveManagedEngine } = require('../lib/fleet/managed.js');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { main: cellExecMain, startGenerationPrompt } = require('../lib/fleet/cell-exec.js');
+const { scriviCanonico, attestaProprietario } = require('./helpers/prompt-canonico.js');
+
+// Fixture del canale del record del prompt (adattamento del supervised
+// fixture: la consegna supervisionata richiede il canale dedicato, anche con
+// gli hook attivita' spenti). Una directory effimera per test, rimossa
+// all'uscita del processo; lancio unico per non condividere il file del record.
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
+function fxPromptOutcome(launchId = '0a1b2c3d4e5f6071') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(dir);
+  return { dir, launchId };
+}
 const { EventEmitter } = require('node:events');
 
 // --- Schermate TUI reali (probe tmux, 2026-07-31): claude 2.1.220, kimi 0.31.1
@@ -134,12 +149,24 @@ function fakeTmux(script = {}) {
 }
 
 const READY_CAPTURE = () => async () => CLAUDE_READY;
-const BASE = { tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', client: 'claude', readyWaitMs: 0 };
+// readyWaitMs: 1000 (valore di contratto valido): con la regola C7 «ready a
+// deadline o dopo non autorizza» uno zero non consegnerebbe mai, quindi le
+// fixture usano 1000 e iniettano il clock virtuale dove la finestra si esaurisce.
+const BASE = { tmuxBin: 'tmux', session: 'cloud-T', prompt: 'boot prompt', client: 'claude', readyWaitMs: 1000 };
+
+// 0.9.80 s2a: la verifica fresca pre-paste richiede anche il capture con
+// attributi e il contratto qualificato del SIMULATORE dei test (provenienza
+// dichiarata in tests/helpers/composer-fixtures.js: NON qualifica alcun
+// cliente reale — nel prodotto il registro resta vuoto e una consegna con
+// composer non qualificato e' saltata, guardia conservativa dello strato).
+const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
+const ATTRS_EMPTY = async () => CLAUDE_ATTRS_EMPTY;
 
 test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async () => {
   const { calls, exec } = fakeTmux();
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.delivered, true);
   assert.equal(r.state, 'submitted');
@@ -153,21 +180,29 @@ test('delivery: ready -> submitted con UN paste e UN Enter; tmp 0600 wx', async 
   assert.ok(!calls.some((c) => c.includes('boot prompt')), 'prompt mai in argv tmux');
 });
 
-test('delivery: consent/auth/onboarding -> skipped-not-ready, ZERO paste e ZERO Enter, TUI vivo', async () => {
+test('delivery: consent/auth/onboarding a scadenza -> skipped-unknown (C7), kind dettaglio, ZERO paste/Enter, TUI vivo', async () => {
+  const { virtualClock } = require('./helpers/delivery-clock.js');
   for (const [screen, kind] of [
     [CLAUDE_CONSENT, 'not-ready-consent'],
     [CLAUDE_TRUST, 'not-ready-onboarding'],
     [CLAUDE_NOT_LOGGED_IN, 'not-ready-auth'],
     [KIMI_LOGGED_OUT, 'not-ready-auth'],
   ]) {
+    const clk = virtualClock();
     const { calls, exec } = fakeTmux();
     const r = await deliverBootstrapPrompt({
-      ...BASE, client: kind === 'not-ready-auth' && screen === KIMI_LOGGED_OUT ? 'kimi' : 'claude',
+      ...BASE, pollMs: 300,
+      client: kind === 'not-ready-auth' && screen === KIMI_LOGGED_OUT ? 'kimi' : 'claude',
       tmuxExecImpl: exec, captureImpl: async () => screen,
+      nowImpl: clk.now, sleepImpl: clk.sleep,
     });
+    // 0.9.80 s2a (C7): a deadline lo stato resta skipped-unknown anche con
+    // kind qualificato; il kind survives come dettaglio bounded in notReady,
+    // il fatto e' zero paste/zero Enter e la sessione resta viva.
     assert.equal(r.delivered, false);
-    assert.equal(r.state, 'skipped-not-ready');
-    assert.equal(r.notReady, kind);
+    assert.equal(r.state, 'skipped-unknown');
+    assert.equal(r.notReady, kind, `${kind}: kind conservato come dettaglio bounded`);
+    assert.equal(r.deadlineExceeded, true);
     assert.equal(r.attempts, 0);
     assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0, `zero paste su ${kind}`);
     assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, `zero Enter su ${kind}`);
@@ -196,6 +231,7 @@ test('delivery: busy -> attesa poi ready -> submitted (transizione)', async () =
     ...BASE, readyWaitMs: 1000, pollMs: 200,
     tmuxExecImpl: exec, captureImpl: async () => screens.shift() || CLAUDE_READY,
     nowImpl: () => clock, sleepImpl: async (ms) => { clock += ms; },
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'submitted');
 });
@@ -204,6 +240,7 @@ test('delivery: fallimento certo PRE-paste (load) -> UN retry, poi submitted', a
   const { calls, exec } = fakeTmux({ loadFailsFirst: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'submitted');
   assert.equal(r.attempts, 2);
@@ -216,6 +253,7 @@ test('delivery: load sempre fallito -> failed-pre-paste dopo 1 retry, zero paste
   const { calls, exec } = fakeTmux({ loadFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'failed-pre-paste');
   assert.equal(r.attempts, 2);
@@ -227,6 +265,7 @@ test('delivery: paste-buffer fallito -> delivery-unknown, MAI retry post-paste (
   const { calls, exec } = fakeTmux({ pasteFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(r.attempts, 1);
@@ -238,6 +277,7 @@ test('delivery: Enter fallito dopo paste ok -> staged-not-submitted, zero replay
   const { calls, exec } = fakeTmux({ enterFails: true });
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'staged-not-submitted');
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1);
@@ -251,12 +291,16 @@ test('delivery: pane cambiato dopo il paste -> delivery-unknown prima di Enter',
   const exec2 = async (bin, args) => {
     if (args[0] === 'display-message') {
       displayCount += 1;
-      return { err: null, stdout: `cloud-T\t0\t%${displayCount === 1 ? 42 : 99}\n`, stderr: '', code: 0 };
+      // 0.9.80 s2a: la verifica fresca consuma la prima risoluzione (pinning);
+      // il paste usa il %N pinnato (2a); il pane cambia ALLA riverifica
+      // pre-Enter (3a), che e' il punto che questo test vuole esercitare.
+      return { err: null, stdout: `cloud-T\t0\t%${displayCount <= 2 ? 42 : 99}\n`, stderr: '', code: 0 };
     }
     return exec(bin, args);
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec2, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(calls.filter((c) => c.startsWith('send-keys')).length + 1, 1, 'mai Enter su pane diverso');
@@ -289,6 +333,7 @@ test('delivery R4: throw durante paste-buffer -> delivery-unknown, MAI retry (un
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(),
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(r.attempts, 1, 'nessun retry dopo throw post-paste');
@@ -322,6 +367,7 @@ test('delivery R3: cancel dopo il paste -> delivery-unknown, MAI Enter, MAI seco
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(), isCancelled: () => cancelled,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown');
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1);
@@ -392,24 +438,76 @@ function writeFakeTmux(dir, cfg) {
   const body = `#!/usr/bin/env node
 'use strict';
 const fs = require('node:fs');
+const path = require('node:path');
 const cfg = ${JSON.stringify(cfg)};
+const stateDir = ${JSON.stringify(path.join(dir, '.sessions'))};
+try { fs.mkdirSync(stateDir, { recursive: true }); } catch (_) {}
 const log = (s) => fs.appendFileSync(${JSON.stringify(path.join(dir, 'tmux.log'))}, s + '\\n');
-const cmd = process.argv[2] || '';
+let argv = process.argv.slice(2);
+let socketArg = '';
+if (argv[0] === '-S') { socketArg = argv[1]; argv = argv.slice(2); }
+if (argv[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+  process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
+  const { spawnSync } = require('node:child_process');
+  let buf = '';
+  let n = 0;
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
+      n += 1;
+      const r = spawnSync(process.execPath, [__filename, '-S', socketArg || 'sock'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      else process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+const cmd = argv[0] || '';
 const out = (s) => process.stdout.write(s);
-const fmt = process.argv[process.argv.length - 1] || '';
-const tgt = (() => { const i = process.argv.indexOf('-t'); return i >= 0 ? process.argv[i + 1] : ''; })();
-const sess = (() => { const m = /^=([^:]+):?$/.exec(tgt); return m ? m[1] : 'work-kimi'; })();
+const fmt = argv[argv.length - 1] || '';
+const tgt = (() => { const i = argv.indexOf('-t'); return i >= 0 ? argv[i + 1] : ''; })();
+const cleanTgt = tgt.replace(/^=/, '').replace(/:.*$/, '');
+const sIdx = argv.indexOf('-s');
+const sessName = sIdx >= 0 ? argv[sIdx + 1] : '';
+const sess = (() => { const m = /^=([^:]+):?$/.exec(tgt); return m ? m[1] : (sessName || cleanTgt || 'work-kimi'); })();
+const fileFor = (s) => path.join(stateDir, encodeURIComponent(s || 'work-kimi'));
+
 switch (cmd) {
   case 'new-session':
     log('new-session');
-    if (process.argv.includes('-P')) out('$1\\t@1\\t%42\\n');
+    try { fs.writeFileSync(fileFor(sess), '1'); } catch (_) {}
+    if (sessName) { try { fs.writeFileSync(fileFor(sessName), '1'); } catch (_) {} }
+    if (argv.includes('-P')) {
+      try { fs.writeFileSync(fileFor('$1'), '1'); } catch (_) {}
+      out('$1\\t@1\\t%42\\n');
+    }
     process.exit(0);
   case 'has-session':
-    process.exit(0);
+    log('has-session ' + argv.join(' '));
+    const targetToCheck = cleanTgt || sess;
+    if (fs.existsSync(fileFor(targetToCheck))) {
+      process.exit(0);
+    }
+    process.exit(1);
   case 'display-message':
     log('display-message ' + fmt);
     if (fmt.includes('@nc_delivery')) { out((cfg.delivery || '') + '\\n'); process.exit(0); }
     if (fmt.includes('session_name')) { out(sess + '\\t0\\t%42\\n'); process.exit(0); }
+    if (fmt.includes('pane_pid')) { out('4242\\t2222\\n'); process.exit(0); }
     out('0\\t\\t%42\\n');
     process.exit(0);
   case 'capture-pane':
@@ -417,10 +515,14 @@ switch (cmd) {
     process.exit(0);
   case 'load-buffer': case 'paste-buffer': case 'delete-buffer': case 'send-keys':
   case 'set-option': case 'set-hook': case 'respawn-pane':
-    log(process.argv.slice(2).join(' '));
+    log(argv.join(' '));
     process.exit(0);
   case 'kill-session':
     log('kill-session');
+    const targetToRemove = cleanTgt || sess;
+    try { fs.unlinkSync(fileFor(targetToRemove)); } catch (_) {}
+    try { fs.unlinkSync(fileFor(sess)); } catch (_) {}
+    try { fs.unlinkSync(fileFor('$1')); } catch (_) {}
     process.exit(0);
   default:
     process.exit(0);
@@ -431,7 +533,7 @@ switch (cmd) {
   return p;
 }
 
-function makeManagedWorld({ client, provider, delivery, env = {} }) {
+function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, readyWaitMs = 30, mcp = undefined, cfgExtra = {}, generation = 0 }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpd-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
@@ -457,12 +559,19 @@ function makeManagedWorld({ client, provider, delivery, env = {} }) {
   const tmuxBin = writeFakeTmux(root, { delivery });
   let ticket = null;
   const launchBroker = {
-    issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+    issue: async (payload) => {
+      ticket = payload;
+      // Il supervisore finto riferisce l'esito come il vero: record canonico
+      // nel canale del payload, generazione 0 (nessun marcatore volatile).
+      scriviCanonico(payload, canon || delivery);
+      return { socketPath: '/x', nonce: 'n'.repeat(64) };
+    },
     close: async () => {},
   };
+  const leaseManager = attestaProprietario({ track: async () => null }, () => ticket, { mcp, generation });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: 30, sendKeysReadyMs: 10, env },
-    home, defsPath, tmuxBin, readonly: () => false, launchBroker,
+    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env, ...cfgExtra },
+    home, defsPath, tmuxBin, readonly: () => false, launchBroker, leaseManager,
     boot: loadDefinitions(defsPath),
   });
   const log = () => (fs.existsSync(path.join(root, 'tmux.log'))
@@ -475,14 +584,15 @@ test('up kimi.native report submitted: prompt consegnato dal supervisore; runtim
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, true);
     assert.equal(res.prompt.state, 'submitted');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(res.prompt.launchId, w.ticket().promptOutcome.launchId);
     assert.equal(res.actionRequired, undefined);
     const lines = w.log();
     assert.equal(lines.filter((l) => l.startsWith('paste-buffer')).length, 0, 'runtime non paste-a (owner = cell-exec)');
     assert.equal(lines.filter((l) => l.startsWith('send-keys')).length, 0, 'runtime non manda Enter');
     assert.equal(lines.filter((l) => l.startsWith('kill-session')).length, 0);
-    assert.ok(lines.some((l) => l.includes('@nc_delivery')), 'lettura report bounded dal pane');
+    assert.ok(!lines.some((l) => l.includes('@nc_delivery')), 'lo stato viene dal record canonico, non dal marcatore del pane');
     const t = w.ticket();
     assert.ok(t, 'ticket broker emesso');
     assert.ok(!t.args.includes('bootstrap segreto di sistema'), 'prompt mai in argv del child');
@@ -496,8 +606,9 @@ test('up kimi.native report logged-out: NOT_READY bounded, sessione VIVA, recove
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true, 'up non fallisce: la cella resta utilizzabile');
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.reason, 'not-ready');
+    assert.equal(res.prompt.notReady, 'not-ready-auth');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-cli-login');
     const lines = w.log();
@@ -516,8 +627,8 @@ test('up claude.kimi-code report consenso pendente: recovery consenso (mai /logi
   try {
     const res = await w.runtime.up('Dev');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.notReady, 'not-ready-consent');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-consent-yes');
     assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
@@ -534,7 +645,8 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
   });
   try {
     const res = await w.runtime.up('Dev');
-    assert.equal(res.prompt.state, 'skipped-not-ready');
+    assert.equal(res.prompt.state, 'skipped');
+    assert.equal(res.prompt.notReady, 'not-ready-auth');
     assert.equal(res.actionRequired.code, 'KIMI_AUTH_ACTION_REQUIRED');
     assert.equal(res.actionRequired.recovery, 'kimi-code-config-custom-api-key');
     assert.deepEqual(Object.keys(res.actionRequired).sort(), ['code', 'recovery'], 'R10: solo slug bounded in API');
@@ -555,17 +667,345 @@ test('up claude.kimi-code report Not logged in: recovery /config; env child name
   } finally { w.cleanup(); }
 });
 
-test('up kimi.native senza report entro il bound: report-timeout onesto, sessione viva', async () => {
+test('up kimi.native senza record canonico: unknown onesto e IMMEDIATO, sessione viva', async () => {
   const w = makeManagedWorld({ client: 'kimi', provider: 'native', delivery: '' });
   try {
+    const t0 = process.hrtime.bigint();
     const res = await w.runtime.up('Dev');
+    assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 2000, 'nessuna attesa del report');
     assert.equal(res.ok, true);
-    assert.equal(res.prompt.delivered, false);
-    assert.equal(res.prompt.state, 'report-timeout');
-    assert.equal(res.prompt.reason, 'report-timeout');
+    assert.equal(res.prompt.state, 'unknown');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(Object.hasOwn(res.prompt, 'ts'), false, 'nessun ts inventato');
     assert.equal(res.actionRequired, undefined, 'nessuna azione utente provata');
     assert.equal(w.log().filter((l) => l.startsWith('kill-session')).length, 0);
   } finally { w.cleanup(); }
+});
+
+// ── 0.9.80 strato 2c: `up` risponde subito dal canonico ─────────────────────
+test('up con finestra di report dichiarata 120 s e nessun record: risposta immediata, unknown, nessuna attesa', async () => {
+  const w = makeManagedWorld({ client: 'kimi', provider: 'native', delivery: '', readyWaitMs: 120000 });
+  try {
+    const t0 = process.hrtime.bigint();
+    const res = await w.runtime.up('Dev');
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.ok(ms < 2000, `up doveva rispondere subito, ha impiegato ${ms} ms`);
+    assert.equal(res.ok, true);
+    assert.equal(res.prompt.state, 'unknown');
+    assert.equal(w.ticket().restartPrompt.readyWaitMs, 120000, 'la finestra dichiarata viaggia nel payload');
+    assert.ok(!w.log().some((l) => l.includes('@nc_delivery')), 'nessuna attesa del marcatore volatile');
+  } finally { w.cleanup(); }
+});
+
+test('up con pending valido: pending con launchId e generation, nessun actionRequired o bootstrap inventato', async () => {
+  const w = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: '', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+    canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.prompt.state, 'pending');
+    assert.equal(res.prompt.generation, 0);
+    assert.equal(res.prompt.launchId, w.ticket().promptOutcome.launchId);
+    assert.equal(Object.hasOwn(res.prompt, 'deadlineTs'), false, 'deadlineTs non esce');
+    assert.equal(res.actionRequired, undefined);
+    assert.equal(res.vlBootstrap, undefined);
+  } finally { w.cleanup(); }
+});
+
+test('up: l\'osservazione MCP gia\' nota alla risposta si conserva; se non nota e\' assente, senza attesa', async () => {
+  const noto = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: 'submitted', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+    mcp: { state: 'degraded', failed: ['alfa'], pending: ['beta'] },
+  });
+  try {
+    const res = await noto.runtime.up('Dev');
+    assert.equal(res.readinessDegraded, true);
+    assert.deepEqual(res.mcpDegraded, { failed: ['alfa'], pending: ['beta'] });
+    assert.equal(res.prompt.state, 'submitted');
+    assert.equal(JSON.stringify(res.prompt).includes('alfa'), false, 'le liste MCP non entrano nello stato del prompt');
+  } finally { noto.cleanup(); }
+  const ignoto = makeManagedWorld({
+    client: 'claude', provider: 'kimi-code', delivery: 'submitted', env: { KIMI_API_KEY: 'sk-test-fixture-only' },
+  });
+  try {
+    const res = await ignoto.runtime.up('Dev');
+    assert.equal(res.mcpDegraded, undefined);
+    assert.equal(res.readinessDegraded, undefined);
+  } finally { ignoto.cleanup(); }
+});
+
+// ── 0.9.80 strato 2c: osservatore diagnostico del terminale ─────────────────
+const { createDiagnostics, sanitizeMeta } = require('../lib/diagnostics/store.js');
+const { finche } = require('./helpers/prompt-canonico.js');
+const { scriviRecordPrompt: scriviRecordCanale } = require('../lib/files/activity.js');
+
+function eventiPrompt(diagnostics) {
+  return diagnostics.logs({ limit: 200 }).records.filter((r) => r.code === 'PROMPT_DELIVERY_TERMINAL');
+}
+function mondoOsservatore(extra = {}) {
+  const diagnostics = extra.diagnostics || createDiagnostics();
+  const clock = { t: 0 };
+  const w = makeManagedWorld({
+    client: 'kimi', provider: 'native', delivery: extra.delivery ?? 'submitted', canon: extra.canon,
+    generation: extra.generation ?? 0,
+    cfgExtra: {
+      diagnostics, monotonicNow: () => clock.t, sleepImpl: extra.sleepImpl || (async () => { clock.t += 600; }),
+      log: extra.log || (() => {}),
+    },
+  });
+  return { w, diagnostics, clock };
+}
+
+test('osservatore: un solo evento per un terminale osservato, con soli campi ammessi e senza leak', async () => {
+  const { w, diagnostics } = mondoOsservatore();
+  try {
+    await w.runtime.up('Dev');
+    const evento = await finche(() => eventiPrompt(diagnostics)[0]);
+    assert.ok(evento, 'evento terminale registrato');
+    assert.equal(evento.level, 'notice');
+    assert.equal(evento.component, 'fleet');
+    assert.deepEqual(Object.keys(evento.meta).sort(), ['cell', 'generation', 'launchId', 'state']);
+    assert.equal(evento.meta.state, 'submitted');
+    assert.equal(evento.meta.launchId, w.ticket().promptOutcome.launchId);
+    const blob = JSON.stringify(evento);
+    assert.ok(!blob.includes('bootstrap segreto'), 'nessun prompt');
+    assert.ok(!blob.includes(w.ticket().promptOutcome.dir), 'nessun path');
+    // polling ulteriore: nessun secondo evento per lo stesso ciclo
+    await new Promise((r) => setTimeout(r, 120));
+    assert.equal(eventiPrompt(diagnostics).length, 1);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: il pending che scade senza terminale non produce alcun evento', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 300));          // il tetto (clock finto) si consuma in pochi poll
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: pending per due poll poi terminale -> UN evento (nessuno per i poll)', async () => {
+  let polls = 0;
+  const holder = {};
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+    sleepImpl: async () => {
+      polls += 1;
+      if (polls === 2) {
+        scriviRecordCanale(w.ticket().promptOutcome.dir, {
+          version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+          generation: 0, state: 'submitted', ts: Date.now(),
+        });
+      }
+      await new Promise((r) => setTimeout(r, 5));
+    },
+  });
+  try {
+    await w.runtime.up('Dev');
+    const ev = await finche(() => eventiPrompt(diagnostics)[0]);
+    assert.ok(ev);
+    assert.equal(eventiPrompt(diagnostics).length, 1);
+    assert.ok(polls >= 2);
+    void holder;
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: abort (shutdown) prima del primo poll e dopo: nessun evento, nemmeno se il terminale arriva dopo', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+  });
+  try {
+    await w.runtime.up('Dev');
+    w.runtime.shutdown();                                    // prima che il lavoro distaccato parta
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+  } finally { w.cleanup(); }
+});
+
+test('osservatore: down e restart abortiscono il ciclo senza toccare la catena dei lock; terminale dopo il down -> nessun evento', async () => {
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 },
+    sleepImpl: async () => { await new Promise((r) => setTimeout(r, 40)); },
+  });
+  try {
+    await w.runtime.up('Dev');
+    const dopo = w.runtime.down('Dev').catch((e) => e);          // stessa catena di sempre: nessun lock nuovo
+    const esito = await dopo;
+    assert.ok(!(esito instanceof Error) || /down|cella/i.test(String(esito.message)), 'il down si conclude o fallisce per le sue ragioni');
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'abortito dal down: nessun evento tardivo');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: cambio di generazione durante il ciclo invalida il ciclo, nessun evento della vecchia tupla', async () => {
+  let gen = 0;
+  const { w, diagnostics } = mondoOsservatore({
+    delivery: '', canon: { state: 'pending', deadlineTs: Date.now() + 60000 }, generation: () => gen,
+    sleepImpl: async () => {
+      gen = 1;                                               // il proprietario ha ammesso la generazione 1
+      scriviRecordCanale(w.ticket().promptOutcome.dir, {
+        version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+        generation: 1, state: 'submitted', ts: Date.now(),
+      });
+      await new Promise((r) => setTimeout(r, 5));
+    },
+  });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'il ciclo e\' legato alla prima generazione qualificata');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: unknown derivato (nessun record) non e\' un terminale; la GET non avvia osservatori ne\' emette eventi', async () => {
+  const { w, diagnostics } = mondoOsservatore({ delivery: '' });
+  try {
+    await w.runtime.up('Dev');
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(eventiPrompt(diagnostics).length, 0);
+    // un terminale arriva dopo la fine del ciclo: la GET lo legge, ma non ricrea nulla
+    scriviRecordCanale(w.ticket().promptOutcome.dir, {
+      version: 1, event: 'prompt-delivery', launchId: w.ticket().promptOutcome.launchId,
+      generation: 0, state: 'submitted', ts: Date.now(),
+    });
+    const st = await w.runtime.cellStatus({});
+    assert.equal(st.cells[0].promptDelivery.state, 'submitted');
+    await new Promise((r) => setTimeout(r, 150));
+    assert.equal(eventiPrompt(diagnostics).length, 0, 'nessun replay da GET');
+  } finally { w.runtime.shutdown(); w.cleanup(); }
+});
+
+test('osservatore: store che fallisce (null o throw) -> un solo avviso al logger a testo costante', async () => {
+  for (const modo of ['null', 'throw']) {
+    const righe = [];
+    const rotto = { record: () => { if (modo === 'throw') throw new Error('secret /home/x/path'); return null; } };
+    const { w } = mondoOsservatore({ diagnostics: rotto, log: (m) => righe.push(String(m)) });
+    try {
+      await w.runtime.up('Dev');
+      const mie = () => righe.filter((r) => r.includes('prompt delivery event'));
+      await finche(() => mie().length > 0);
+      await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual(mie(), ['nexuscrew fleet: prompt delivery event not recorded'], modo);
+      assert.ok(!righe.join('\n').includes('secret'), 'nessun errore grezzo nel logger');
+    } finally { w.runtime.shutdown(); w.cleanup(); }
+  }
+});
+
+test('store diagnostico: launchId e generation con validatori esatti, DENIED_KEY invariata', () => {
+  assert.deepEqual(sanitizeMeta({ launchId: 'a1b2c3d4e5f60718', generation: 3 }), { launchId: 'a1b2c3d4e5f60718', generation: 3 });
+  for (const male of [{ launchId: '../x' }, { launchId: 'A1B2C3D4E5F60718' }, { launchId: 'a1b2c3d4e5f6071' },
+    { generation: -1 }, { generation: 1.5 }, { generation: 2 ** 60 }, { generation: '1' }]) {
+    assert.deepEqual(sanitizeMeta(male), {}, JSON.stringify(male));
+  }
+  // la rete di chiavi vietate non si allarga: queste restano fuori
+  assert.deepEqual(sanitizeMeta({ prompt: 'x', terminal: 'x', path: '/x', file: 'f' }), {});
+});
+
+test('supervisore: l\'osservazione MCP resta in memoria, per generazione, con nomi validati e liste bounded', async () => {
+  const promptMcp = { generation: -1, mcp: null };
+  const lunghi = Array.from({ length: 30 }, (_, i) => `srv${i}`);
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'ciao', readyMs: 0, readyWaitMs: 1000, client: 'claude' },
+    2, { exited: false },
+    {
+      promptOutcome: fxPromptOutcome('5d6e7f8091a2b3c4'),
+      promptGate: { ultimaGenerazioneAmmessa: -1 },
+      promptMcp,
+      setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {},
+      tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+      deliverBootstrapPrompt: async () => ({
+        delivered: true, state: 'submitted', notReady: '',
+        mcp: { state: 'degraded', failed: [...lunghi, '../ostile', 'x'.repeat(80)], pending: ['ok-1'] },
+      }),
+    },
+  );
+  await ctl.settled;
+  assert.equal(promptMcp.generation, 2);
+  assert.equal(promptMcp.mcp.state, 'degraded');
+  assert.equal(promptMcp.mcp.failed.length, 16, 'massimo 16 nomi');
+  assert.ok(promptMcp.mcp.failed.every((n) => /^srv\d+$/.test(n)), 'nomi ostili scartati, non copiati');
+  assert.deepEqual(promptMcp.mcp.pending, ['ok-1']);
+});
+
+// ── Fix R3: un'eccezione del task di consegna DOPO l'ammissione non resta muta ──
+const { leggiRecordPrompt: leggiStoria } = require('../lib/files/activity.js');
+
+async function consegnaConGuasto({ extra, gate = { ultimaGenerazioneAmmessa: -1 }, generation = 0 }) {
+  const fx = fxPromptOutcome('7a8b9cadbecfd0e1');
+  const righe = [];
+  const seams = {
+    promptOutcome: fx, promptGate: gate,
+    setTimeout: (fn) => { fn(); return 1; }, clearTimeout: () => {},
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+    writeError: (m) => righe.push(String(m)),
+  };
+  // I descrittori si copiano com'e': un getter che lancia resta un getter.
+  Object.defineProperties(seams, Object.getOwnPropertyDescriptors(extra));
+  const ctl = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'ciao', readyMs: 0, readyWaitMs: 1000, client: 'kimi' },
+    generation, { exited: false }, seams,
+  );
+  const valore = await ctl.settled;
+  return { valore, righe, fx, record: leggiStoria(fx.dir, fx.launchId) };
+}
+
+test('R3: eccezione PRIMA di ogni effetto -> terminale skipped/failed-pre-paste, nessun pending eterno, nessun testo d\'errore', async () => {
+  const { valore, righe, record } = await consegnaConGuasto({
+    extra: { get deliverBootstrapPrompt() { throw new Error("Cannot find module 'smol-toml' SEGRETO"); } },
+  });
+  assert.equal(valore, null, 'fallimento certo pre-paste: nessuna incertezza da recintare');
+  assert.equal(record.state, 'skipped');
+  assert.equal(record.reason, 'failed-pre-paste');
+  assert.notEqual(record.state, 'pending');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'), 'una riga fissa per l\'operatore');
+  const blob = JSON.stringify(record) + righe.join('');
+  assert.ok(!blob.includes('SEGRETO') && !blob.includes('smol-toml'), 'nessun messaggio d\'errore nel record o su stderr');
+});
+
+test('R3: eccezione DURANTE la consegna -> unknown/delivery-unknown, generazione fermata bounded, mai submitted, nessun retry', async () => {
+  let chiamate = 0;
+  const { valore, righe, record } = await consegnaConGuasto({
+    extra: { deliverBootstrapPrompt: async () => { chiamate += 1; throw new Error('boom SEGRETO'); } },
+  });
+  assert.equal(chiamate, 1, 'nessun retry');
+  assert.deepEqual(valore, { state: 'delivery-unknown' });
+  assert.equal(record.state, 'unknown');
+  assert.equal(record.reason, 'delivery-unknown');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'));
+  assert.ok(!(JSON.stringify(record) + righe.join('')).includes('SEGRETO'));
+});
+
+test('R3: eccezione dopo la risposta di deliver (pubblicazione del terminale) -> comunque un terminale, non un pending', async () => {
+  const { record } = await consegnaConGuasto({
+    extra: {
+      deliverBootstrapPrompt: async () => ({ delivered: true, state: 'submitted', notReady: '', get mcp() { throw new Error('x'); } }),
+    },
+  });
+  assert.notEqual(record.state, 'pending');
+  assert.equal(record.state, 'unknown');
+});
+
+test('R3: generazione superata dal fence -> il guasto non scrive sulla nuova generazione (tace) ma lo stderr fisso resta', async () => {
+  const gate = { ultimaGenerazioneAmmessa: -1 };
+  const { record, righe } = await consegnaConGuasto({
+    gate,
+    extra: { deliverBootstrapPrompt: async () => { gate.ultimaGenerazioneAmmessa = 5; throw new Error('boom'); } },
+  });
+  assert.equal(record.generation, 0);
+  assert.equal(record.state, 'pending', 'la generazione 0 non riscrive: il fence ha gia\' ammesso la 5');
+  assert.ok(righe.includes('nexuscrew cell: prompt delivery failed unexpectedly\n'));
 });
 
 test('waitDeliveryReport: valore non bounded -> null; parse state:notReady', async () => {
@@ -596,6 +1036,7 @@ test('cell-exec kimi: delivery owner per OGNI generazione + marker @nc_delivery 
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 1,
@@ -615,6 +1056,7 @@ test('cell-exec kimi: delivery owner per OGNI generazione + marker @nc_delivery 
       return child;
     },
     now: () => clock,
+    monoNow: () => clock,
     sleep: async () => {},
     process: proc,
     setTimeout: (fn) => { fn(); return 1; },
@@ -640,6 +1082,7 @@ test('cell-exec R2: gen0 exit durante attesa -> delivery gen0 CANCELLATA, gen1 e
   let cancelObserved = 0;
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -705,6 +1148,7 @@ test('delivery R3: cancel dopo Enter in volo -> delivery-unknown (R9), mai submi
   };
   const r = await deliverBootstrapPrompt({
     ...BASE, tmuxExecImpl: exec, captureImpl: READY_CAPTURE(), isCancelled: () => cancelled,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
   });
   assert.equal(r.state, 'delivery-unknown', 'Enter partito + generazione morta = incerto, non submitted');
   assert.equal(r.delivered, false);
@@ -731,6 +1175,7 @@ test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun ha
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 8,
@@ -775,6 +1220,7 @@ test('cell-exec R9: exit durante paste (delivery-unknown) -> STOP bounded, nessu
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -813,6 +1259,7 @@ test('cell-exec R9: exit durante Enter (staged-not-submitted) -> STOP bounded, n
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 5, restartDelayMs: 5,
       maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -853,6 +1300,7 @@ test('cell-exec R12: esito incerto chiuso PRIMA dell\'exit -> stop al primo exit
     const proc = new EventEmitter();
     const payload = {
       command: '/bin/fake', args: [], env: {},
+      promptOutcome: fxPromptOutcome(),
       supervise: {
         enabled: true, initialReadyMs: 5, restartDelayMs: 5,
         maxRestartDelayMs: 20, resetAfterMs: 100000, rapidWindowMs: 100000, maxRapidRestarts: 10,
@@ -891,6 +1339,7 @@ test('cell-exec restart: senza client -> legacy injectPrompt (G4); failure deliv
   const proc = new EventEmitter();
   const payload = {
     command: '/bin/fake', args: [], env: {},
+    promptOutcome: fxPromptOutcome(),
     supervise: {
       enabled: true, initialReadyMs: 50, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 1,
@@ -906,6 +1355,7 @@ test('cell-exec restart: senza client -> legacy injectPrompt (G4); failure deliv
       return child;
     },
     now: () => clock,
+    monoNow: () => clock,
     sleep: async () => {},
     process: proc,
     setTimeout: (fn) => { fn(); return 1; },
@@ -990,4 +1440,1435 @@ test('regression: claude.native/codex/pi/agy conservano prompt su argv; solo kim
     assert.ok(!kimiCode.engine.args.includes('bootstrap'), 'claude.kimi-code: prompt mai in argv');
     assert.ok(kimiCode.engine.args.includes('k3[1m]'), 'modello K3 1M preservato (regression)');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
+});
+
+// ===========================================================================
+// 7. Restart cap (restart budget) + stop visibile persistente: tetto
+//    cumulativo oltre gen0, misura della durata sul clock monotono catturata
+//    all'exit, reset completo dopo run lunga, backoff raddoppiante, record
+//    terminale per lancio su file (sopravvive al pane), selettore del lancio,
+//    payload activity anche per gli engine a launcher, terminal in status.
+//    Ogni test usa HOME/dir in tmpdir: nessuna scrittura fuori dalla own tmp.
+// ===========================================================================
+const activityFiles = require('../lib/files/activity.js');
+const { validSupervise, validPayload, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
+
+// Harness del supervisore: clock MONOTONO iniettato (la vita di ogni
+// generazione e' lifeMs), sleep contati, spawn fake con exit a microtask
+// (dopo aver fatto avanzare il clock), stderr catturato. `now` civile
+// controllabile a parte per i timestamp dei record.
+function supervisorHarness({
+  supervise = {}, payload = {}, activity = null, lifeMs = 60,
+  wall = null, manualExit = false, killExits = true, onSpawn = null,
+} = {}) {
+  const errs = []; const waits = [];
+  let clock = 0; let launches = 0;
+  const proc = new EventEmitter();
+  const fullPayload = {
+    command: '/bin/fake', args: [], env: {},
+    // Fixture del canale del record del prompt: la consegna supervisionata
+    // richiede il canale dedicato (un canale per harness, lancio fisso).
+    promptOutcome: fxPromptOutcome(),
+    ...payload,
+    ...(activity ? { activity } : {}),
+    supervise: {
+      enabled: true, initialReadyMs: 50, restartDelayMs: 50,
+      maxRestartDelayMs: 800, resetAfterMs: 1000, rapidWindowMs: 3600000,
+      maxRapidRestarts: 1000,
+      ...supervise,
+    },
+  };
+  const seamsBase = {
+    receivePayload: async () => fullPayload,
+    spawn: () => {
+      launches += 1;
+      const child = new EventEmitter();
+      child.kill = () => { if (killExits) child.emit('exit', 0, null); };
+      if (onSpawn) onSpawn(launches, child, proc);
+      if (!manualExit) queueMicrotask(() => { clock += lifeMs; child.emit('exit', 1, null); });
+      return child;
+    },
+    now: () => (wall ? wall(launches) : 1700000000000 + clock),
+    monoNow: () => clock,
+    sleep: async (ms) => { waits.push(ms); },
+    process: proc,
+    // Il timer del prompt NON scatta nello stack che lo crea (nel runtime vero
+    // e' un setTimeout): se fn() girasse subito, `timer = null` avverrebbe
+    // prima che `timer = setTimer(...)` riceva l'handle, e il cancel() vedrebbe
+    // un timer pendente che non esiste piu' — settle(null) spezzerebbe la
+    // propagazione dell'esito incerto della delivery.
+    setTimeout: (fn) => { queueMicrotask(fn); return 1; },
+    clearTimeout: () => {},
+    writeError: (m) => errs.push(String(m)),
+    tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
+  };
+  return {
+    proc,
+    errs, waits,
+    launches: () => launches,
+    payload: fullPayload,
+    seams: seamsBase,
+    clock: () => clock,
+    run: (extra = {}) => cellExecMain(['--socket', '/tmp/x', '--nonce', '1'.repeat(64)], { ...seamsBase, ...extra }),
+  };
+}
+
+test('budget: bounds di maxTotalRestarts validati (1..200 intero), payload invalido rifiutato', () => {
+  assert.equal(validSupervise({ maxTotalRestarts: 1 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 12 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 200 }), true);
+  assert.equal(validSupervise({ maxTotalRestarts: 0 }), false, 'sotto bound');
+  assert.equal(validSupervise({ maxTotalRestarts: 201 }), false, 'sopra bound');
+  assert.equal(validSupervise({ maxTotalRestarts: 1.5 }), false, 'frazione');
+  assert.equal(validSupervise({ maxTotalRestarts: '12' }), false, 'stringa');
+  assert.equal(validSupervise({ maxTotalRestarts: true }), false, 'booleano');
+  assert.equal(validPayload({
+    command: '/bin/x', args: [], env: {},
+    supervise: { enabled: true, maxTotalRestarts: 201 },
+  }), false, 'payload con tetto fuori bounds rifiutato');
+  const { DEFAULT_SUPERVISE } = require('../lib/fleet/cell-exec.js');
+  assert.equal(DEFAULT_SUPERVISE.maxTotalRestarts, 12, 'default 12: gen0 + 12 spawn');
+});
+
+test('attesa di prontezza nel payload: 1000..120000 interi, 0 e i frazionari rifiutati', () => {
+  // Il contratto unico del tempo di consegna: il validatore del supervisore non
+  // accetta piu' un payload con 0 (che il runtime non produce) ne' un valore
+  // fuori range. Un payload fuori contratto si rifiuta, non si corregge.
+  const conAttesa = (v) => validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 's', prompt: 'p', client: 'claude', readyWaitMs: v,
+  });
+  assert.equal(conAttesa(1000), true);
+  assert.equal(conAttesa(15000), true);
+  assert.equal(conAttesa(60000), true);
+  assert.equal(conAttesa(120000), true);
+  assert.equal(conAttesa(1234), true, 'millisecondi esatti');
+  assert.equal(conAttesa(0), false, 'zero non e\' un budget valido');
+  assert.equal(conAttesa(999), false, 'sotto il minimo');
+  assert.equal(conAttesa(120001), false, 'sopra il massimo');
+  assert.equal(conAttesa(15.5), false, 'frazione');
+  assert.equal(conAttesa('15000'), false, 'stringa');
+  assert.equal(conAttesa(-1), false, 'negativo');
+  assert.equal(validRestartPrompt({
+    tmuxBin: 'tmux', tmuxSession: 's', prompt: 'p', client: 'claude',
+  }), true, 'assente = default');
+});
+
+test('budget: cap=2 -> esattamente 3 spawn (gen0+2), il 4o vietato, stop SENZA sleep inutile', async () => {
+  const w = supervisorHarness({ supervise: { maxTotalRestarts: 2 } });
+  const code = await w.run();
+  assert.equal(w.launches(), 3, 'gen0 piu\' due restart impegnati, il terzo vietato');
+  assert.equal(code, 1, 'fermata terminale');
+  // Il check del tetto e' ALLA DECISIONE di restart, prima di dormire: gli
+  // sleep sono esattamente tanti quanti i restart davvero impegnati (2), col
+  // backoff gia' raddoppiato fra il primo e il secondo.
+  assert.deepEqual(w.waits, [50, 100], 'nessun backoff dormito dopo il tetto raggiunto');
+  assert.ok(w.errs.some((e) => e.includes('total restart budget exhausted')), 'motivo bounded su stderr');
+});
+
+test('budget: cap=1 e cap=12 (gen0+N esatti)', async () => {
+  const w1 = supervisorHarness({ supervise: { maxTotalRestarts: 1 } });
+  await w1.run();
+  assert.equal(w1.launches(), 2, 'cap 1: gen0 + 1 spawn');
+  const w12 = supervisorHarness({ supervise: { maxTotalRestarts: 12 } });
+  await w12.run();
+  assert.equal(w12.launches(), 13, 'cap 12: gen0 + 12 spawn (13 in tutto)');
+  assert.equal(w12.waits.length, 12, 'un backoff per ogni restart impegnato');
+});
+
+test('budget: impegno solo allo spawn certo — stop durante il backoff NON consuma', async () => {
+  const w = supervisorHarness({ supervise: { maxTotalRestarts: 5 } });
+  // Il primo sleep emette lo stop dell'operatore: nessun secondo spawn.
+  w.seams.sleep = async () => { w.waits.push(50); w.proc.emit('SIGTERM'); };
+  const code = await w.run();
+  assert.equal(code, 0);
+  assert.equal(w.launches(), 1, 'nessun client rilanciato dopo il segnale');
+});
+
+test('budget: run >= resetAfterMs azzera ANCHE il contatore cumulativo (burst nuovo)', async () => {
+  // cap=1 con generazioni LUNGHE (2000ms >= resetAfterMs): il reset azzerando
+  // totalRestarts permette il terzo spawn. Senza l'azzeramento del budget il
+  // supervisore si fermerebbe a 2. Lo stop dell'operatore arriva DENTRO lo
+  // spawn della terza generazione (sincrono: il loop gira a microtask puri e
+  // un timer reale non girerebbe mai).
+  const stopAt = (n, _child, proc) => { if (n === 3) proc.emit('SIGTERM'); };
+  const w = supervisorHarness({ lifeMs: 2000, supervise: { maxTotalRestarts: 1 }, onSpawn: stopAt });
+  const code = await w.run();
+  assert.equal(w.launches(), 3, 'il reset della run lunga restituisce il budget del burst');
+  assert.equal(code, 0, 'chiusura pulita via operatore');
+});
+
+test('budget: confine del reset — durata APPENA sotto non azzera, APPENA sopra si\'', async () => {
+  // resetAfterMs di harness: 1000. lifeMs 999: la generazione non e' «lunga»,
+  // il budget non si azzera, cap=1 fermo a gen0+1. lifeMs 1000: il reset si
+  // applica e il burst ricomincia (si ferma l'operatore al terzo spawn).
+  const sotto = supervisorHarness({ lifeMs: 999, supervise: { maxTotalRestarts: 1 } });
+  await sotto.run();
+  assert.equal(sotto.launches(), 2, '999ms < 1000ms: nessun reset, tetto a gen0+1');
+  const stopAt = (n, _child, proc) => { if (n === 3) proc.emit('SIGTERM'); };
+  const sopra = supervisorHarness({ lifeMs: 1000, supervise: { maxTotalRestarts: 1 }, onSpawn: stopAt });
+  const code = await sopra.run();
+  assert.equal(sopra.launches(), 3, '1000ms >= 1000ms: reset, il budget del burst torna');
+  assert.equal(code, 0);
+});
+
+test('misura: durata catturata all\'exit — attesa di cancellazione LUNGA dopo l\'exit non resetta', async () => {
+  // gen0 vita breve (60ms), ma la delivery si conclude molto DOPO l'exit e
+  // nel frattempo fa avanzare il clock di 5000ms: la vecchia misura (letta a
+  // valle delle attese) vedeva una generazione «lunga» e azzerava la finestra
+  // rapid. Con l'istante catturato nel listener la generazione resta breve e
+  // il circuito rapid si apre al secondo exit.
+  let deliverClockJump = 5000;
+  const w = supervisorHarness({
+    supervise: { maxRapidRestarts: 1, maxTotalRestarts: 100 },
+    payload: {
+      restartPrompt: {
+        tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'resume', readyMs: 0,
+        client: 'kimi', readyWaitMs: 1000,
+      },
+    },
+  });
+  // safety: se il difetto tornasse (reset continuo), fermiamo l'infinito.
+  let safety = 0;
+  w.seams.sleep = async (ms) => {
+    w.waits.push(ms); safety += 1;
+    if (safety >= 6) w.proc.emit('SIGTERM');
+  };
+  const realClock = w.seams.monoNow;
+  w.seams.deliverBootstrapPrompt = () => new Promise((resolve) => {
+    setTimeout(() => {
+      const base = realClock();
+      w.seams.monoNow = () => base + deliverClockJump; // il clock scorre durante l'attesa...
+      deliverClockJump = 0;
+      resolve({ delivered: true, state: 'submitted', notReady: '' });
+    }, 10);
+  });
+  const code = await w.run();
+  assert.equal(w.launches(), 2, 'il circuito rapid apre al secondo exit breve');
+  assert.equal(code, 1);
+});
+
+test('backoff: raddoppia davvero fino al tetto (50,100,200,400,800,800,800)', async () => {
+  const w = supervisorHarness({
+    supervise: { maxTotalRestarts: 7, restartDelayMs: 50, maxRestartDelayMs: 800 },
+  });
+  await w.run();
+  assert.deepEqual(w.waits, [50, 100, 200, 400, 800, 800, 800], 'sequenza di backoff raddoppiante con cap');
+  assert.equal(w.launches(), 8, 'gen0 + 7 restart');
+});
+
+test('stop visibile: cap raggiunto DOPO la readiness -> ragione su file, leggibile senza pane, per custom', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-term-'));
+  const sessione = 'cloud-T';
+  const dir = path.join(root, sessione);
+  try {
+    const launchId = 'a1b2c3d4e5f60718';
+    // Il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di vita
+    // (il runtime, prima dello spawn): qui lo si simula nello stesso punto.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: launchId },
+    });
+    const code = await w.run();
+    assert.equal(code, 1, 'fermata terminale a budget esaurito');
+    assert.equal(w.launches(), 2);
+    // Il pane non esiste piu' (nessun tmux qui): la ragione vive sul FILE.
+    const diagnosi = activityFiles.leggiDiagnosiTerminale(root, sessione);
+    assert.equal(diagnosi.reason, 'restart-budget-exhausted');
+    assert.equal(diagnosi.launchId, launchId);
+    assert.ok(Number.isFinite(diagnosi.ts), 'timestamp civile finito');
+    // Contenuto del record: schema chiuso, niente testo libero.
+    const raw = JSON.parse(fs.readFileSync(path.join(dir, `terminal-${launchId}.json`), 'utf8'));
+    assert.deepEqual(Object.keys(raw).sort(), ['event', 'launchId', 'reason', 'ts', 'version']);
+    assert.equal(raw.event, 'terminal-stop');
+    assert.equal(raw.version, 1);
+    // Selettore del lancio: pubblicato dal proprietario, NON toccato dal
+    // supervisore (che pure ha vissuto l'intero ciclo fino allo stop).
+    assert.equal(fs.readFileSync(path.join(dir, 'launch-current'), 'utf8').trim(), launchId);
+    // Nessun boot automatico: il supervisore e' uscito, nessuno spawn oltre il tetto.
+    assert.equal(w.launches(), 2);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: il supervisore NON puo\' spostare il selettore (e\' del ciclo di vita, non suo)', async () => {
+  // Prova del vincolo sul selettore: un supervisore ritardato di un lancio
+  // vecchio, fermo prima della pubblicazione, non deve poter spostare la
+  // selezione di un lancio nuovo. Nel codice nuovo la pubblicazione sta al
+  // runtime (dentro il lock per cella): il supervisore NON scrive MAI
+  // `launch-current`, quindi un ritardo qualsiasi al piu' fa arrivare tardi
+  // il SUO record terminale — la selezione resta quella del lancio corrente.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-selown-'));
+  const sessione = 'cloud-T';
+  const dir = path.join(root, sessione);
+  try {
+    const vecchio = 'aaaa000000000001';
+    const nuovo = 'bbbb000000000002';
+    // Il runtime del lancio NUOVO ha gia' spostato il selettore...
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, nuovo), true);
+    // ...e il supervisore VECCHIO (ritardato, fermo prima della vecchia
+    // pubblicazione) vive ora tutto il suo ciclo e pubblica solo il proprio
+    // record terminale.
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: vecchio },
+    });
+    const code = await w.run();
+    assert.equal(code, 1);
+    // La selezione NON si e' mossa: resta il lancio nuovo, e la diagnosi
+    // restituita e' quella del lancio nuovo (assente), MAI quella del vecchio.
+    assert.equal(fs.readFileSync(path.join(dir, 'launch-current'), 'utf8').trim(), nuovo,
+      'il supervisore non scrive launch-current');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, sessione), null,
+      'il record del vecchio non viene selezionato');
+    // Il record del vecchio esiste (diagnosi conservata per chi la cerca per
+    // lancio) ma non e' la diagnosi DEL LANCIO CORRENTE.
+    assert.ok(fs.existsSync(path.join(dir, `terminal-${vecchio}.json`)));
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: orologi separati — salto dell\'orologio civile non tocca budget ne\' timestamp', async () => {
+  // now (civile) salta avanti e indietro a ogni generazione: le DURATE e il
+  // budget sono sul monotono e non cambiano; il record porta un ts civile
+  // finito (interpretabile dal lettore Date.now).
+  let i = 0;
+  const salti = [1700000000000, 900000000000, 4200000000000, 1700000000001];
+  const w = supervisorHarness({
+    supervise: { maxTotalRestarts: 1 },
+    wall: () => salti[i++ % salti.length],
+  });
+  const code = await w.run();
+  assert.equal(w.launches(), 2, 'budget identico nonostante i salti civili');
+  assert.equal(code, 1);
+});
+
+test('stop visibile: errore di pubblicazione onesto — dir non scrivibile, ciclo fermo comunque', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-ro-'));
+  const dir = path.join(root, 'cloud-T');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o500); // scrittura negata al owner: le publish falliscono
+  try {
+    const w = supervisorHarness({
+      supervise: { maxTotalRestarts: 1 },
+      activity: { dir, generation: 'dead0000beef0001' },
+    });
+    const code = await w.run();
+    assert.equal(code, 1, 'il ciclo si ferma comunque al tetto');
+    assert.equal(w.launches(), 2);
+    assert.ok(w.errs.some((e) => e.includes('terminal reason not published')),
+      'diagnosi dichiarata non disponibile, mai uno stop «registrato» non scritto');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 'cloud-T'), null, 'nessuna diagnosi inventata');
+  } finally {
+    fs.chmodSync(dir, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stop visibile: ragioni terminali del supervisore sul canale (operator/spawn/uncertain)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rag-'));
+  // Il selettore del lancio lo pubblica il runtime (proprietario del ciclo di
+  // vita) PRIMA dello spawn: in ogni sotto-caso lo si simula li'.
+  const mk = (name) => {
+    const dir = path.join(root, name);
+    const launchId = name.padEnd(16, '0').slice(0, 16);
+    return { dir, launchId };
+  };
+  try {
+    // operator-stop: segnale durante il backoff.
+    {
+      const { dir, launchId } = mk('opstop00000000000'.slice(0, 16));
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+      const w = supervisorHarness({ activity: { dir, generation: launchId } });
+      w.seams.sleep = async (ms) => { w.waits.push(ms); w.proc.emit('SIGTERM'); };
+      const code = await w.run();
+      assert.equal(code, 0);
+      assert.equal(w.launches(), 1);
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, path.basename(dir)).reason, 'operator-stop');
+    }
+    // spawn-error: il figlio non nasce (error di spawn).
+    {
+      const nome = 'spawnerr';
+      const dir = path.join(root, nome);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aa0000000000000b'), true);
+      const w = supervisorHarness({ activity: { dir, generation: 'aa0000000000000b' } });
+      w.seams.spawn = () => {
+        const child = new EventEmitter();
+        child.kill = () => {};
+        queueMicrotask(() => child.emit('error', Object.assign(new Error('enoent'), { code: 'ENOENT' })));
+        return child;
+      };
+      const code = await w.run();
+      assert.equal(code, 1);
+      assert.ok(w.errs.some((e) => e.includes('spawn failed')), 'sanitize spawn error');
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, nome).reason, 'spawn-error');
+    }
+    // uncertain-delivery: esito post-paste incerto -> fermata bounded + record.
+    {
+      const nome = 'uncertain';
+      const dir = path.join(root, nome);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'cc0000000000000d'), true);
+      const w = supervisorHarness({
+        activity: { dir, generation: 'cc0000000000000d' },
+        payload: {
+          restartPrompt: {
+            tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'resume', readyMs: 0,
+            client: 'kimi', readyWaitMs: 1000,
+          },
+        },
+      });
+      w.seams.deliverBootstrapPrompt = async () => ({ delivered: false, state: 'delivery-unknown', notReady: '' });
+      const code = await w.run();
+      assert.equal(code, 1);
+      assert.equal(w.launches(), 1, 'nessuna gen1 dopo esito incerto');
+      assert.equal(activityFiles.leggiDiagnosiTerminale(root, nome).reason, 'uncertain-delivery');
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('stop visibile: lease persa -> ragione lease-lost pubblicata (idempotente sull\'uscita)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-lease-'));
+  const dir = path.join(root, 'cloud-T');
+  const L = require('../lib/fleet/cell-lease.js');
+  const clock = { t: 100_000 };
+  const timers = [];
+  const fakeSetTimeout = (fn) => { const h = { fn }; timers.push(h); return h; };
+  const fakeClearTimeout = () => {};
+  try {
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'ee0000000000000f'), true);
+    const w = supervisorHarness({
+      activity: { dir, generation: 'ee0000000000000f' },
+      manualExit: true, // il child vive finche' onLost non lo ferma
+      payload: { lease: { cellId: 'Dev', launchEpoch: 'e'.repeat(16), stablePath: '/tmp/nonexistent-lease.sock' } },
+    });
+    const fakeSocket = new (require('node:events').EventEmitter)();
+    fakeSocket.destroyed = false;
+    fakeSocket.destroy = () => { fakeSocket.destroyed = true; fakeSocket.emit('close'); };
+    w.seams.receivePayload = async () => ({ payload: w.payload, socket: fakeSocket });
+    w.seams.now = () => clock.t;                  // orologio civile = clock della grace
+    w.seams.monoNow = () => clock.t;              // durate sullo stesso clock controllato
+    w.seams.setTimeout = fakeSetTimeout;
+    w.seams.clearTimeout = fakeClearTimeout;
+    w.seams.net = {
+      createConnection: () => {
+        const s = new (require('node:events').EventEmitter)();
+        s.destroyed = false;
+        s.destroy = () => { s.destroyed = true; s.emit('close'); };
+        s.setEncoding = () => {}; s.write = () => true;
+        return s;
+      },
+    };
+    const running = w.run();
+    // Lascia partire il supervisore (spawn + lease client), poi perde il canale.
+    await new Promise((resolve) => setImmediate(resolve));
+    fakeSocket.emit('close');
+    clock.t += L.GRACE_MS + 1;
+    for (let guard = 0; guard < 40; guard += 1) {
+      const pending = timers.splice(0, timers.length);
+      for (const h of pending) { try { h.fn(); } catch (_) {} }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const code = await running;
+    assert.equal(code, 0, 'uscita pulita dopo la fermata del child');
+    // La ragione e' la CAUSA (lease-lost), non il operator-stop dell'uscita.
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 'cloud-T').reason, 'lease-lost');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: enum chiuso, round-trip per ogni ragione, id lancio ostile rifiutato', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-enum-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    assert.deepEqual([...activityFiles.RAGIONI_TERMINALI],
+      ['restart-budget-exhausted', 'uncertain-delivery', 'lease-lost', 'spawn-error', 'operator-stop'],
+      'enum chiuso, nessuna aggiunta libera');
+    for (const reason of activityFiles.RAGIONI_TERMINALI) {
+      const id = reason.slice(0, 16).padEnd(16, 'x');
+      assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: id, reason, ora: 123 }), true, reason);
+      assert.equal(activityFiles.pubblicaSelettoreLancio(dir, id), true);
+      const d = activityFiles.leggiDiagnosiTerminale(root, 's');
+      assert.equal(d.reason, reason); assert.equal(d.ts, 123); assert.equal(d.launchId, id);
+    }
+    // id ostile: mai un nome file fuori dalla directory, mai una ragione fuori enum.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: '../escape', reason: 'operator-stop' }), false);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: 'ok0000000000000f', reason: 'free-text' }), false);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, '../../etc'), false);
+    assert.equal(fs.readdirSync(dir).some((n) => n.includes('escape') || n.startsWith('..')), false);
+    // Sessione ostile in lettura: traversal negato.
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, '../altro'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: il selettore separa i lanci — il vecchio supervisore non sporca il nuovo', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-sel-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    const A = 'aaaa000000000001'; const B = 'bbbb000000000002'; const C = 'cccc000000000003';
+    // Lancio A pubblica la propria ragione ed e' selezionato.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: A, reason: 'lease-lost', ora: 1 }), true);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, A), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's').reason, 'lease-lost');
+    // Lancio B nuovo: il selettore si sposta; la ragione di B non c'e' ancora.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, B), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null,
+      'la ragione del lancio vecchio non vale per il nuovo');
+    // Il VECCHIO supervisore A scrive tardi: riscrive solo il proprio record.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: A, reason: 'spawn-error', ora: 2 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null, 'scrittura tardiva di A non seleziona A');
+    // B pubblica la propria ragione; un hook tardo (ClientExit) tocca solo
+    // activity.json e non puo' cancellarla.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: B, reason: 'operator-stop', ora: 3 }), true);
+    assert.equal(activityFiles.scriviStato(dir, { evento: 'ClientExit', generazione: B, ora: 4 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's').reason, 'operator-stop',
+      'la diagnosi sopravvive a un hook tardivo');
+    // Lancio C: selezione C; scrittura tardiva di B non invalida C.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, C), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: B, reason: 'spawn-error', ora: 5 }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null, 'B tardivo non sposta la selezione di C');
+    // Selettore rotto: onesto null, mai la ragione vecchia come nuova.
+    fs.writeFileSync(path.join(dir, 'launch-current'), 'not!!a@valid id\n');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(root, 's'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('canale terminale: retention bounded — al lancio restano gli ultimi 8 record', () => {
+  // La potatura sta al proprietario del ciclo di vita (il runtime, allo stesso
+  // punto della pubblicazione del selettore): qui si prova direttamente
+  // l'helper, con la stessa sequenza che usa il runtime.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-ret-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  const idDi = (i) => `r${String(i).padStart(15, '0')}`;
+  try {
+    const base = Date.now() - 100000;
+    for (let i = 0; i < 10; i += 1) {
+      assert.equal(activityFiles.scriviRecordTerminale(dir, {
+        launchId: idDi(i), reason: 'operator-stop', ora: base + i,
+      }), true);
+      fs.utimesSync(path.join(dir, `terminal-${idDi(i)}.json`), new Date(base + i), new Date(base + i));
+    }
+    const rimossi = activityFiles.potaTerminali(dir);
+    assert.deepEqual(rimossi.sort(), [`terminal-${idDi(0)}.json`, `terminal-${idDi(1)}.json`],
+      'pruna i due piu\' vecchi');
+    const restanti = fs.readdirSync(dir).filter((n) => n.startsWith('terminal-')).sort();
+    assert.equal(restanti.length, 8, 'retention bounded');
+    assert.ok(!restanti.includes(`terminal-${idDi(0)}.json`), 'il piu\' vecchio e\' pruno');
+    assert.ok(!restanti.includes(`terminal-${idDi(1)}.json`), 'il secondo piu\' vecchio e\' pruno');
+    assert.ok(restanti.includes(`terminal-${idDi(2)}.json`), 'dal terzo in poi restano');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- Runtime: plumb del tetto nel payload, canale activity per i custom,
+// --- terminal esposto da cellStatus (la UI non mostra «attivo sano» dove
+// --- c'e' una ragione terminale del lancio corrente).
+function makeCustomWorld({ cfgExtra = {} } = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-cw-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 });
+  const cwd = path.join(home, 'work'); fs.mkdirSync(cwd);
+  const filesRoot = path.join(root, 'files');
+  const defsPath = path.join(root, 'fleet.json');
+  // Il command deve passare il gate di trust: file regolare, eseguibile
+  // dall'owner, non symlink, non world-writable. Nel mondo del test.
+  const fakeCli = path.join(root, 'fake-cli');
+  fs.writeFileSync(fakeCli, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeCli, 0o755);
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'fake.cli', label: 'F', rc: false, command: fakeCli, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'Dev', tmuxSession: 'work-custom', cwd, engine: 'fake.cli', boot: false }],
+  });
+  const tmuxBin = writeFakeTmux(root, {});
+  let ticket = null;
+  const logs = [];
+  const runtime = createBuiltinRuntime({
+    cfg: { launchReadyMs: 40, filesRoot, log: (m) => logs.push(String(m)), ...cfgExtra },
+    home, defsPath, tmuxBin, readonly: () => false,
+    launchBroker: {
+      issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+      close: async () => {},
+    },
+    boot: loadDefinitions(defsPath),
+  });
+  return {
+    runtime, root, filesRoot, logs,
+    ticket: () => ticket,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test('runtime custom (launcher): payload activity per il supervisore + tetto nel supervise', async () => {
+  const w = makeCustomWorld();
+  try {
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true);
+    const t = w.ticket();
+    // Il canale esce dal solo ramo managed: anche gli engine a launcher
+    // portano la directory attivita' del supervisore e la generazione.
+    assert.ok(t.activity, 'payload activity per engine custom');
+    assert.equal(t.activity.dir, path.join(w.filesRoot, 'work-custom'));
+    assert.match(t.activity.generation, /^[0-9a-f]{16}$/, 'identita\' del lancio');
+    // Tetto cumulativo: default 12, clamped 1..200.
+    assert.equal(t.supervise.maxTotalRestarts, 12, 'default del tetto cumulativo');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: cellMaxTotalRestarts plumbed e clamped (override 7, fuori bounds -> 200)', async () => {
+  const w7 = makeCustomWorld({ cfgExtra: { cellMaxTotalRestarts: 7 } });
+  try {
+    await w7.runtime.up('Dev');
+    assert.equal(w7.ticket().supervise.maxTotalRestarts, 7, 'override da cfg');
+  } finally { w7.cleanup(); }
+  const wBig = makeCustomWorld({ cfgExtra: { cellMaxTotalRestarts: 9999 } });
+  try {
+    await wBig.runtime.up('Dev');
+    assert.equal(wBig.ticket().supervise.maxTotalRestarts, 200, 'clamp al bound massimo');
+  } finally { wBig.cleanup(); }
+});
+
+test('runtime: opt-out activityHooks == false vale anche per i custom (nessun canale)', async () => {
+  const w = makeCustomWorld({ cfgExtra: { activityHooks: false } });
+  try {
+    await w.runtime.up('Dev');
+    assert.equal(w.ticket().activity, undefined, 'opt-out dell\'operatore rispettato');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: il selettore del lancio lo pubblica il PROPRIETARIO del ciclo di vita', async () => {
+  // Dentro up() (lock per cella), PRIMA dello spawn: un supervisore ritardato
+  // non ha in mano la selezione di un lancio nuovo. Il selettore segue il
+  // lancio corrente a ogni up.
+  const w = makeCustomWorld();
+  try {
+    await w.runtime.up('Dev');
+    const dir = path.join(w.filesRoot, 'work-custom');
+    const gen1 = w.ticket().activity.generation;
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), gen1,
+      'il runtime pubblica launch-current alla partenza');
+    const problemi = w.logs.filter((riga) => !/launch target registered|control channel held/.test(riga));
+    assert.equal(problemi.length, 0, `nessun problema di pubblicazione dichiarato: ${problemi.join(' | ')}`);
+    // Un secondo lancio sposta la selezione: la diagnosi del vecchio lancio
+    // non vale piu' per la cella.
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: gen1, reason: 'lease-lost', ora: 1,
+    }), true);
+    await w.runtime.down('Dev');
+    await w.runtime.up('Dev');
+    const gen2 = w.ticket().activity.generation;
+    assert.notEqual(gen2, gen1);
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), gen2, 'la selezione segue il lancio nuovo');
+    assert.equal(activityFiles.leggiDiagnosiTerminale(w.filesRoot, 'work-custom'), null,
+      'la ragione del lancio vecchio non si presenta come attuale');
+  } finally { w.cleanup(); }
+});
+
+test('runtime: selettore non pubblicabile -> lancio NON bloccato, dichiarazione onesta', async () => {
+  // La directory attivita' e' read-only: la pubblicazione fallisce, il
+  // lancio parte comunque (la fermata c'e' sempre, la VISIBILITA' persistente
+  // richiede il canale) e il fallimento viene dichiarato — mai una diagnosi
+  // silenziosamente assente.
+  const w = makeCustomWorld();
+  try {
+    const dir = path.join(w.filesRoot, 'work-custom');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o500);
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true, 'il lancio non si blocca sul selettore');
+    assert.ok(w.logs.some((l) => l.includes('launch selector not published')),
+      'fallimento dichiarato: diagnosi non disponibile');
+  } finally { w.cleanup(); }
+});
+
+test('cellStatus: terminal del lancio corrente esposto (reason+ts), assente senza record', async () => {
+  const w = makeCustomWorld();
+  try {
+    await w.runtime.up('Dev');
+    const dir = path.join(w.filesRoot, 'work-custom');
+    const launchId = w.ticket().activity.generation;
+    // Nessun record: campo assente, la cella non finge una diagnosi.
+    const prima = await w.runtime.cellStatus();
+    assert.equal(prima.cells[0].terminal, undefined);
+    // Record del lancio corrente: la ragione arriva a status (pane o non pane).
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId, reason: 'restart-budget-exhausted', ora: 1700000000000,
+    }), true);
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, launchId), true);
+    const dopo = await w.runtime.cellStatus();
+    assert.deepEqual(dopo.cells[0].terminal,
+      { reason: 'restart-budget-exhausted', ts: 1700000000000 },
+      'solo enum + timestamp, nessun testo libero o percorso');
+    // Lancio nuovo: il selettore si sposta, la ragione vecchia non si vede.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'ffff000000000009'), true);
+    const nuovo = await w.runtime.cellStatus();
+    assert.equal(nuovo.cells[0].terminal, undefined,
+      'un nuovo lancio invalida la ragione del vecchio');
+  } finally { w.cleanup(); }
+});
+
+// ===========================================================================
+// 7b. Correzioni dello strato 1: il lettore della diagnosi
+//     terminale e' LEGATO ALL'AUTORITA' DEL LANCIO CORRENTE (registro del
+//     runtime: in memoria + su file FUORI dalla directory di sessione). Una
+//     pubblicazione fallita del selettore non trasforma il record del lancio
+//     precedente nella diagnosi del lancio nuovo — nemmeno dopo il riavvio
+//     del runtime — e l'opt-out del canale attivita' non eredita la diagnosi
+//     di un lancio che non e' piu' quello corrente.
+// ===========================================================================
+
+// Mondo condiviso per le prove di RIAVVIO del runtime: stessa root (defs,
+// fake tmux, file di attivita'), runtime DIVERSI — il secondo non ha memoria
+// in-processo del primo, come un processo ripartito. mkRuntime(cfgExtra)
+// costruisce un runtime con la propria coda di log e il proprio capture del
+// ticket del broker.
+function makeCustomWorldConRiavvio() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rv-'));
+  const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 });
+  const cwd = path.join(home, 'work'); fs.mkdirSync(cwd);
+  const filesRoot = path.join(root, 'files');
+  const defsPath = path.join(root, 'fleet.json');
+  const fakeCli = path.join(root, 'fake-cli');
+  fs.writeFileSync(fakeCli, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(fakeCli, 0o755);
+  atomicWrite(defsPath, {
+    schemaVersion: 1,
+    engines: [{ id: 'fake.cli', label: 'F', rc: false, command: fakeCli, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'Dev', tmuxSession: 'work-custom', cwd, engine: 'fake.cli', boot: false }],
+  });
+  const tmuxBin = writeFakeTmux(root, {});
+  const mkRuntime = (cfgExtra = {}) => {
+    let ticket = null;
+    const logs = [];
+    const runtime = createBuiltinRuntime({
+      cfg: { launchReadyMs: 40, filesRoot, log: (m) => logs.push(String(m)), ...cfgExtra },
+      home, defsPath, tmuxBin, readonly: () => false,
+      launchBroker: {
+        issue: async (payload) => { ticket = payload; return { socketPath: '/x', nonce: 'n'.repeat(64) }; },
+        close: async () => {},
+      },
+      boot: loadDefinitions(defsPath),
+    });
+    return { runtime, logs, ticket: () => ticket };
+  };
+  return {
+    root, filesRoot, mkRuntime,
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+test('rimuoviSelettoreLancio: esito CONTROLLATO — false su errore reale, true solo su rimozione o assenza', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-rm-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  try {
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), true, 'assenza = esito onesto (ENOENT)');
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aaaa000000000001'), true);
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), true, 'rimozione riuscita');
+    // Directory non scrivibile con selettore presente: la rimozione FALLISCE e
+    // il booleano lo dichiara — chi chiama non puo' presumere la pulizia.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'aaaa000000000002'), true);
+    fs.chmodSync(dir, 0o500);
+    assert.equal(activityFiles.rimuoviSelettoreLancio(dir), false, 'errore reale dichiarato, non muto');
+  } finally { fs.chmodSync(dir, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('registro dei lanci: round-trip per stato canale, id ostili rifiutati, file rotto = assenza', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-reg-'));
+  try {
+    for (const canale of ['selector', 'none', 'off']) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+        launchId: 'aaaa000000000001', canale, ora: 5,
+      }), true, canale);
+      assert.deepEqual(activityFiles.leggiLancioCorrente(root, 'work-x'),
+        { launchId: 'aaaa000000000001', canale, ts: 5 }, `round-trip ${canale}`);
+    }
+    // Sessione/id ostili: mai un path fuori dalla root del registro.
+    assert.equal(activityFiles.registraLancioCorrente(root, '../altro', {
+      launchId: 'aaaa000000000002', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'a/b', {
+      launchId: 'aaaa000000000003', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+      launchId: '../escape', canale: 'off',
+    }), false);
+    assert.equal(activityFiles.registraLancioCorrente(root, 'work-x', {
+      launchId: 'aaaa000000000004', canale: 'free',
+    }), false, 'stato canale fuori enum rifiutato');
+    assert.equal(activityFiles.leggiLancioCorrente(root, '../altro'), null);
+    // File rotto o fuori schema: assenza onesta, mai throw.
+    fs.writeFileSync(path.join(root, 'launch-registry', 'rotto.json'), '{nope');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 'rotto'), null);
+    fs.writeFileSync(path.join(root, 'launch-registry', 'strano.json'),
+      JSON.stringify({ version: 1, event: 'launch-registry', launchId: 'aaaa000000000005', channel: 'altro', ts: 1 }));
+    assert.equal(activityFiles.leggiLancioCorrente(root, 'strano'), null);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('lettura legata al lancio corrente: canale compromesso legge PER IDENTITA\', canale off non legge', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-auth-'));
+  const dir = path.join(root, 's');
+  fs.mkdirSync(dir, { recursive: true });
+  const vecchio = 'aaaa000000000001';
+  const nuovo = 'bbbb000000000002';
+  try {
+    // Il selettore e' rimasto quello del VECCHIO lancio (pubblicazione del
+    // nuovo fallita, rimozione fallita): chi legge per identita' non lo guarda.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'spawn-error', ora: 1,
+    }), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: nuovo, reason: 'lease-lost', ora: 2,
+    }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'none',
+    }).reason, 'lease-lost', 'none: la ragione del lancio CORRENTE, non quella del selettore stantio');
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'off',
+    }), null, 'off: nessuna diagnosi attribuita a un lancio senza canale');
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', null), null,
+      'senza autorita\' nota l\'esito e\' l\'assenza, non l\'ultimo selettore leggibile');
+    // Il selettore rimasto su quello del VECCHIO lancio non consegna la
+    // diagnosi del vecchio al lancio nuovo: l'identita' selezionata si
+    // confronta con quella dell'autorita' corrente, e una selezione diversa
+    // e' assenza onesta — mai il record di un altro lancio.
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'selector',
+    }), null, 'selector: una selezione che non e\' quella del lancio corrente non restituisce un altro lancio');
+    // Canale integro: il selettore ripubblicato sul lancio corrente consegna
+    // il record di QUEL lancio (e solo quello).
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, nuovo), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: nuovo, canale: 'selector',
+    }).reason, 'lease-lost', 'selector: con il selettore del lancio corrente si legge il suo record');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('cellStatus: pubblicazione fallita con lancio precedente — la ragione del vecchio NON e\' la diagnosi del nuovo', async () => {
+  const w = makeCustomWorld();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const vecchio = 'aaaa111122223333';
+  try {
+    // Il lancio precedente esiste ED e' visibile: selezione e ragione proprie.
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    assert.equal(activityFiles.leggiDiagnosiTerminale(w.filesRoot, 'work-custom').reason,
+      'restart-budget-exhausted', 'il lancio precedente era correntemente selezionato');
+    // La directory di sessione diventa non scrivibile: pubblicare il selettore
+    // del nuovo lancio FALLISCE e fallisce anche la rimozione di quello vecchio.
+    fs.chmodSync(dir, 0o500);
+    const res = await w.runtime.up('Dev');
+    assert.equal(res.ok, true, 'il lancio non si blocca sul selettore');
+    const nuovo = w.ticket().activity.generation;
+    assert.notEqual(nuovo, vecchio, 'lancio nuovo, identita\' diversa');
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), vecchio,
+      'il selettore su disco e\' rimasto quello VECCHIO');
+    assert.ok(w.logs.some((l) => l.includes('launch selector not published')),
+      'fallimento dichiarato: diagnosi non disponibile');
+    // La vista non attribuisce al lancio nuovo la ragione del vecchio: il
+    // selettore rimasto su disco e' STANTIO e non si presume attuale.
+    const st = await w.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'la ragione del lancio vecchio non e\' la diagnosi del lancio nuovo');
+  } finally { fs.chmodSync(dir, 0o700); w.cleanup(); }
+});
+
+test('cellStatus: dopo il RIAVVIO del runtime la selezione stantia non vale; al ripristino la ragione del lancio corrente si vede', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const vecchio = 'aaaa111122223334';
+  try {
+    const prima = w.mkRuntime();
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, vecchio), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: vecchio, reason: 'operator-stop', ora: 2,
+    }), true);
+    fs.chmodSync(dir, 0o500);
+    assert.equal((await prima.runtime.up('Dev')).ok, true, 'il lancio parte anche senza canale');
+    const corrente = prima.ticket().activity.generation;
+    assert.notEqual(corrente, vecchio);
+    // Il runtime riparte (nessuna memoria in-processo): l'autorita' del lancio
+    // si ricostruisce dal registro, non dall'ultimo selettore leggibile.
+    const riavviato = w.mkRuntime();
+    let st = await riavviato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'dopo il riavvio la ragione del lancio vecchio non si mostra');
+    // Ripristino del canale: la ragione del lancio CORRENTE (partito durante
+    // l'indisponibilita') viene selezionata correttamente, per identita' —
+    // mai attraverso il selettore rimasto quello del vecchio.
+    fs.chmodSync(dir, 0o700);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: corrente, reason: 'lease-lost', ora: 3,
+    }), true);
+    st = await riavviato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'lease-lost', ts: 3 },
+      'la ragione del lancio corrente si vede, quella del vecchio mai');
+    // Il canale tornato integro serve anche al lancio SUCCESSIVO: selezione
+    // normale, selettore del nuovo lancio pubblicato dal proprietario.
+    await prima.runtime.down('Dev');
+    const ripristinato = w.mkRuntime();
+    assert.equal((await ripristinato.runtime.up('Dev')).ok, true);
+    const successivo = ripristinato.ticket().activity.generation;
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), successivo,
+      'selettore ripubblicato per il lancio nuovo');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: successivo, reason: 'spawn-error', ora: 4,
+    }), true);
+    st = await ripristinato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'spawn-error', ts: 4 },
+      'con il canale integro la selezione torna quella del lancio corrente');
+  } finally { fs.chmodSync(dir, 0o700); w.cleanup(); }
+});
+
+test('opt-out activityHooks: nessuna diagnosi del lancio precedente sul nuovo, nemmeno dopo il riavvio', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    // Canale ATTIVO: il lancio A si ferma e la sua ragione e' visibile.
+    const conCanale = w.mkRuntime();
+    assert.equal((await conCanale.runtime.up('Dev')).ok, true);
+    const idA = conCanale.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    const stA = await conCanale.runtime.cellStatus();
+    assert.deepEqual(stA.cells[0].terminal, { reason: 'lease-lost', ts: 1 },
+      'con il canale attivo la fermata del lancio corrente si vede');
+    // L'operatore disattiva il canale: il lancio B non ne ha, e la storia di
+    // A non e' lo stato corrente di B.
+    await conCanale.runtime.down('Dev');
+    const senzaCanale = w.mkRuntime({ activityHooks: false });
+    assert.equal((await senzaCanale.runtime.up('Dev')).ok, true);
+    assert.equal(senzaCanale.ticket().activity, undefined, 'opt-out rispettato nel payload');
+    const stB = await senzaCanale.runtime.cellStatus();
+    assert.equal(stB.cells[0].terminal, undefined,
+      'nessuna etichetta terminale di A sul lancio B vivo');
+    // Riavvio del runtime: l'opt-out registrato vale anche senza memoria
+    // in-processo.
+    const riavviato = w.mkRuntime({ activityHooks: false });
+    const stB2 = await riavviato.runtime.cellStatus();
+    assert.equal(stB2.cells[0].terminal, undefined,
+      'dopo il riavvio nessuna etichetta terminale di A');
+    // Re-enable: il lancio nuovo pubblica la propria selezione e mostra la
+    // propria ragione — mai quella di A.
+    await senzaCanale.runtime.down('Dev');
+    const rientrato = w.mkRuntime();
+    assert.equal((await rientrato.runtime.up('Dev')).ok, true);
+    const idC = rientrato.ticket().activity.generation;
+    let st = await rientrato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'lancio vivo: nessuna ragione propria da mostrare');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idC, reason: 'operator-stop', ora: 4,
+    }), true);
+    st = await rientrato.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'operator-stop', ts: 4 },
+      'al re-enable la ragione del lancio CORRENTE, mai quella di A');
+  } finally { w.cleanup(); }
+});
+
+// ===========================================================================
+// 7c. Secondo giro di correzioni. Tre controprobe indipendenti (riportate
+//     dal re-esame del primo giro e qui tenute come regressioni permanenti):
+//     (1) il canale selector non sostituisce MAI l'identita' di un altro
+//     lancio; (2)+(3) il fallimento PERSISTENTE della scrittura del registro
+//     — con hook attivi e con activityHooks:false — non puo' far risorgere
+//     la diagnosi del lancio vecchio dopo il riavvio del runtime. A questo
+//     serve il registro in DUE locazioni: quando NESSUNA delle due accetta
+//     la scrittura il lancio e' rifiutato, perche' un'autorita' senza alcuna
+//     traccia durevole durerebbe solo fino al riavvio, e dopo il riavvio il
+//     record rimasto su disco — quello del lancio precedente — tornerebbe
+//     corrente. Un log e una Map in memoria non sono una traccia durevole.
+// ===========================================================================
+
+test('independent: selector mode must not substitute a different launch identity', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-id-'));
+  const dir = path.join(root, 's');
+  try {
+    assert.equal(activityFiles.pubblicaSelettoreLancio(dir, 'oldlaunch'), true);
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: 'oldlaunch', reason: 'operator-stop', ora: 1,
+    }), true);
+    const d = activityFiles.leggiDiagnosiTerminaleCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'selector',
+    });
+    assert.equal(d, null, 'a launch-tagged authority must not resolve another launch terminal');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const hooksOff of [false, true]) test(`independent: persistent registry failure with hooks ${hooksOff ? 'off' : 'on'} cannot revive old diagnosis after restart`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const reg = path.join(w.filesRoot, 'launch-registry');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const old = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: old, reason: 'lease-lost', ora: 1,
+    }), true);
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
+    const oldRegistry = fs.readFileSync(path.join(reg, 'work-custom.json'), 'utf8');
+    fs.chmodSync(reg, 0o500);
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.ok(b.logs.some((x) => x.includes('launch registry not written')),
+      'il fallimento della locazione primaria e\' dichiarato');
+    assert.equal(fs.readFileSync(path.join(reg, 'work-custom.json'), 'utf8'), oldRegistry,
+      'il record primario resta byte-identico');
+    assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined,
+      'in-process authority suppresses old A');
+    const restarted = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    const st = await restarted.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'new B may be unknown; old A cannot become current after restart');
+  } finally {
+    if (fs.existsSync(reg)) fs.chmodSync(reg, 0o700);
+    if (fs.existsSync(dir)) fs.chmodSync(dir, 0o700);
+    w.cleanup();
+  }
+});
+
+test('registro a due locazioni: la lettura segue la piu\' recente fra primaria e riserva', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncrestart-2loc-'));
+  const primaria = path.join(root, 'launch-registry');
+  try {
+    const esito1 = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'aaaa000000000001', canale: 'selector', ora: 10, esito: esito1,
+    }), true);
+    assert.equal(esito1.primario, true, 'primaria dichiarata scritta');
+    assert.equal(esito1.riserva, true, 'riserva dichiarata scritta');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'aaaa000000000001');
+    // La primaria smette di accettare scritture: la verita' corrente resta
+    // durevole nella riserva, e la lettura la segue.
+    fs.chmodSync(primaria, 0o500);
+    const esito2 = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'bbbb000000000002', canale: 'off', ora: 20, esito: esito2,
+    }), true, 'almeno una locazione persiste');
+    assert.equal(esito2.primario, false, 'primaria dichiarata NON scritta');
+    assert.equal(esito2.riserva, true, 'riserva dichiarata scritta');
+    const letto = activityFiles.leggiLancioCorrente(root, 's');
+    assert.equal(letto.launchId, 'bbbb000000000002',
+      'vince il record piu\' recente, non quello rimasto nella primaria');
+    assert.equal(letto.canale, 'off');
+    // Primaria di nuovo scrivibile: il lancio successivo la aggiorna e la
+    // lettura segue di nuovo lei (ts maggiore).
+    fs.chmodSync(primaria, 0o700);
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'cccc000000000003', canale: 'selector', ora: 30,
+    }), true);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'cccc000000000003');
+  } finally {
+    if (fs.existsSync(primaria)) fs.chmodSync(primaria, 0o700);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('registro inaccessibile ovunque: il lancio e\' RIFIUTATO, il corrente resta il precedente', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const primaria = path.join(w.filesRoot, 'launch-registry');
+  const riserva = path.join(w.filesRoot, 'launch-registry-spare');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    await a.runtime.down('Dev');
+    // Nessuna delle DUE locazioni del registro accetta piu' scritture (e
+    // nemmeno la directory di sessione): nessuna traccia durevole possibile.
+    fs.chmodSync(primaria, 0o500); fs.chmodSync(riserva, 0o500); fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime();
+    await assert.rejects(b.runtime.up('Dev'), (e) => e && e.fleetCode === 'LAUNCH_REGISTRY_UNWRITABLE',
+      'senza alcuna traccia durevole della nuova autorita\' il lancio non parte');
+    // Il lancio precedente resta il corrente a tutti gli effetti: la sua
+    // diagnosi e' quella VERA (niente di risorto, niente di nascosto), per
+    // il runtime che c'e' e per uno ripartito.
+    const st = await a.runtime.cellStatus();
+    assert.deepEqual(st.cells[0].terminal, { reason: 'restart-budget-exhausted', ts: 1 });
+    const riavviato = w.mkRuntime();
+    const st2 = await riavviato.runtime.cellStatus();
+    assert.deepEqual(st2.cells[0].terminal, { reason: 'restart-budget-exhausted', ts: 1 },
+      'dopo il rifiuto (e un riavvio) l\'autorita\' resta quella di A');
+  } finally {
+    for (const d of [primaria, riserva, dir]) { if (fs.existsSync(d)) fs.chmodSync(d, 0o700); }
+    w.cleanup();
+  }
+});
+
+// ===========================================================================
+// 7d. Terzo giro di correzioni. L'autorita' del registro si ordina per
+//     REVISIONE PERSISTENTE (mai per orologio civile) e il commit
+//     dell'autorita' PRECEDE la pubblicazione del selettore: un lancio
+//     ammesso resta l'autorita' piu' recente dopo il riavvio del runtime
+//     indipendentemente dal clock (uguale o arretrato), dall'ordine delle
+//     locazioni e da quale copia sia rimasta vecchia; un lancio RIFIUTATO
+//     per registro inaccessibile lascia selettore e diagnosi del lancio
+//     precedente coerenti e leggibili, sessione scrivibile o meno.
+// ===========================================================================
+
+// Scrittura che tocca SOLO la primaria (riserva guasta): resta la piu'
+// recente anche a timestamp UGUALE o ARRETRATO rispetto al record rimasto
+// nella riserva — ordina la revisione, non il wall clock.
+for (const clock of [100, 99]) test(`registro: scrittura solo-primaria a timestamp ${clock} resta la piu' recente`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-p-'));
+  const spare = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'oldlaunch', canale: 'selector', ora: 100,
+    }), true);
+    fs.chmodSync(spare, 0o500);
+    const esito = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'off', ora: clock, esito,
+    }), true);
+    assert.deepEqual(esito, { primario: true, riserva: false });
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch',
+      'il lancio ammesso sopravanza l\'autorita\' precedente indipendentemente dal clock');
+  } finally { fs.chmodSync(spare, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Simmetria delle locazioni: la scrittura che tocca SOLO la riserva (primaria
+// guasta) resta la piu' recente nelle stesse condizioni di clock.
+for (const clock of [100, 99]) test(`registro: scrittura solo-riserva a timestamp ${clock} resta la piu' recente`, () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-s-'));
+  const primaria = path.join(root, 'launch-registry');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'oldlaunch', canale: 'selector', ora: 100,
+    }), true);
+    fs.chmodSync(primaria, 0o500);
+    const esito = {};
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', {
+      launchId: 'newlaunch', canale: 'off', ora: clock, esito,
+    }), true);
+    assert.deepEqual(esito, { primario: false, riserva: true });
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch',
+      'nessuna locazione e\' privilegiata: vince la revisione piu\' alta');
+  } finally { fs.chmodSync(primaria, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Due identita' DIVERGENTI alla stessa revisione: l'ordine non e' stabilibile
+// e la lettura e' l'assenza onesta — mai una delle due per preferenza fissa
+// di locazione o di clock. I record sono scritti a mano perche' l'API, che
+// incrementa la revisione sotto il lock del proprietario, non puo' produrli.
+test('registro: revisione pari con lanci divergenti -> assenza onesta, nessuna preferenza fissa', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-order-d-'));
+  const scrivi = (dir, launchId, ts, rev) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 's.json'), `${JSON.stringify({
+      version: 1, event: 'launch-registry', launchId, channel: 'selector', ts, rev,
+    })}\n`);
+  };
+  try {
+    scrivi(path.join(root, 'launch-registry'), 'aaaa000000000001', 10, 7);
+    scrivi(path.join(root, 'launch-registry-spare'), 'bbbb000000000002', 20, 7);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's'), null,
+      'ordine non stabilibile: nessuna delle due copie vince per convenzione');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Runtime: dopo il riavvio del processo l'autorita' resta quella del lancio
+// AMMESSO, mai quella del lancio vecchio, con hook attivi e con attivita'
+// disattivata, a timestamp uguale e arretrato. La riserva del registro resta
+// vecchia: l'ordinamento non puo' dipendere da lei ne' dal clock.
+for (const hooksOff of [false, true]) for (const clock of [100, 99]) test(`registro: riavvio con hook ${hooksOff ? 'disattivati' : 'attivi'} e timestamp ${clock} — l'autorita' resta il lancio ammesso`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const spare = path.join(w.filesRoot, 'launch-registry-spare');
+  const registro = path.join(w.filesRoot, 'launch-registry', 'work-custom.json');
+  try {
+    const a = w.mkRuntime({ now: () => 100 });
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
+    fs.chmodSync(spare, 0o500);
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime({ now: () => clock, ...(hooksOff ? { activityHooks: false } : {}) });
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.ok(b.logs.some((l) => l.includes('launch registry spare not written')),
+      'la locazione rimasta indietro e\' dichiarata');
+    assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined,
+      'in processo l\'autorita\' e\' quella del lancio ammesso');
+    const idB = JSON.parse(fs.readFileSync(registro, 'utf8')).launchId;
+    assert.notEqual(idB, idA);
+    const riavviato = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    const st = await riavviato.runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'dopo il riavvio il lancio vecchio non torna autorita\'');
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB,
+      'l\'autorita\' persistente e\' il lancio ammesso, a clock uguale o arretrato');
+  } finally {
+    for (const d of [spare, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700);
+    w.cleanup();
+  }
+});
+
+// Off dopo il riavvio, registro sano e clock in pari col lancio precedente:
+// l'autorita' e' comunque il lancio nuovo a canale disattivato, e la storia
+// del vecchio non e' la sua diagnosi.
+test('registro: off sopravvive al riavvio con clock in pari — autorita\' nuova, nessuna diagnosi del vecchio', async () => {
+  const w = makeCustomWorldConRiavvio();
+  try {
+    const a = w.mkRuntime({ now: () => 100 });
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    const dir = path.join(w.filesRoot, 'work-custom');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'lease-lost', ora: 1,
+    }), true);
+    await a.runtime.down('Dev');
+    const b = w.mkRuntime({ now: () => 100, activityHooks: false });
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.equal(b.ticket().activity, undefined, 'opt-out rispettato nel payload');
+    const idB = JSON.parse(fs.readFileSync(
+      path.join(w.filesRoot, 'launch-registry', 'work-custom.json'), 'utf8')).launchId;
+    assert.notEqual(idB, idA);
+    const st = await w.mkRuntime().runtime.cellStatus();
+    assert.equal(st.cells[0].terminal, undefined,
+      'il canale off non eredita la diagnosi del lancio vecchio');
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB,
+      'a pari clock vince la revisione del lancio nuovo');
+  } finally { w.cleanup(); }
+});
+
+// Rifiuto per registro inaccessibile con SESSIONE SCRIVIBILE: il rifiuto
+// avviene PRIMA di toccare il selettore — zero ticket al broker, identita' e
+// diagnosi del lancio precedente identiche prima e dopo il rifiuto, e dopo
+// il riavvio del runtime.
+test('registro inaccessibile con sessione scrivibile: rifiuto PRIMA del selettore, il corrente resta leggibile', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const regs = ['launch-registry', 'launch-registry-spare'].map((d) => path.join(w.filesRoot, d));
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, {
+      launchId: idA, reason: 'restart-budget-exhausted', ora: 1,
+    }), true);
+    const prima = (await a.runtime.cellStatus()).cells[0].terminal;
+    assert.deepEqual(prima, { reason: 'restart-budget-exhausted', ts: 1 });
+    await a.runtime.down('Dev');
+    for (const d of regs) fs.chmodSync(d, 0o500);
+    const b = w.mkRuntime();
+    await assert.rejects(b.runtime.up('Dev'),
+      (e) => e && e.fleetCode === 'LAUNCH_REGISTRY_UNWRITABLE');
+    assert.equal(b.ticket(), null, 'nessun ticket al broker: il rifiuto precede lo spawn');
+    assert.equal(activityFiles.leggiSelettoreLancio(dir), idA,
+      'il selettore non e\' stato spostato dal lancio rifiutato');
+    const dopo = (await w.mkRuntime().runtime.cellStatus()).cells[0].terminal;
+    assert.deepEqual(dopo, prima,
+      'diagnosi identica prima e dopo il rifiuto (e dopo il riavvio)');
+  } finally {
+    for (const d of regs) if (fs.existsSync(d)) fs.chmodSync(d, 0o700);
+    w.cleanup();
+  }
+});
+
+// ===========================================================================
+// 7e. Quarto giro di correzioni. La revisione di una copia ILLEGGIBILE — o di
+//     un suo record non valido — non e' osservabile: una scrittura ammessa
+//     sopra il massimo LEGGIBILE potrebbe restare sotto una revisione
+//     nascosta, e la copia tornata leggibile rispristinerebbe un lancio
+//     superato. L'ordine non stabilibile si rifiuta PRIMA di ogni effetto
+//     (stesso enum chiuso del registro inaccessibile) e la lettura dichiara
+//     l'assenza onesta finche' l'autorita' non e' stabilibile. Le copie
+//     provate sono ILLEGGIBILI (0000, con verifica che la lettura fallisca),
+//     non solo non scrivibili: una directory 0500 resta leggibile e non basta.
+//     Entrambe le locazioni, alternativamente, con hook attivi e disattivati.
+// ===========================================================================
+
+test('registry: an unreadable higher revision must not lose authority to an admitted lower revision', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-hidden-'));
+  const p = path.join(root, 'launch-registry');
+  const q = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'seedlaunch', canale: 'selector', ora: 1 }), true);
+    fs.chmodSync(q, 0o500);
+    for (let i = 0; i < 4; i += 1) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'oldlaunch', canale: 'selector', ora: 1 }), true);
+    }
+    const old = JSON.parse(fs.readFileSync(path.join(p, 's.json'), 'utf8'));
+    assert.ok(old.rev >= 5, 'the primary alone advanced above the frozen spare');
+    fs.chmodSync(q, 0o700);
+    fs.chmodSync(p, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(p, 's.json'), 'utf8'), (e) => e.code === 'EACCES');
+    const esito = {};
+    const admitted = activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 1, esito });
+    fs.chmodSync(p, 0o700);
+    const current = activityFiles.leggiLancioCorrente(root, 's');
+    console.log('HIDDEN_REV', JSON.stringify({ oldRevision: old.rev, admitted, esito, current }));
+    assert.ok(!admitted || current?.launchId === 'newlaunch',
+      'must refuse uncertain order or keep the newly admitted authority after the unreadable copy returns');
+  } finally { for (const d of [p, q]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+for (const hooksOff of [false, true]) test(`registry: unreadable newer primary then runtime restart hooks ${hooksOff ? 'off' : 'on'}`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const p = path.join(w.filesRoot, 'launch-registry');
+  const q = path.join(w.filesRoot, 'launch-registry-spare');
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    fs.chmodSync(q, 0o500);
+    for (let i = 0; i < 2; i += 1) {
+      await a.runtime.down('Dev');
+      assert.equal((await a.runtime.up('Dev')).ok, true);
+    }
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
+    const old = JSON.parse(fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'));
+    assert.ok(old.rev >= 6, 'the primary alone advanced above the frozen spare');
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
+    fs.chmodSync(q, 0o700);
+    fs.chmodSync(p, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(p, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    let admitted = false;
+    let refusal = null;
+    try { admitted = (await b.runtime.up('Dev')).ok === true; } catch (e) { refusal = e.fleetCode; assert.equal(refusal, 'LAUNCH_REGISTRY_UNWRITABLE'); }
+    if (admitted) assert.equal((await b.runtime.cellStatus()).cells[0].terminal, undefined, 'in-memory B must suppress A');
+    fs.chmodSync(p, 0o700);
+    const st = await w.mkRuntime(hooksOff ? { activityHooks: false } : {}).runtime.cellStatus();
+    console.log('HIDDEN_REV_RESTART', JSON.stringify({ hooksOff, oldRevision: old.rev, admitted, refusal, terminal: st.cells[0].terminal }));
+    if (admitted) assert.equal(st.cells[0].terminal, undefined, 'admitted B must not restore old A after the primary returns');
+  } finally { for (const d of [p, q, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
+});
+
+test('registry: old records without rev migrate above zero', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-legacy-'));
+  try {
+    for (const d of ['launch-registry', 'launch-registry-spare']) {
+      const p = path.join(root, d);
+      fs.mkdirSync(p, { recursive: true });
+      fs.writeFileSync(path.join(p, 's.json'), JSON.stringify({ version: 1, event: 'launch-registry', launchId: 'oldlaunch', channel: 'selector', ts: 100 }));
+    }
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 99 }), true);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'newlaunch');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'launch-registry', 's.json'), 'utf8')).rev, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('registry: failed second commit retains current identity after runtime restart', async () => {
+  const w = makeCustomWorldConRiavvio();
+  const dir = path.join(w.filesRoot, 'work-custom');
+  const regs = ['launch-registry', 'launch-registry-spare'].map((d) => path.join(w.filesRoot, d));
+  const rename = fs.renameSync;
+  let armed = false;
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    await a.runtime.down('Dev');
+    fs.renameSync = function (from, to) {
+      const r = rename.call(this, from, to);
+      if (armed && to === path.join(dir, activityFiles.NOME_SELETTORE_LANCIO)) {
+        armed = false;
+        for (const d of regs) fs.chmodSync(d, 0o500);
+      }
+      return r;
+    };
+    armed = true;
+    const b = w.mkRuntime();
+    assert.equal((await b.runtime.up('Dev')).ok, true);
+    assert.equal(armed, false, 'fault must fire after selector publication');
+    assert.ok(b.logs.some((l) => l.includes('launch registry channel not updated')));
+    const idB = b.ticket().activity.generation;
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').launchId, idB);
+    assert.equal(activityFiles.leggiLancioCorrente(w.filesRoot, 'work-custom').canale, 'none');
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idB, reason: 'operator-stop', ora: 2 }), true);
+    assert.deepEqual((await b.runtime.cellStatus()).cells[0].terminal, { reason: 'operator-stop', ts: 2 });
+    assert.deepEqual((await w.mkRuntime().runtime.cellStatus()).cells[0].terminal, { reason: 'operator-stop', ts: 2 });
+  } finally { fs.renameSync = rename; for (const d of regs) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
+});
+
+// La copia ILLEGGIBILE con la revisione maggiore stavolta e' la RISERVA: il
+// rifiuto vale per entrambe le locazioni, la copia leggibile resta intatta e
+// l'autorita' resta assente finche' la copia nascosta non torna leggibile.
+test('registry: an unreadable higher revision on the spare also refuses the new launch', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a4-spare-'));
+  const p = path.join(root, 'launch-registry');
+  const q = path.join(root, 'launch-registry-spare');
+  try {
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'seedlaunch', canale: 'selector', ora: 1 }), true);
+    fs.chmodSync(p, 0o500);
+    for (let i = 0; i < 4; i += 1) {
+      assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'oldlaunch', canale: 'selector', ora: 1 }), true);
+    }
+    const old = JSON.parse(fs.readFileSync(path.join(q, 's.json'), 'utf8'));
+    assert.ok(old.rev >= 5, 'the spare alone advanced above the frozen primary');
+    fs.chmodSync(p, 0o700);
+    fs.chmodSync(q, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(q, 's.json'), 'utf8'), (e) => e.code === 'EACCES');
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's'), null,
+      'authority is not establishable while a copy is unreadable: honest absence, no stale record as current');
+    const esito = {};
+    const prima = fs.readFileSync(path.join(p, 's.json'), 'utf8');
+    assert.equal(activityFiles.registraLancioCorrente(root, 's', { launchId: 'newlaunch', canale: 'off', ora: 1, esito }), false,
+      'refused before any effect: the hidden revision could outrank the new one');
+    assert.deepEqual(esito, { primario: false, riserva: false }, 'no location written on refusal');
+    assert.equal(fs.readFileSync(path.join(p, 's.json'), 'utf8'), prima,
+      'no partial write: the readable copy is left untouched');
+    fs.chmodSync(q, 0o700);
+    assert.equal(activityFiles.leggiLancioCorrente(root, 's').launchId, 'oldlaunch',
+      'after the spare returns readable, the refused launch never took authority');
+  } finally { for (const d of [p, q]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// Variante runtime della copia nascosta in RISERVA, hook attivi e off: il
+// rifiuto precede lo spawn (zero ticket) e dopo il ripristino l'autorita' e'
+// ancora quella del lancio mai superato, con la SUA diagnosi coerente.
+for (const hooksOff of [false, true]) test(`registry: unreadable newer spare then runtime restart hooks ${hooksOff ? 'off' : 'on'}`, async () => {
+  const w = makeCustomWorldConRiavvio();
+  const p = path.join(w.filesRoot, 'launch-registry');
+  const q = path.join(w.filesRoot, 'launch-registry-spare');
+  const dir = path.join(w.filesRoot, 'work-custom');
+  try {
+    const a = w.mkRuntime();
+    assert.equal((await a.runtime.up('Dev')).ok, true);
+    fs.chmodSync(p, 0o500);
+    for (let i = 0; i < 2; i += 1) {
+      await a.runtime.down('Dev');
+      assert.equal((await a.runtime.up('Dev')).ok, true);
+    }
+    const idA = a.ticket().activity.generation;
+    assert.equal(activityFiles.scriviRecordTerminale(dir, { launchId: idA, reason: 'lease-lost', ora: 1 }), true);
+    const old = JSON.parse(fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'));
+    assert.ok(old.rev >= 6, 'the spare alone advanced above the frozen primary');
+    assert.equal((await a.runtime.cellStatus()).cells[0].terminal.reason, 'lease-lost');
+    await a.runtime.down('Dev');
+    fs.chmodSync(p, 0o700);
+    fs.chmodSync(q, 0o000);
+    assert.throws(() => fs.readFileSync(path.join(q, 'work-custom.json'), 'utf8'), (e) => e.code === 'EACCES');
+    if (!hooksOff) fs.chmodSync(dir, 0o500);
+    const b = w.mkRuntime(hooksOff ? { activityHooks: false } : {});
+    let admitted = false;
+    let refusal = null;
+    try { admitted = (await b.runtime.up('Dev')).ok === true; } catch (e) { refusal = e.fleetCode; assert.equal(refusal, 'LAUNCH_REGISTRY_UNWRITABLE'); }
+    assert.equal(admitted, false, 'uncertain order: the launch is refused before any effect');
+    assert.equal(b.ticket(), null, 'no broker ticket: the refusal precedes the spawn');
+    if (!hooksOff) {
+      assert.equal(activityFiles.leggiSelettoreLancio(dir), idA,
+        'the selector was not moved by the refused launch');
+    }
+    fs.chmodSync(q, 0o700);
+    const st = await w.mkRuntime(hooksOff ? { activityHooks: false } : {}).runtime.cellStatus();
+    console.log('HIDDEN_SPARE_RESTART', JSON.stringify({ hooksOff, oldRevision: old.rev, admitted, refusal, terminal: st.cells[0].terminal }));
+    assert.equal(st.cells[0].terminal && st.cells[0].terminal.reason, 'lease-lost',
+      'the refused launch never took authority: A stays current with its own diagnosis');
+  } finally { for (const d of [p, q, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
 });

@@ -278,6 +278,37 @@ test('builtin: /restore-engines rejects reserved MCP_DEVICE in envKeys', async (
   assert.equal(r.status, 400);
 });
 
+test('builtin: /restore-engines rejects reserved NEXUSCREW_VL_NEW in envKeys and accepts newSessionEnv', async (t) => {
+  const { base, token } = await bootBuiltin(t);
+  const rDenied = await fetch(`${base}/api/fleet/restore-engines`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({
+      engines: [{ id: 'new-denied', command: '/bin/sh', promptMode: 'send-keys', envKeys: ['NEXUSCREW_VL_NEW'] }],
+      overwrite: false,
+    }),
+  });
+  assert.equal(rDenied.status, 400);
+
+  const rOk = await fetch(`${base}/api/fleet/restore-engines`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({
+      engines: [{ id: 'custom-vl-restored', command: '/bin/sh', promptMode: 'send-keys', envKeys: [], newSessionEnv: true }],
+      overwrite: false,
+    }),
+  });
+  assert.equal(rOk.status, 200);
+
+  // edit-engine rejects setting NEXUSCREW_VL_NEW
+  const rEditDenied = await fetch(`${base}/api/fleet/edit-engine`, {
+    method: 'POST', headers: H(token),
+    body: JSON.stringify({
+      id: 'custom-vl-restored',
+      envChanges: { set: { NEXUSCREW_VL_NEW: '1' } },
+    }),
+  });
+  assert.equal(rEditDenied.status, 400);
+});
+
 test('builtin: define/edit/remove cell+engine funzionano (copertura nuove route)', async (t) => {
   const { base, token, dir } = await bootBuiltin(t);
   const post = (route, body) => fetch(`${base}/api/fleet/${route}`, { method: 'POST', headers: H(token), body: JSON.stringify(body) });

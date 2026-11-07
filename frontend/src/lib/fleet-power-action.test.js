@@ -34,6 +34,23 @@ function deadNodeError() {
   return e;
 }
 
+// Il 504 vero del proxy federato: il peer non risponde entro il tetto GET.
+// Arriva senza `cause`, con `reason`, ed e' la stessa incertezza del 502
+// legacy — ma il codice nei dati resta distinto, per la diagnostica.
+function peerTimeoutError() {
+  const e = new Error('peer non risponde entro il timeout');
+  e.status = 504;
+  e.data = { error: 'peer non risponde entro il timeout', reason: 'federation-peer-timeout' };
+  return e;
+}
+
+function gatewayErrorWithoutReason() {
+  const e = new Error('gateway timeout');
+  e.status = 504;
+  e.data = { error: 'gateway timeout' };
+  return e;
+}
+
 describe('fleetActionErrorNotice', () => {
   it('timeout: notice di avvio/arresto in corso a seconda dell\'azione', () => {
     expect(fleetActionErrorNotice(timeoutError(), 'up')).toMatchObject({
@@ -65,6 +82,28 @@ describe('fleetActionErrorNotice', () => {
 
   it('502 senza cause (nodo davvero irraggiungibile) resta un errore vero', () => {
     expect(fleetActionErrorNotice(deadNodeError(), 'up')).toBe(null);
+  });
+
+  it('504 federation-peer-timeout: la stessa notice di incertezza, con il codice distinto', () => {
+    expect(fleetActionErrorNotice(peerTimeoutError(), 'up')).toMatchObject({
+      code: 'FLEET_PEER_TIMEOUT', text: 'fleet-up-slow',
+    });
+    expect(fleetActionErrorNotice(peerTimeoutError(), 'down')).toMatchObject({
+      code: 'FLEET_PEER_TIMEOUT', text: 'fleet-down-slow',
+    });
+    // il testo e' lo stesso delle altre attese: l'operatore non deve imparare
+    // tre parole per la stessa cosa
+    expect(fleetActionErrorNotice(peerTimeoutError(), 'up').text)
+      .toBe(fleetActionErrorNotice(timeoutError(), 'up').text);
+    expect(fleetActionErrorNotice(peerTimeoutError(), 'up').text)
+      .toBe(fleetActionErrorNotice(slowRouteError(), 'up').text);
+  });
+
+  it('un 504 senza reason, o con una reason altrui, resta un errore vero', () => {
+    expect(fleetActionErrorNotice(gatewayErrorWithoutReason(), 'up')).toBe(null);
+    const altra = new Error('ko');
+    altra.status = 504; altra.data = { reason: 'upstream-timeout' };
+    expect(fleetActionErrorNotice(altra, 'up')).toBe(null);
   });
 
   it('409 con altro codice, 5xx e input nulli restano errori veri', () => {
@@ -150,6 +189,19 @@ describe('runFleetPowerAction', () => {
     const out = await runFleetPowerAction({ token: 't', powerCell, payload: { action: 'down' }, onNotice, fleetApi: fleetApi(null, down) });
     expect(out).toEqual({ benign: 'FLEET_ACTION_TIMEOUT' });
     expect(onNotice).toHaveBeenCalledWith('fleet-down-slow');
+  });
+
+  it('504 del peer: benigno, notice di incertezza, e nessun secondo POST', async () => {
+    const fleetUp = vi.fn().mockRejectedValue(peerTimeoutError());
+    const onNotice = vi.fn();
+    const out = await runFleetPowerAction({
+      token: 't', powerCell: { cell: 'c', route: ['peer'] }, payload: { action: 'up' },
+      onNotice, fleetApi: { fleetUp, fleetDown: vi.fn() },
+    });
+    expect(out).toEqual({ benign: 'FLEET_PEER_TIMEOUT' });
+    expect(onNotice).toHaveBeenCalledWith('fleet-up-slow');
+    // l'azione non si ripete: chi legge vede lo stato corrente, non un replay
+    expect(fleetUp).toHaveBeenCalledTimes(1);
   });
 
   it('502 upstream-timeout su up: benigno, notice di avvio in corso', async () => {

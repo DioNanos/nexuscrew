@@ -5,9 +5,24 @@
 // timeout resta bloccante (il gate MCP non bypassa mai il composer).
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+// Fixture del canale del record del prompt (consegna supervisionata: il
+// canale dedicato e' obbligatorio). Directory effimera per fixture.
+const FX_DIRS = [];
+process.on('exit', () => {
+  for (const d of FX_DIRS) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} }
+});
 
 const { deliverBootstrapPrompt } = require('../lib/fleet/prompt-delivery.js');
 const { startGenerationPrompt, validRestartPrompt } = require('../lib/fleet/cell-exec.js');
+// 0.9.80 s2a: la verifica fresca pre-paste legge il composer con attributi e
+// richiede il contratto qualificato del SIMULATORE (provenienza dichiarata in
+// tests/helpers/composer-fixtures.js; NON qualifica alcun cliente reale).
+const { CLAUDE_ATTRS_EMPTY, SIM_CLAUDE_CONTRACT } = require('./helpers/composer-fixtures.js');
+const ATTRS_EMPTY = async () => CLAUDE_ATTRS_EMPTY;
 
 function seams({ captures, pasteOk = true, enterOk = true } = {}) {
   const order = [];
@@ -37,8 +52,9 @@ test('MCP ready subito: consegna submitted con mcp ready (contratto P3 del Gate 
   const s = seams({ captures: ['❯'] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'ready', ready: ['a', 'b'], failed: [], pending: [] }),
   });
   assert.strictEqual(result.delivered, true);
@@ -51,8 +67,9 @@ test('budget esaurito con pending: consegna DEGRADATO VISIBILE con elenco bounde
   const s = seams({ captures: ['❯'] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
+    captureAttrsImpl: ATTRS_EMPTY, composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'pending', ready: ['a'], failed: [], pending: ['lento', 'ko-server'] }),
   });
   assert.strictEqual(result.delivered, true);
@@ -66,7 +83,7 @@ test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', as
   let pasteChiamate = 0;
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 100, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     isCancelled: () => true,
     captureImpl: s.captureImpl,
     tmuxExecImpl: async (bin, args) => {
@@ -83,18 +100,24 @@ test('cancel durante attesa MCP: esito cancelled, ZERO paste (at-most-once)', as
   assert.strictEqual(pasteChiamate, 0, 'mai paste dopo cancel');
 });
 
-test('dialogo aperto al timeout: skipped-not-ready, mai consegna (il gate MCP non bypassa il composer)', async () => {
+test('dialogo aperto al timeout: skipped-unknown (C7) con kind dettaglio, mai consegna (il gate MCP non bypassa il composer)', async () => {
+  const { virtualClock } = require('./helpers/delivery-clock.js');
+  const clk = virtualClock();
   const s = seams({ captures: ['  Do you want to use this API key?'] });
   let mcpChiamata = false;
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 40, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     mcpWait: async () => { mcpChiamata = true; return { state: 'ready', ready: ['x'], failed: [], pending: [] }; },
   });
   assert.strictEqual(result.delivered, false);
-  assert.strictEqual(result.state, 'skipped-not-ready');
+  // 0.9.80 s2a (C7): a deadline lo stato resta skipped-unknown; il kind del
+  // dialogo resta dettaglio bounded, zero paste.
+  assert.strictEqual(result.state, 'skipped-unknown');
   assert.strictEqual(result.notReady, 'not-ready-consent');
+  assert.strictEqual(result.deadlineExceeded, true);
   assert.strictEqual(mcpChiamata, false, 'composer blocca: niente consegna, niente gate MCP a valle');
   assert.strictEqual(result.mcp, undefined);
 });
@@ -103,7 +126,7 @@ test('composer never-ready (unknown a timeout): skipped-unknown anche con mcpWai
   const s = seams({ captures: [''] });
   const result = await deliverBootstrapPrompt({
     tmuxBin: 'tmux', session: 'sess', prompt: 'bootstrap', client: 'claude',
-    readyWaitMs: 40, pollMs: 10, settleMs: 0,
+    readyWaitMs: 1000, pollMs: 10, settleMs: 0,
     captureImpl: s.captureImpl, tmuxExecImpl: s.tmuxExecImpl,
     mcpWait: async () => ({ state: 'ready', ready: ['x'], failed: [], pending: [] }),
   });
@@ -124,9 +147,12 @@ test('parseMcpListOption: formato bounded, nomi validati, duplicati e spazzatura
 function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   const setOptions = [];
   const waitCalls = [];
+  const fxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-prompt-fx-'));
+  FX_DIRS.push(fxDir);
   return {
     setOptions,
     waitCalls,
+    promptOutcome: { dir: fxDir, launchId: '0f1e2d3c4b5a6978' },
     // Il timer di consegna del prodotto e' unref'd (non deve tenere vivo il
     // supervisor): nel test lo scatto avviene in microtask, cosi' la promise
     // del test si risolve senza dipendere dal timer sullo scheduler reale
@@ -151,9 +177,11 @@ function cellExecSeams({ deliverResult, waitResult, optsCatturati }) {
   };
 }
 
-test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget approvato)', async () => {
+test('cell-exec: claude.* riceve mcpWait con notBeforeMs civile e deadline monotona da due seam distinti', async () => {
   const optsCatturati = [];
-  const t0 = 1_700_000_000_000;
+  const t0 = 1_700_000_000_000;          // civile (notBeforeMs: nomi log MCP)
+  const monoT0 = 987_654;                // monotona (budget/deadline)
+  const monoNow = () => monoT0;
   const s = cellExecSeams({
     deliverResult: { delivered: true, state: 'submitted', notReady: '', attempts: 1, mcp: { state: 'ready', ready: ['a'], failed: [], pending: [] } },
     waitResult: { state: 'ready', ready: ['a'], failed: [], pending: [] },
@@ -166,7 +194,7 @@ test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget a
       mcpReadiness: { cwd: '/tmp/cella', expectedServers: ['nexuscrew', 'memory'], budgetMs: 20000 },
     },
     0, { exited: false },
-    { ...s, nowImpl: () => t0, sleepImpl: async () => {} },
+    { ...s, wallNowImpl: () => t0, monoNowImpl: monoNow, sleepImpl: async () => {} },
   );
   await ctl.settled;
   assert.strictEqual(optsCatturati.length, 1);
@@ -175,8 +203,9 @@ test('cell-exec: claude.* riceve mcpWait con deadline composta (spawn + budget a
   assert.ok(waitArg, 'il gate deve passare dall adattatore waitMcpReadiness');
   assert.deepStrictEqual(waitArg.params.expectedServers, ['nexuscrew', 'memory']);
   assert.strictEqual(waitArg.params.cwd, '/tmp/cella');
-  assert.strictEqual(waitArg.params.notBeforeMs, t0, 'notBefore = avvio della GENERAZIONE corrente');
-  assert.strictEqual(waitArg.deadlineMs, t0 + 20000, 'deadline composta = spawn + budget');
+  assert.strictEqual(waitArg.params.notBeforeMs, t0, 'notBefore CIVILE = avvio della generazione (confrontato coi log su disco)');
+  assert.strictEqual(waitArg.deadlineMs, monoT0 + 20000, 'deadline MONOTONA composta = spawn monotono + budget');
+  assert.strictEqual(waitArg.nowImpl, monoNow, 'LO STESSO monotono passa esplicitamente al consumer');
 });
 
 test('cell-exec: avvio degradato visibile -> @nc_delivery con :mcpdegraded e @nc_mcp_list bounded', async () => {
@@ -239,9 +268,6 @@ test('validRestartPrompt: accetta client claude con mcpReadiness; rifiuta attesa
 });
 
 // --- runtime: gate anche per celle claude legacy (config nota meno negati) ---
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { buildMcpReadinessPayload, cellMcpExpectedServers } = require('../lib/fleet/runtime.js');
 
 function legacyHome(t) {

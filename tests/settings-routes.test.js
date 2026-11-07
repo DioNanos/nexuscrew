@@ -855,3 +855,236 @@ test('ai-desktop NEGATIVO: la chiave in POST /config accetta solo boolean', asyn
   });
   assert.equal(koR.status, 400);
 });
+
+
+// --- attesa di prontezza: salvato e applicato sono due cose -------------------
+
+function fleetFinto({ valore = null, applica = null } = {}) {
+  const chiamate = [];
+  return {
+    chiamate,
+    getRuntimeOption: (k) => (k === 'bootstrapReadyWaitMs' ? valore : null),
+    setRuntimeOption: (k, v) => {
+      if (k !== 'bootstrapReadyWaitMs') return { applied: null, reason: 'unknown-key' };
+      chiamate.push(v);
+      return applica ? applica(v) : { applied: v };
+    },
+  };
+}
+
+const postAttesa = async (base, token, body) => fetch(`${base}/api/settings/config`, {
+  method: 'POST', headers: H(token), body: JSON.stringify(body),
+});
+
+test('attesa: la GET distingue effettivo e salvato e dichiara il restart', async (t) => {
+  const fleet = fleetFinto({ valore: 15000 });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 60000 }));
+  const st = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(st.bootstrapReadyWaitMs, 15000, 'effettivo: quello del runtime');
+  assert.equal(st.savedBootstrapReadyWaitMs, 60000, 'salvato: quello del file');
+  assert.equal(st.applyState, 'restart-required');
+  assert.equal(st.restartRequired, true);
+});
+
+test('attesa: un valore salvato invalido non diventa «salvato 15000»', async (t) => {
+  const fleet = fleetFinto({ valore: 15000 });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 'abc' }));
+  const st = await (await fetch(`${base}/api/settings`, { headers: H(token) })).json();
+  assert.equal(st.savedBootstrapReadyWaitMs, null, 'invalido: nessun valore inventato');
+  assert.equal(st.bootstrapReadyWaitMs, 15000);
+  assert.equal(st.applyState, 'applied', 'niente da applicare: il runtime e\' al default');
+});
+
+test('attesa: il POST salva, applica e dice entrambe le cose', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.equal(body.config.bootstrapReadyWaitMs, 60000, 'config = valore persistito');
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(body.applyState, 'applied');
+  assert.equal(body.restartRequired, false);
+  assert.deepEqual(fleet.chiamate, [60000]);
+  const suDisco = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(suDisco.bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: valori invalidi -> 400 e file NON toccato', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, JSON.stringify({ bootstrapReadyWaitMs: 15000 }));
+  const prima = fs.readFileSync(configPath, 'utf8');
+  for (const v of [999, 120001, 0, '15000', 15.5, null, true, -1]) {
+    const r = await postAttesa(base, token, { bootstrapReadyWaitMs: v });
+    assert.equal(r.status, 400, `valore ${JSON.stringify(v)}`);
+    const body = await r.json();
+    assert.equal(body.code, 'bootstrap-wait-invalid');
+  }
+  assert.equal(fs.readFileSync(configPath, 'utf8'), prima, 'il file resta com\'era');
+  assert.deepEqual(fleet.chiamate, [], 'nessuna applicazione');
+});
+
+test('attesa: file illeggibile -> 409, nessuna scrittura', async (t) => {
+  const fleet = fleetFinto();
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  fs.writeFileSync(configPath, '{ non json');
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 409);
+  assert.equal(fs.readFileSync(configPath, 'utf8'), '{ non json', 'niente sostituzione vuota');
+});
+
+test('attesa: setter ASSENTE -> salvato ma restart-required, applied null', async (t) => {
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve({ available: false }) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(body.restartRequired, true);
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: setter che FALLISCE -> file salvato, applied null, restart-required', async (t) => {
+  const fleet = fleetFinto({ applica: () => ({ applied: null, reason: 'errore' }) });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
+test('attesa: due POST concorrenti -> persist e apply nell\'ordine, senza divergenza', async (t) => {
+  const visti = [];
+  let sblocca;
+  const sospeso = new Promise((r) => { sblocca = r; });
+  const fleet = fleetFinto({
+    applica: async (v) => {
+      visti.push(v);
+      if (v === 60000) await sospeso;   // il primo resta appeso
+      return { applied: v };
+    },
+  });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const p1 = postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  const p2 = postAttesa(base, token, { bootstrapReadyWaitMs: 120000 });
+  await new Promise((r) => setTimeout(r, 30));
+  sblocca();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  const b1 = await r1.json();
+  const b2 = await r2.json();
+  assert.deepEqual(visti, [60000, 120000], 'applicazioni nell\'ordine dei POST');
+  assert.deepEqual(b1.applied, { bootstrapReadyWaitMs: 60000 });
+  assert.deepEqual(b2.applied, { bootstrapReadyWaitMs: 120000 });
+  const suDisco = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(suDisco.bootstrapReadyWaitMs, 120000, 'disco e ultimo applicato coincidono');
+});
+
+test('attesa: setter ASINCRONO che rigetta -> 200, salvato, applied null, restart-required', async (t) => {
+  const fleet = fleetFinto({ applica: async () => { throw new Error('synthetic-setter-failure'); } });
+  const { base, token, configPath } = await boot(t, { fleetP: Promise.resolve(fleet) });
+  const r = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(r.status, 200, 'un setter che rigetta non e\' un errore del salvataggio');
+  const body = await r.json();
+  assert.equal(body.saved, true);
+  assert.deepEqual(body.applied, { bootstrapReadyWaitMs: null });
+  assert.equal(body.applyState, 'restart-required');
+  assert.equal(JSON.parse(fs.readFileSync(configPath, 'utf8')).bootstrapReadyWaitMs, 60000);
+});
+
+// --- collegamento vero: server -> provider -> builtin -> runtime --------------
+
+const { createDiagnostics } = require('../lib/diagnostics/store.js');
+
+test('attesa: la diagnostica arriva nello store con verbose SPENTO, dal percorso vero', async (t) => {
+  const diagnostics = createDiagnostics();
+  // Il fleet e' fail-closed senza definizioni valide: si fornisce un fleet.json
+  // minimo, cosi' il percorso server -> provider -> builtin -> runtime arriva
+  // davvero alla creazione del runtime (dove vive la diagnostica di boot).
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncset-diag-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const defsPath = path.join(configDir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [{ id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'CellaDiag', tmuxSession: 'nc-diag-cell', cwd: dir, engine: 'eg', boot: false }],
+  }));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} });
+  const { base, token } = await boot(t, {
+    home: dir,
+    configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    fleetDefsPath: defsPath,
+    fleetEnabled: true,
+    diagnostics,
+    bootstrapReadyWaitMs: 'abc',
+    tmuxBin: '/bin/true',
+    launchBroker: {
+      issue: async () => { throw new Error('no-broker'); },
+      revoke: async () => {},
+      close: async () => {},
+    },
+  });
+  // La GET chiede il valore effettivo al runtime: forza la creazione del fleet
+  // (server -> provider -> builtin -> runtime) e quindi la diagnostica di boot.
+  await fetch(`${base}/api/settings`, { headers: H(token) });
+  assert.equal(diagnostics.status().verbose, false, 'verbose spento: la voce c\'e\' comunque');
+  const voci = diagnostics.logs().records.filter((r) => r.code === 'BOOTSTRAP_WAIT_INVALID');
+  assert.equal(voci.length, 1, 'una sola voce per configurazione effettiva');
+  assert.equal(voci[0].level, 'warn');
+});
+
+test('attesa: un POST cambia il valore usato dalla UP successiva, attraverso le copie di cfg', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncset-s4-'));
+  const configDir = path.join(dir, '.nexuscrew');
+  fs.mkdirSync(configDir, { recursive: true });
+  const defsPath = path.join(configDir, 'fleet.json');
+  fs.writeFileSync(defsPath, JSON.stringify({
+    schemaVersion: 1,
+    engines: [{ id: 'eg', label: 'G', command: process.execPath, args: [], promptMode: 'send-keys' }],
+    cells: [{ id: 'CellaS4', tmuxSession: 'nc-s4-cell', cwd: dir, engine: 'eg', boot: false, prompt: 'bootstrap' }],
+  }));
+  t.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} });
+
+  // Il broker cattura il payload e ferma l'up: cio' che conta e' il valore che
+  // il runtime ha letto per QUESTA up.
+  let payload = null;
+  const broker = {
+    issue: async (req) => { payload = req; throw new Error('stop-after-payload'); },
+    revoke: async () => {},
+    close: async () => {},
+  };
+  const { base, token } = await boot(t, {
+    home: dir,
+    configDir,
+    configPath: path.join(configDir, 'config.json'),
+    nodesPath: path.join(configDir, 'nodes.json'),
+    fleetDefsPath: defsPath,
+    fleetEnabled: true,
+    tmuxBin: '/bin/false',
+    launchBroker: broker,
+  });
+  const up = () => fetch(`${base}/api/fleet/up`, {
+    method: 'POST', headers: H(token), body: JSON.stringify({ cell: 'CellaS4' }),
+  });
+
+  await up().catch(() => {});
+  assert.ok(payload, 'il payload del primo lancio deve esistere');
+  assert.equal(payload.restartPrompt.readyWaitMs, 15000, 'valore di partenza: default');
+
+  const salvato = await postAttesa(base, token, { bootstrapReadyWaitMs: 60000 });
+  assert.equal(salvato.status, 200);
+  const corpo = await salvato.json();
+  assert.deepEqual(corpo.applied, { bootstrapReadyWaitMs: 60000 }, 'applicato dal runtime vero');
+
+  await up().catch(() => {});
+  assert.equal(payload.restartPrompt.readyWaitMs, 60000, 'la up successiva usa il valore applicato');
+});

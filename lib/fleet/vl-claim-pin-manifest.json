@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "platform": "linux-x64",
+  "flock": {
+    "source": "/usr/bin/flock",
+    "version": "2.39.3",
+    "sha256": "e619344dc3eec4023498465679262f9ca27d1e8cef9cfc4c1ae72b428577b806"
+  },
+  "node": {
+    "sha256": "7fde7b8afa198da66257f42ee2001d874c7355631e6d1579a5fb5ef1f246df4c"
+  },
+  "helper": {
+    "sha256": "be03b903aa0a679505d5ade5f1cdeac313743027142f6245aacc784accde5811"
+  }
+}

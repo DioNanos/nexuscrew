@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../../lib/i18n.js';
-import { catalogEntry } from '../../lib/fleet-forms.js';
+import { catalogEntry, modelDatalistOptions, vlFormProfiles, vlFormSavedValues, vlProfileNotes } from '../../lib/fleet-forms.js';
 // Anticipazione lato UI: stesso validatore del round-trip di backup (gia'
 // sorvegliato contro il validatore autorevole del backend), v. CellEditor.jsx.
 import { validBackupPanelUrl } from '../../lib/fleet-backup.js';
@@ -259,9 +259,16 @@ function ModelDiscoverySection({ engineId, fetchModels, onPick, activeModel, onS
 // Editor di un engine (managed o custom). State-less rispetto alle API: riceve
 // lo stato del form e lo risolleva al parent (FleetTab), che è l'unico a
 // eseguire le mutazioni. Estratto invariato da FleetTab.jsx.
-export default function EngineEditor({ state, setState, busy, onSave, catalog, fetchModels, onSetModelValue }) {
+export default function EngineEditor({ state, setState, busy, onSave, catalog, fetchModels, onSetModelValue, vlDefault, vlLoading }) {
   const f = state.form; const set = (patch) => setState({ ...state, form: { ...f, ...patch } });
   const rows = f.envRows || [];
+  // The profile list of a vl.native form: the saved engine's own, or the node's default for a new one (see vlFormProfiles).
+  const vlList = vlFormProfiles(f, vlDefault, vlLoading);
+  // `f.modelOptions` is the model inventory the node read for the SAVED engine.
+  // Once the form declares another binary, catalog or fixed profile that
+  // inventory is another binary's or catalog's list, and it never reaches the
+  // datalist in any state: not even an 'old' node default may offer it.
+  const savedModels = f.client !== 'vl' || f.provider !== 'native' || vlFormSavedValues(f) ? (f.modelOptions || []) : [];
   const clients = [...new Map(catalog.map((p) => [p.client, p.clientLabel || p.client])).entries()];
   const profiles = catalog.filter((p) => p.client === f.client);
   const selectedProfile = catalogEntry(catalog, f);
@@ -291,7 +298,8 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
       </div>
       {f.client !== 'shell' && <>
         <input value={f.managedModel} list="nc-managed-models" placeholder={t(selectedProfile?.requiresModel ? 'fleet-model-required' : 'fleet-model-default')} onChange={(e) => set({ managedModel: e.target.value })} />
-        <datalist id="nc-managed-models">{[...(selectedProfile?.models || []), ...(f.modelOptions || [])].filter((value, index, all) => value && all.indexOf(value) === index).map((model) => <option key={model} value={model} />)}</datalist>
+        <datalist id="nc-managed-models">{modelDatalistOptions([...(selectedProfile?.models || []), ...savedModels], vlList, t).map((o) => <option key={o.value} value={o.value} label={o.label} />)}</datalist>
+        {vlList && vlProfileNotes(vlList, f.managedModel, t).map((n) => <small key={n.id} className="nc-note" data-vl-note={n.id}>{n.text}</small>)}
         {fetchModels && (state.mode === 'edit' ? f.id : selectedProfile?.id) && <ModelDiscoverySection
           engineId={state.mode === 'edit' ? f.id : selectedProfile?.id}
           fetchModels={fetchModels}
@@ -357,6 +365,12 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
       <label className="nc-check"><input type="checkbox" checked={f.rc} onChange={(e) => set({ rc: e.target.checked })} /> {t('fleet-remote-control')}</label>
       <select value={f.promptMode} onChange={(e) => set({ promptMode: e.target.value })}><option value="send-keys">send-keys</option><option value="flag">flag</option></select>
       {f.promptMode === 'flag' && <input value={f.promptFlag} placeholder="prompt flag" onChange={(e) => set({ promptFlag: e.target.value })} />}
+      {/* Opt-in F4: un solo Enter dopo il bracketed paste. Spento = paste
+          senza Invio (storico). Non si offre per promptMode 'flag', dove il
+          prompt viaggia in argv e il campo sarebbe rifiutato dal parser. */}
+      {f.promptMode === 'send-keys' && <label className="nc-check"><input type="checkbox" checked={!!f.submit} onChange={(e) => set({ submit: e.target.checked })} /> {t('fleet-submit-enter')}</label>}
+      {f.promptMode === 'send-keys' && f.submit
+        && <small>{t('fleet-submit-enter-unsupported')}</small>}
       <div className="nc-fleet-pair"><input value={f.modelFlag} placeholder="model flag" onChange={(e) => set({ modelFlag: e.target.value })} /><input value={f.modelValue} placeholder="model default" onChange={(e) => set({ modelValue: e.target.value })} /></div>
       <small>{t('env-write-only')}</small>
       {rows.map((r, i) => <div className="nc-fleet-env" key={`${r.key}-${i}`}><input value={r.key} disabled={r.configured} placeholder="ENV_KEY" onChange={(e) => { const n = rows.slice(); n[i] = { ...r, key: e.target.value }; set({ envRows: n }); }} /><input type="password" value={r.value} placeholder={r.configured ? '•••••• (unchanged)' : 'value'} onChange={(e) => { const n = rows.slice(); n[i] = { ...r, value: e.target.value }; set({ envRows: n }); }} /><button className="nc-btn danger" onClick={() => set({ envRows: rows.filter((_, x) => x !== i) })}>×</button></div>)}

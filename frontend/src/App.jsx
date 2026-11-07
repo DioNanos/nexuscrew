@@ -33,6 +33,8 @@ import {
 } from './lib/api.js';
 import { isValidLabel } from './lib/settings-model.js';
 import { runFleetPowerAction } from './lib/fleet-action-notice.js';
+import { createDeferredReread } from './lib/deferred-reread.js';
+import { puoRileggere } from './lib/reread-guard.js';
 import useActionNotice from './hooks/useActionNotice.js';
 import { emptyLayout, normalize, addTileSmart, removeTile, sessions, parseRef, remapTileRefs } from './lib/grid-model.js';
 import { cellDisplayName } from './lib/cell-display.js';
@@ -1006,6 +1008,27 @@ export default function App() {
   const [powerCell, setPowerCell] = useState(null);
   const [bootSettlement, setBootSettlement] = useState(null);
   const bootSettlementSeq = useRef(0);
+  // Le riletture differite delle tuple la cui azione ha perso la risposta: una
+  // alla volta per tupla, e nessuna che sopravviva alla pagina.
+  const rilettureDifferite = useRef(null);
+  if (!rilettureDifferite.current) rilettureDifferite.current = createDeferredReread();
+  // Il contesto che una lettura differita deve poter ancora vedere: la
+  // credenziale e l'owner della route. Se cambiano fra la richiesta e la
+  // scadenza, la lettura non riguarda più questa vista.
+  // `gen` e' una GENERAZIONE locale del contesto: cambia quando cambia la
+  // credenziale o l'owner di una route, e serve a distinguere due azioni che
+  // hanno la stessa tupla ma non lo stesso contesto. Non e' il token: quello
+  // non entra in chiavi, diagnostiche o log.
+  const contestoRiletture = useRef({ token: null, owners: new Map(), gen: 0 });
+  {
+    const precedente = contestoRiletture.current;
+    const owners = new Map((deckOwners || []).map((o) => [JSON.stringify(o.route || []), o.instanceId]));
+    const ownersCambiati = owners.size !== precedente.owners.size
+      || [...owners].some(([k, v]) => (precedente.owners.get(k) || null) !== (v || null));
+    const gen = (token !== precedente.token || ownersCambiati) ? precedente.gen + 1 : precedente.gen;
+    contestoRiletture.current = { token, owners, gen };
+  }
+  useEffect(() => () => { if (rilettureDifferite.current) rilettureDifferite.current.chiudi(); }, []);
   const [nodePowerBusy, setNodePowerBusy] = useState(false);
   const [sideW, setSideW] = useState(loadSideW);
   // Finestre staccate: nei deck non-main la sidebar e' nascosta di default;
@@ -1395,6 +1418,15 @@ export default function App() {
     if (!powerCell) return;
     const { cell } = powerCell;
     const route = Array.isArray(powerCell.route) ? powerCell.route : [];
+    const routeKey = JSON.stringify(route);
+    // Il contesto si congela QUI, prima dell'await: se l'owner della route
+    // cambia mentre il POST è in volo, alla risposta non si ricostruisce
+    // l'autorità di questa azione dall'owner nuovo.
+    const contestoAzione = {
+      token,
+      owner: contestoRiletture.current.owners.get(routeKey) || null,
+      gen: contestoRiletture.current.gen,
+    };
     // Stesso percorso del roster mobile: esiti benigni (timeout client,
     // sessione già attiva) come notice a SCADENZA su una riga sua sotto la
     // barra — mai dentro la barra, dove il messaggio copriva i chip e non
@@ -1402,6 +1434,25 @@ export default function App() {
     // che li mostra coi pulsanti riabilitati. La barra deck parla solo di
     // deck: il suo errore resta quello di caricamento/salvataggio/owner.
     const benign = await runFleetPowerAction({ token, powerCell, payload, onNotice: mostraAvvisoDeck });
+    // Con la risposta persa (timeout client, 502 o 504 del peer) lo stato si è
+    // mosso senza che noi lo sapessimo: una rilettura sola, in differita, per
+    // QUESTA tupla. Il 409 «già in esecuzione» è un esito NOTO, non una
+    // risposta persa: la sessione c'era già e la lettura immediata la vede.
+    // Il codice lo restituisce l'helper come `benign.benign`, non `benign.code`.
+    if (benign && benign.benign !== 'FLEET_SESSION_DUPLICATE') {
+      // La chiave porta il contesto: una lettura armata per un owner non deve
+      // assorbire (per coalescenza) quella di un'azione nuova nata dopo la
+      // sostituzione, né il contrario.
+      rilettureDifferite.current.programma(
+        `${contestoAzione.gen}|${contestoAzione.owner || '-'}|${routeKey}|${cell}`,
+        () => {
+          const ora = contestoRiletture.current;
+          const contesto = { token: ora.token, owner: ora.owners.get(routeKey) || null, gen: ora.gen };
+          if (!puoRileggere({ atteso: contestoAzione, contesto, snapshot: readFleetRoute(route, token), cell })) return;
+          refreshFleetRoute(route, token);
+        },
+      );
+    }
     if (!benign) {
       const enabled = payload.action === 'up'
         ? !!payload.boot

@@ -68,7 +68,7 @@ export function normalizeCwdRel(rel) {
   }
   return out.join('/');
 }
-const ENGINE_KEYS = new Set(['id', 'label', 'rc', 'managed', 'command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag', 'panelUrl']);
+const ENGINE_KEYS = new Set(['id', 'label', 'rc', 'managed', 'command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag', 'submit', 'restartReprompt', 'panelUrl']);
 const MANAGED_KEYS = new Set(['client', 'provider', 'credentialProfile', 'model', 'permissionPolicy', 'displayName', 'protocol', 'baseUrl', 'envKey', 'providerId']);
 
 // panelUrl nel backup: stessa regola del validatore canonico del backend
@@ -198,7 +198,7 @@ export function cleanBackupEngine(raw) {
   if (raw.panelUrl !== undefined) out.panelUrl = raw.panelUrl;
   if (raw.managed !== undefined) {
     const managed = cleanManaged(raw.managed);
-    if (!managed || ['command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag'].some((key) => raw[key] !== undefined)) return null;
+    if (!managed || ['command', 'args', 'envKeys', 'model', 'promptMode', 'promptFlag', 'submit', 'restartReprompt'].some((key) => raw[key] !== undefined)) return null;
     out.managed = managed;
     return out;
   }
@@ -207,6 +207,15 @@ export function cleanBackupEngine(raw) {
     || raw.args.some((arg) => !printable(arg, 1024) || looksSecret(arg))) return null;
   if (raw.promptMode !== 'flag' && raw.promptMode !== 'send-keys') return null;
   if (raw.promptMode === 'flag' && (!printable(raw.promptFlag, 32) || /\s/.test(raw.promptFlag))) return null;
+  // submit: opt-in del singolo Enter, SOLO send-keys e SOLO 'enter'. Stessa
+  // regola del parser backend (definitions.js parseEngine): un valore diverso
+  // o fuori posto rifiuta l'engine invece di perdere il campo in silenzio.
+  if (raw.submit !== undefined && (raw.submit !== 'enter' || raw.promptMode !== 'send-keys')) return null;
+  // restartReprompt: policy di reinvio ai restart, SOLO send-keys, booleano,
+  // mai insieme a submit (due policy di consegna non si sommano). Stessa
+  // regola del parser backend: mai scartare il campo in silenzio.
+  if (raw.restartReprompt !== undefined
+    && (typeof raw.restartReprompt !== 'boolean' || raw.promptMode !== 'send-keys' || raw.submit !== undefined)) return null;
   if (raw.model !== undefined) {
     if (!raw.model || typeof raw.model !== 'object' || Array.isArray(raw.model)
       || Object.keys(raw.model).some((key) => key !== 'flag' && key !== 'value')
@@ -218,6 +227,8 @@ export function cleanBackupEngine(raw) {
   if (!Array.isArray(envKeys) || envKeys.length > 32 || envKeys.some((key) => !ENV_KEY_RE.test(key))) return null;
   Object.assign(out, { command: raw.command, args: [...raw.args], envKeys: [...new Set(envKeys)].sort(), promptMode: raw.promptMode });
   if (raw.promptMode === 'flag') out.promptFlag = raw.promptFlag;
+  if (raw.submit !== undefined) out.submit = raw.submit;
+  if (raw.restartReprompt !== undefined) out.restartReprompt = raw.restartReprompt;
   return out;
 }
 
@@ -228,11 +239,16 @@ export function portableEngineDefinition(engine) {
   // explicitly instead of silently dropping every managed engine export.
   const candidate = engine.managed ? {
     id: engine.id, label: engine.label, rc: engine.rc, managed: engine.managed,
+    // Portato di proposito nel candidato: cosi' cleanBackupEngine lo RIFIUTA
+    // invece di esportare in silenzio un managed senza il campo (fail-open).
+    ...(engine.restartReprompt !== undefined ? { restartReprompt: engine.restartReprompt } : {}),
     ...(engine.panelUrl !== undefined ? { panelUrl: engine.panelUrl } : {}),
   } : {
     id: engine.id, label: engine.label, rc: engine.rc, command: engine.command,
     args: engine.args, envKeys: engine.envKeys, model: engine.model,
     promptMode: engine.promptMode, promptFlag: engine.promptFlag,
+    ...(engine.submit !== undefined ? { submit: engine.submit } : {}),
+    ...(engine.restartReprompt !== undefined ? { restartReprompt: engine.restartReprompt } : {}),
     ...(engine.panelUrl !== undefined ? { panelUrl: engine.panelUrl } : {}),
   };
   const clean = cleanBackupEngine(candidate);

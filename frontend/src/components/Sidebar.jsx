@@ -15,6 +15,7 @@ import {
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import Icon from './Icon.jsx';
+import PromptBadge from './PromptBadge.jsx';
 import LiveBadge from './LiveBadge.jsx';
 import CellPeek from './CellPeek.jsx';
 import { CellActionsPopover, cellActionsItems, cellActionsState } from './CellActions.jsx';
@@ -578,6 +579,7 @@ export default function Sidebar({
                 <span className="nc-cell-main">
                   <b title={c.cell}>{c.cell}{cellActionsState({ item, cellName: c.cell, route: [], pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                   <small title={item.subtitle}>{item.subtitle}</small>
+                  <PromptBadge prompt={item.prompt} />
                 </span>
                 {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
                 {item.fresh && (byName.get(c.tmuxSession) || {}).outbox?.count > 0
@@ -771,6 +773,7 @@ export default function Sidebar({
                     <span className="nc-card-main">
                       <b>{c.cell}{cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
+                      <PromptBadge prompt={item.prompt} />
                     </span>
                     {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
                     {item.fresh && (sessioneNodo || {}).outbox?.count > 0

@@ -14,6 +14,17 @@ import { t } from './i18n.js';
 import { positionKey } from './nodes-model.js';
 import { CAUSE_PEER_ASENTE, CAUSE_PEER_NEGA, CAUSE_ROTTA_INESISTENTE } from './peer-backoff.js';
 
+// Ragioni terminali del supervisore che la riga della cella sa NOMINARE (le
+// stesse dell'enum chiuso del canale terminale). Fuori da qui: nessuna
+// etichetta inventata.
+const RAGIONI_TERMINALI_CELLA = [
+  'restart-budget-exhausted',
+  'uncertain-delivery',
+  'lease-lost',
+  'spawn-error',
+  'operator-stop',
+];
+
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.
 // nowSec e' iniettabile solo per i test; il default e' l'ora corrente, come
 // facevano le copie inline che questo modulo sostituisce.
@@ -117,6 +128,84 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
   return session.outbox.latest > seen;
 }
 
+// La consegna del prompt e' una riga SUA, accanto allo stato della cella e mai
+// al posto suo: un prompt in attesa non rende la cella «attiva», un prompt
+// inviato non la rende «incarico accettato», e una ragione terminale resta la
+// riga principale. Il badge parla solo degli stati dell'enum chiuso del
+// proprietario e delle chiavi di traduzione: nessun testo libero.
+const PRIORITA_CONSEGNA = Object.freeze({
+  action: 3, problem: 2, pending: 1, submitted: 0, stale: -1, unavailable: -1, none: -2,
+});
+
+// I kind di non-pronta che chiedono una risposta dell'operatore: permesso,
+// consenso, onboarding. Sono gli unici che meritano il gradino piu' alto.
+const NOT_READY_CHE_CHIEDONO_AZIONE = Object.freeze([
+  'not-ready-auth', 'not-ready-consent', 'not-ready-onboarding',
+]);
+
+// Lo skip di generation del bootstrap VL e' l'esito NORMALE di un lancio che ha
+// gia' la sua generazione: non e' un guasto e non merita un allarme.
+const SKIP_NORMALE = 'vl-bootstrap-generation';
+
+// promptDeliveryBadge(cell, { currentLaunchId, autorevole, preserved })
+//   -> { badge, priorita, key, reason, launchId, freschezza }
+// badge: 'action' | 'problem' | 'pending' | 'submitted' | 'stale' | 'unavailable' | 'none'
+// freschezza: 'current' | 'last-known'
+//
+// L'autorita' della lettura e' un dato del chiamante: un inventario conservato
+// (peer che non risponde, cella preserved, lettura non autorevole) mostra
+// un'istantanea, e un'istantanea non e' un'attestazione corrente. Il backend
+// non viene interrogato per degradarla — quando il peer tace, quello che la PWA
+// presenta e' l'ultimo dato noto e va detto.
+export function promptDeliveryBadge(cell, { currentLaunchId = null, autorevole = true, preserved = false } = {}) {
+  const c = cell || {};
+  const d = c.promptDelivery;
+  const letturaCorrente = autorevole && !preserved;
+  const vuoto = (badge, key) => ({
+    badge, priorita: PRIORITA_CONSEGNA[badge], key, reason: null, launchId: null,
+    freschezza: letturaCorrente ? 'current' : 'last-known',
+  });
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return vuoto('unavailable', 'prompt-badge-unavailable');
+
+  const reason = typeof d.reason === 'string' ? d.reason : null;
+  const launchId = typeof d.launchId === 'string' ? d.launchId : null;
+  // Il record di un lancio sostituito non si mostra come se fosse quello in
+  // corso: senza il lancio corrente non c'e' confronto possibile, e in quel
+  // caso vale cio' che il backend ha gia' degradato a unknown.
+  const corrente = currentLaunchId || c.launchId || null;
+  if (launchId && corrente && launchId !== corrente) return vuoto('stale', 'prompt-badge-stale');
+
+  const esito = (badge) => ({
+    badge, priorita: PRIORITA_CONSEGNA[badge], key: `prompt-badge-${badge}`, reason, launchId,
+    freschezza: letturaCorrente ? 'current' : 'last-known',
+  });
+  // Una consegna in corso o gia' consegnata, letta da un inventario non
+  // corrente, e' «ultimo dato noto» e non un'attestazione: si mostra come
+  // tale. Una richiesta d'azione invece resta visibile anche da storica —
+  // l'operatore deve poterla vedere — ma dichiarata storica.
+  const nonCorrente = () => ({
+    badge: 'stale', priorita: PRIORITA_CONSEGNA.stale, key: 'prompt-badge-last-known',
+    reason: null, launchId, freschezza: 'last-known',
+  });
+  switch (d.state) {
+    case 'pending': return letturaCorrente ? esito('pending') : nonCorrente();
+    case 'submitted': return letturaCorrente ? esito('submitted') : nonCorrente();
+    case 'skipped':
+      if (reason === SKIP_NORMALE) {
+        return {
+          badge: 'none', priorita: PRIORITA_CONSEGNA.none, key: null, reason, launchId,
+          freschezza: letturaCorrente ? 'current' : 'last-known',
+        };
+      }
+      if (reason === 'prompt-rejected' || NOT_READY_CHE_CHIEDONO_AZIONE.includes(d.notReady)) {
+        return esito('action');
+      }
+      return esito('problem');
+    case 'unknown': return esito('problem');
+    default: return vuoto('unavailable', 'prompt-badge-unavailable');
+  }
+}
+
 // Riga di stato condivisa da mobile e desktop. Da spenta mostra il modello
 // configurato (con fallback all'engine); da accesa usa lo stato che la cella
 // PUBBLICA (gli hook), e solo in mancanza di quello il segnale derivato dal
@@ -130,6 +219,21 @@ export function cellRuntime(cell, session = {}, { autorevole = true } = {}) {
   const c = cell || {};
   const engine = `${c.engine || ''}${c.key ? `·${c.key}` : ''}`;
   const startup = [engine, c.model && c.model !== engine ? c.model : ''].filter(Boolean).join(' · ');
+  // Ragione terminale del LANCIO CORRENTE (canale su file del supervisore,
+  // sopravvive alla scomparsa del pane): e' la verita' di supervisione e vince
+  // su ogni indizio — pane residuo, anteprima, stato pubblicato. La cella e'
+  // FERMA per quella ragione, mai «attiva sana» sulla sola sessione tmux
+  // rimasta. Solo le ragioni dell'enum chiuso: una ragione sconosciuta non si
+  // inventa un'etichetta.
+  const terminale = c.terminal && typeof c.terminal === 'object' ? c.terminal : null;
+  if (terminale && RAGIONI_TERMINALI_CELLA.includes(terminale.reason)) {
+    return {
+      working: false,
+      stato: 'ferma',
+      terminale: terminale.reason,
+      subtitle: t(`cell-terminal-${terminale.reason}`),
+    };
+  }
   if (!c.tmux) {
     return {
       working: false,
@@ -226,6 +330,9 @@ export function buildLocalRoster(cells, unmanaged, byName, storage = globalThis.
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || 0,
         working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
+        // La consegna del prompt viaggia ACCANTO allo stato: la riga della cella
+        // resta quella che era, e nessuna delle due riscrive l'altra.
+        prompt: promptDeliveryBadge(c, { currentLaunchId: c.launchId || null, autorevole: autorevole && !fleetStale, preserved: c.preserved === true }),
         searchText: cellSearchText(c, session),
       };
     }),
@@ -250,6 +357,9 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
   const g = group || {};
   const route = Array.isArray(g.route) ? g.route : [];
   const autorevole = sessionsAuthoritative(g);
+  // Un elenco dichiarato fermo non e' una lettura corrente, anche se le
+  // sessioni arrivano: e' l'ultimo dato noto che l'owner conserva.
+  const fleetStale = g.fleetState === 'stale';
   const remoteByName = new Map((g.sessions || []).map((s) => [s.name, s]));
   const rawItems = [
     ...(g.cells || []).map((c) => {
@@ -263,6 +373,9 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
         type: 'cell', value: c, key, label: c.cell, live: !!c.tmux && !c.preserved,
         fresh: hasFreshOutput(session, key, storage), activity: session.activity || c.activity || 0,
         working: runtime.working, stato: runtime.stato, subtitle: runtime.subtitle,
+        // La consegna del prompt viaggia ACCANTO allo stato: la riga della cella
+        // resta quella che era, e nessuna delle due riscrive l'altra.
+        prompt: promptDeliveryBadge(c, { currentLaunchId: c.launchId || null, autorevole: autorevole && !fleetStale, preserved: c.preserved === true }),
         searchText: cellSearchText(c, session),
       };
     }),
@@ -275,6 +388,6 @@ export function buildRemoteRoster(group, storage = globalThis.localStorage) {
       };
     }),
   ];
-  const partial = partialReason({ sessionsOk: g.sessionsAvailable !== false, fleetStale: g.fleetState === 'stale', cellCount: (g.cells || []).length });
+  const partial = partialReason({ sessionsOk: g.sessionsAvailable !== false, fleetStale, cellCount: (g.cells || []).length });
   return { route, rawItems: withPartial(rawItems, partial) };
 }

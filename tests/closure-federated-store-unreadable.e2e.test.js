@@ -2,7 +2,7 @@
 // tests/closure-federated-store-unreadable.e2e.test.js — chiusura federata di
 // un ask importato quando il RICEVENTE ha asks.json illeggibile.
 //
-// Difetto nc-0953 (routes.js isClosure): closeImported rifiuta con
+// Difetto closure (routes.js isClosure): closeImported rifiuta con
 // {ok:false, reason:'store-unreadable'} ma la route rispondeva comunque
 // 200 {status:'delivered', closed:false}. Il mittente (closure-retry.js) mette
 // 'delivered' in DONE_STATUSES (closure-retry.js:37): nessun ritentativo, e
@@ -170,7 +170,7 @@ const aliasRecord = (A) => async () => {
   return (list.asks || []).find((a) => a.id === ALIAS_ID) || null;
 };
 
-test('E2E nc-0953 closure (route): POST federato della chiusura con store malformato => 503 ritentabile (non 200 delivered)', async (t) => {
+test('E2E closure (route): POST federato della chiusura con store malformato => 503 ritentabile (non 200 delivered)', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nccl-route-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, selfA, selfB } = await pair(t, root);
@@ -197,7 +197,7 @@ test('E2E nc-0953 closure (route): POST federato della chiusura con store malfor
   assert.notEqual(rec.dismissed, true, 'la chiusura con store malformato NON ha chiuso l\'alias');
 });
 
-test('E2E nc-0953 closure (recapito): store malformato => alias APERTO; riparo + ritentativo => alias CHIUSO', async (t) => {
+test('E2E closure (recapito): store malformato => alias APERTO; riparo + ritentativo => alias CHIUSO', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nccl-e2e-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const { A, B, selfB, clientDir } = await pair(t, root);

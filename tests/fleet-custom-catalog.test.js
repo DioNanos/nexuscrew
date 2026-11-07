@@ -71,7 +71,7 @@ test('D2 end-to-end: parseDefinitions -> extraModelsFrom -> resolveManagedEngine
   const defs = codexVlCustomDefs();
   assert.ok(defs, 'la definizione e\' valida (controllo del setup, non del difetto)');
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d2-e2e-'), 'codex-vl');
+  const home = withBinary(tempHome('nc-catalog-e2e-'), 'codex-vl');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { DEEPSEEK_API_KEY: 'secret' }, extraModels });
@@ -135,7 +135,7 @@ test('D2 end-to-end: Pi custom — Pi VERO carica l\'estensione e il modello sup
   });
   assert.ok(defs);
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d2-pi-'), 'pi');
+  const home = withBinary(tempHome('nc-catalog-pi-'), 'pi');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { DEEPSEEK_API_KEY: 'secret' }, extraModels });
@@ -184,7 +184,7 @@ test('D2 end-to-end negativo: nessun `models` dichiarato -> nessun catalogo negl
   });
   assert.ok(defs);
   const extraModels = extraModelsFrom(defs);
-  const home = withBinary(tempHome('nc-d2-none-'), 'codex-vl');
+  const home = withBinary(tempHome('nc-catalog-none-'), 'codex-vl');
   try {
     const r = resolveManagedEngine(defs.engines[0], { id: 'Dev' },
       { home, env: { DEEPSEEK_API_KEY: 'secret' }, extraModels });

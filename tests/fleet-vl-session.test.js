@@ -16,6 +16,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { atomicWrite, loadDefinitions } = require('../lib/fleet/definitions.js');
 const { createBuiltinFleet } = require('../lib/fleet/builtin.js');
+const { OWNER_INSTANCE_ID, scriptVlFintoConHost, preparaHostFinto } = require('./helpers/vl-attestato.js');
 const { main, validPayload } = require('../lib/fleet/cell-exec.js');
 const {
   requestVlNewSession, consumeVlNewSession, vlNewSessionStatus, vlLegacyInventory,
@@ -36,7 +37,14 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   const vlBin = path.join(home, '.local', 'bin', 'vl');
-  fs.writeFileSync(vlBin, `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '${version}\\n'; fi\nexit 0\n`, { mode: 0o755 });
+  // Binario finto QUALIFICATO peer/stop con host VERO: la tuple dichiarata in
+  // `host status` viene letta da /proc del pid vivo nel pidfile, così al down
+  // il runtime osserva in /proc la STESSA identità che ha registrato all'up.
+  const hostScript = preparaHostFinto(root);
+  const hostpid = path.join(root, 'hostpid');
+  const vllog = path.join(root, 'vl.log');
+  fs.writeFileSync(hostpid, '0\n');
+  fs.writeFileSync(vlBin, scriptVlFintoConHost({ version, hostpid, vllog }), { mode: 0o755 });
   fs.chmodSync(vlBin, 0o755);
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
     mcpServers: { nexuscrew: { command: 'nexuscrew' } },
@@ -55,7 +63,43 @@ function mondo(t, { version = 'vl 0.3.1', cooldownMs, clockStart = 0, broker } =
   const script = `#!${process.execPath}
 'use strict';
 const fs = require('node:fs');
-const args = process.argv.slice(2);
+const HOSTSCRIPT = ${JSON.stringify(hostScript)};
+const HOSTPID = ${JSON.stringify(hostpid)};
+const argv = process.argv.slice(2);
+const args = argv[0] === '-S' ? argv.slice(2) : argv;
+if (args[0] === '-C') {
+  if (process.argv.includes('new-session')) {
+    const { spawnSync: creaSync } = require('node:child_process');
+    const rCrea = creaSync(process.execPath, [__filename].concat(process.argv.slice(2).filter((a) => a !== '-C')), { encoding: 'utf8' });
+    const corpoCrea = (s) => (s ? (s.endsWith('\\n') ? s : s + '\\n') : ''); if ((rCrea.status || 0) === 0) process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stdout) + '%end 1 0 1\\n');
+    else process.stdout.write('%begin 1 0 1\\n' + corpoCrea(rCrea.stderr) + '%error 1 0 1\\n');
+  } else {
+    process.stdout.write('%begin 1 0 1\\nnc-control-open\\n%end 1 0 1\\n');
+  }
+  const { spawnSync } = require('node:child_process');
+  let n = 0; let buf = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => {
+    buf += c;
+    let i;
+    while ((i = buf.indexOf('\\n')) >= 0) {
+      const riga = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!riga) continue;
+      if (riga === 'display-message -p nc-control-open') continue; // apertura: gia' risolta dal frame iniziale
+      n += 1;
+      const r = spawnSync(process.execPath,
+        [__filename, '-S', process.argv[3] || 'x'].concat(riga.split(/\\s+/)), { encoding: 'utf8' });
+      if ((r.status || 0) === 0) {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stdout || '') + '%end 1 ' + n + ' 1\\n');
+      } else {
+        process.stdout.write('%begin 1 ' + n + ' 1\\n' + (r.stderr || '') + '%error 1 ' + n + ' 1\\n');
+      }
+    }
+  });
+  process.stdin.on('end', () => process.exit(0));
+  return;
+}
+
 const STATO = ${JSON.stringify(statoPath)};
 const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
@@ -63,14 +107,31 @@ if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write(n + 
 if (cmd === 'new-session') {
   if (vive().includes(${JSON.stringify(SESSIONE)})) { process.stderr.write('duplicate session: ' + ${JSON.stringify(SESSIONE)} + '\\n'); process.exit(1); }
   fs.writeFileSync(STATO, vive().concat([${JSON.stringify(SESSIONE)}]).join('\\n') + '\\n');
+  // La nascita dell'host accompagna la sessione: come la TUI vera, che l'host
+  // lo fa nascere all'avvio, ogni new-session fa nascere un host nuovo (il
+  // vecchio pid, se ancora vivo, viene spento per pid esatto dall'helper).
+  { const { spawnSync: riavviaHost } = require('node:child_process');
+    riavviaHost(process.execPath, [HOSTSCRIPT, '--respawn', HOSTPID]); }
   process.stdout.write('$5\\t@1\\t%9\\n'); process.exit(0);
 }
-if (cmd === 'display-message') { process.stdout.write('0\\t\\t%9\\n'); process.exit(0); }
+if (cmd === 'display-message') {
+  const iF = args.indexOf('-F');
+  const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
+  if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
+  if ((typeof fmt === 'string' ? fmt : process.argv.join(' ')).includes('pane_pid')) { process.stdout.write('4242\\t2222\\n'); process.exit(0); }
+  process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
+}
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 if (cmd === 'kill-session') {
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
-  fs.writeFileSync(STATO, vive().filter((n) => n !== bersaglio).map((n) => n + '\\n').join(''));
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
   process.exit(0);
+}
+if (cmd === 'has-session') {
+  const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
+  const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
+  process.exit(mia && vive().includes(${JSON.stringify(SESSIONE)}) ? 0 : 1);
 }
 process.exit(0);
 `;
@@ -117,10 +178,19 @@ process.exit(0);
     launchReadyMs: 0,
     now: clock.now,
     monotonicNow: clock.mono,
+    // Owner hex32 della tuple attestata all'up: con `local` l'up e' rifiutato.
+    identityOwnerInstanceId: OWNER_INSTANCE_ID,
     ...(cooldownMs !== undefined ? { vlLaunchCooldownMs: cooldownMs } : {}),
   };
   const markerDir = path.join(home, '.nexuscrew', 'vl-new-session');
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
+    try {
+      const p = Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0;
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) {}
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   return {
     root, home, defsPath, tickets, clock, cfgBase, markerDir,
     requestedPath: path.join(markerDir, 'CellaProva.requested'),
@@ -329,6 +399,10 @@ test('cell-exec: payload.vlNewSession -> --new SOLO alla generazione 0, mai ai r
       return fakeChildExit();
     },
     now: () => clock,
+    // La vita del figlio si misura sull'orologio MONOTONO: il clock iniettato
+    // governa anche monoNow, altrimenti la vita reale di un fake child (~0ms)
+    // sembrerebbe sotto initialReadyMs (failed start, nessun restart).
+    monoNow: () => clock,
     sleep: async () => { clock += 1000; },
     stderrWrite: () => {},
   });
@@ -355,6 +429,7 @@ test('cell-exec: payload SENZA vlNewSession: nessuna generazione porta --new', a
     }),
     spawn: (command, args) => { spawnCalls.push([...args]); return fakeChildExit(); },
     now: () => clock,
+    monoNow: () => clock, // durate sul monotono iniettato (vita del figlio oltre initialReadyMs)
     sleep: async () => { clock += 1000; },
     stderrWrite: () => {},
   });
