@@ -110,12 +110,28 @@ describe('cellRuntime: tre stati dagli hook + incerto dove il titolo non prova',
   // sugli indizi (pane vivo, stato pubblicato, anteprima) e la cella e' FERMA
   // per QUELLA ragione — leggibile anche a pane sparito, perche' il record
   // vive su file. Ragione fuori enum: nessuna etichetta inventata.
-  it('ragione terminale vince su tutto: cella ferma con la SUA etichetta, anche a pane vivo', () => {
-    const base = { tmux: true, cell: 'Dev', engine: 'claude', terminal: { reason: 'restart-budget-exhausted', ts: 1 } };
+  it('ragione terminale: la cella NON viva porta la SUA etichetta', () => {
+    // Il record terminale e' l'esito di un lancio: spiega la riga quando la
+    // cella non e' viva. A cella viva non sovrascrive cio' che la cella fa.
+    const base = {
+      active: false, tmux: false, cell: 'Dev', engine: 'claude',
+      terminal: { reason: 'restart-budget-exhausted', ts: 1 },
+    };
     const out = cellRuntime(base, { ...att('lavora'), working: true, status: 'Working…' });
     expect(out.working).toBe(false);
     expect(out.stato).toBe('ferma');
     expect(out.subtitle).toBe(t('cell-terminal-restart-budget-exhausted'));
+  });
+
+  it('ragione terminale: a cella viva decide l’attivita, non il lancio concluso', () => {
+    const base = {
+      active: true, tmux: true, cell: 'Dev', engine: 'claude',
+      terminal: { reason: 'restart-budget-exhausted', ts: 1 },
+    };
+    const out = cellRuntime(base, { ...att('lavora'), working: true, status: 'Working…' });
+    expect(out.working).toBe(true);
+    expect(out.stato).toBe('lavora');
+    expect(out.subtitle).not.toBe(t('cell-terminal-restart-budget-exhausted'));
   });
 
   it('ogni ragione dell\'enum ha la SUA frase, in tutte le lingue; ragione ignota non si inventa', () => {
