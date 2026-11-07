@@ -63,23 +63,34 @@ describe('prompt delivery badge', () => {
       { state: 'skipped', reason: 'transport-unsupported' },
       { state: 'skipped', reason: 'deadline-exceeded' },
       { state: 'skipped', reason: 'not-ready', notReady: 'busy' },
-      { state: 'unknown', reason: 'delivery-unknown' },
-      { state: 'unknown', reason: 'record-broken' },
     ]) {
       const out = promptDeliveryBadge(cell({ ...extra, launchId: 'abcdef0123456789' }));
       expect(out.badge, JSON.stringify(extra)).toBe('problem');
       expect(out.key).toBe('prompt-badge-problem');
       expect(out.priorita).toBe(2);
     }
+    // `unknown` non e' un guasto: e' il backend che dice di non poter
+    // attestare. Ha una parola sua, neutra, e non sta in cima agli avvisi.
+    for (const extra of [
+      { state: 'unknown', reason: 'delivery-unknown' },
+      { state: 'unknown', reason: 'record-broken' },
+    ]) {
+      const out = promptDeliveryBadge(cell({ ...extra, launchId: 'abcdef0123456789' }));
+      expect(out.badge, JSON.stringify(extra)).toBe('unverified');
+      expect(out.key).toBe('prompt-badge-unverified');
+      expect(out.priorita).toBeLessThan(0);
+    }
   });
 
-  it('orders the alerts: action, then problem, then pending, then submitted', () => {
+  it('orders the alerts: action, then problem, then pending, then submitted, then the unattested', () => {
     const p = (extra) => promptDeliveryBadge(cell({ launchId: 'abcdef0123456789', generation: 1, ...extra })).priorita;
     expect(p({ state: 'skipped', reason: 'prompt-rejected' }))
-      .toBeGreaterThan(p({ state: 'unknown', reason: 'record-broken' }));
-    expect(p({ state: 'unknown', reason: 'record-broken' }))
+      .toBeGreaterThan(p({ state: 'skipped', reason: 'transport-unsupported' }));
+    expect(p({ state: 'skipped', reason: 'transport-unsupported' }))
       .toBeGreaterThan(p({ state: 'pending' }));
     expect(p({ state: 'pending' })).toBeGreaterThan(p({ state: 'submitted' }));
+    // Non attestato e' un neutro: non sta davanti a una consegna in corso.
+    expect(p({ state: 'unknown', reason: 'record-broken' })).toBeLessThan(p({ state: 'submitted' }));
   });
 
   it('does not show a record of a replaced launch as the current one', () => {
@@ -136,13 +147,23 @@ describe('the delivery row is orthogonal to the cell state', () => {
     expect(healthDot(down)).toBe('warn');
   });
 
-  it('a terminal reason keeps precedence over the delivery', () => {
-    const out = cellRuntime({
+  it('a terminal reason explains the row only when the cell is not alive', () => {
+    const spenta = cellRuntime({
       ...withPrompt,
+      active: false,
+      tmux: false,
       terminal: { reason: 'lease-lost', ts: 1 },
     }, {});
-    expect(out.stato).toBe('ferma');
-    expect(out.terminale).toBe('lease-lost');
+    expect(spenta.stato).toBe('ferma');
+    expect(spenta.terminale).toBe('lease-lost');
+    // Viva: il lancio e' finito, la cella no — e la riga dice cosa fa adesso.
+    const viva = cellRuntime({
+      ...withPrompt,
+      active: true,
+      terminal: { reason: 'lease-lost', ts: 1 },
+    }, { attivita: { stato: 'lavora' } });
+    expect(viva.terminale).toBeUndefined();
+    expect(viva.stato).toBe('lavora');
   });
 });
 

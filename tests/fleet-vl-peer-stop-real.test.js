@@ -94,6 +94,10 @@ function mondo(t, { binario } = {}) {
   // si vede qui come una riga in più.
   const nsLog = path.join(root, 'new-sessions.log');
   fs.writeFileSync(nsLog, '');
+  // Il pid del processo che il fake fa nascere al respawn (il supervisore).
+  // E' un processo VERO: la sua nascita si legge da /proc, come per un pane
+  // tmux, e col kill-session muore con la sessione.
+  const supPid = path.join(root, 'supervisor.pid');
   const tmuxBin = path.join(root, 'fake-tmux.cjs');
   const script = `#!${process.execPath}
 'use strict';
@@ -134,6 +138,7 @@ if (args[0] === '-C') {
 }
 const STATO = ${JSON.stringify(statoPath)};
 const NSLOG = ${JSON.stringify(nsLog)};
+const SUP = ${JSON.stringify(supPid)};
 const cmd = args[0] || '';
 const vive = () => fs.readFileSync(STATO, 'utf8').split('\\n').filter(Boolean);
 if (cmd === 'list-sessions') { for (const n of vive()) process.stdout.write(n + '\\t1\\n'); process.exit(0); }
@@ -148,13 +153,43 @@ if (cmd === 'display-message') {
   const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
   if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
   if (fmt.includes('@nc_delivery')) { process.stdout.write('submitted\\n'); process.exit(0); }
+  if (fmt.includes('#{pane_pid}')) {
+    // Identita' del supervisore. Prima del respawn il pane e' il placeholder e
+    // non ha un pid proprio (campo vuoto, come prima); dopo il respawn il pane
+    // e' il processo che il fake ha fatto nascere, e quel pid esiste davvero.
+    let pane = '';
+    try { const p = Number(fs.readFileSync(SUP, 'utf8')); if (p > 0) pane = String(p); } catch (_) {}
+    process.stdout.write('0\\t' + pane + '\\n'); process.exit(0);
+  }
   process.stdout.write('0\\t\\t%9\\n'); process.exit(0);
+}
+if (cmd === 'respawn-pane') {
+  // respawn-pane e' cio' che da' la vita al processo del pane. Il fake lo
+  // sostituisce con un processo VERO e vivo: la identita' che il runtime legge
+  // subito dopo il respawn deve essere un pid di cui /proc attesta nascita e
+  // gruppo, non un numero che nessuno risponde.
+  try {
+    if (!fs.existsSync(SUP)) {
+      const { spawn: nasci } = require('node:child_process');
+      const figlio = nasci(process.execPath, ['-e', 'setInterval(() => {}, 1 << 30)'],
+        { detached: true, stdio: 'ignore' });
+      figlio.unref();
+      fs.writeFileSync(SUP, String(figlio.pid));
+    }
+  } catch (_) { /* nessun pid: il runtime rifiutera' il lancio, come deve */ }
+  process.exit(0);
 }
 if (cmd === 'capture-pane') { process.stdout.write(''); process.exit(0); }
 if (cmd === 'kill-session') {
   const bersaglio = String(args[args.length - 1] || '').replace(/^=/, '');
   const mia = bersaglio === ${JSON.stringify(SESSIONE)} || bersaglio === '$5';
-  if (mia) fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
+  if (mia) {
+    fs.writeFileSync(STATO, vive().filter((n) => n !== ${JSON.stringify(SESSIONE)}).map((n) => n + '\\n').join(''));
+    // Con la sessione muore il suo pane: il supervisore del fake si ferma per
+    // PID esatto, come farebbe tmux col processo del pane.
+    try { const p = Number(fs.readFileSync(SUP, 'utf8')); if (p > 0) process.kill(p, 'SIGKILL'); } catch (_) {}
+    try { fs.rmSync(SUP, { force: true }); } catch (_) {}
+  }
   process.exit(0);
 }
 if (cmd === 'has-session') {
@@ -199,7 +234,15 @@ process.exit(0);
     now: () => 0, monotonicNow: () => Date.now(),
     identityOwnerInstanceId: OWNER_INSTANCE_ID,
   };
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    // Se un test esce prima del down, il processo nato dal respawn e' ancora
+    // nostro: si ferma per PID esatto prima di rimuovere la cartella.
+    try {
+      const p = Number(fs.readFileSync(supPid, 'utf8'));
+      if (p > 0) process.kill(p, 'SIGKILL');
+    } catch (_) { /* nessun pid, o gia' uscito col kill-session */ }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   const hostRoot = radiceServer(home, OWNER_INSTANCE_ID, 'CellaPre');
   return {
     root, home, tickets, cfgBase, statoPath, hostRoot, vlBin, nsLog,
