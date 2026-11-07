@@ -134,7 +134,7 @@ export function hasFreshOutput(session, key, storage = globalThis.localStorage) 
 // riga principale. Il badge parla solo degli stati dell'enum chiuso del
 // proprietario e delle chiavi di traduzione: nessun testo libero.
 const PRIORITA_CONSEGNA = Object.freeze({
-  action: 3, problem: 2, pending: 1, submitted: 0, stale: -1, unavailable: -1, none: -2,
+  action: 3, problem: 2, pending: 1, submitted: 0, stale: -1, unavailable: -1, unverified: -1, none: -2,
 });
 
 // I kind di non-pronta che chiedono una risposta dell'operatore: permesso,
@@ -201,7 +201,11 @@ export function promptDeliveryBadge(cell, { currentLaunchId = null, autorevole =
         return esito('action');
       }
       return esito('problem');
-    case 'unknown': return esito('problem');
+    // `unknown` is the backend saying "this cannot be attested" — the launch
+    // has no owner snapshot, or the record belongs to another generation. It is
+    // not a refusal and not a failure: the failure word stays for a `skipped`
+    // with a reason that proves one.
+    case 'unknown': return esito('unverified');
     default: return vuoto('unavailable', 'prompt-badge-unavailable');
   }
 }
@@ -225,8 +229,12 @@ export function cellRuntime(cell, session = {}, { autorevole = true } = {}) {
   // FERMA per quella ragione, mai «attiva sana» sulla sola sessione tmux
   // rimasta. Solo le ragioni dell'enum chiuso: una ragione sconosciuta non si
   // inventa un'etichetta.
+  // The terminal record is the outcome of a LAUNCH, not the state of the cell:
+  // it explains a row only when the cell is not alive. A tmux session that
+  // survived its supervisor (remain-on-exit) is alive, and a stop recorded days
+  // ago must not overwrite what the cell is doing now.
   const terminale = c.terminal && typeof c.terminal === 'object' ? c.terminal : null;
-  if (terminale && RAGIONI_TERMINALI_CELLA.includes(terminale.reason)) {
+  if (c.active === false && terminale && RAGIONI_TERMINALI_CELLA.includes(terminale.reason)) {
     return {
       working: false,
       stato: 'ferma',

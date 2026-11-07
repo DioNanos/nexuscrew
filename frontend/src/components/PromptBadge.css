@@ -21,4 +21,5 @@
 .nc-prompt-badge-pending { background: #26404d; color: #bfe0f0; }
 .nc-prompt-badge-submitted { background: #1f4a32; color: #c9f0d8; }
 .nc-prompt-badge-stale,
+.nc-prompt-badge-unverified,
 .nc-prompt-badge-unavailable { background: #333; color: #aaa; }
