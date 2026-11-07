@@ -21,7 +21,7 @@ import { t } from './i18n.js';
 const ATTIVA = { active: true, tmux: true };
 
 function cella(extra = {}) {
-  return { ...ATTIVA, cell: 'Dev', engine: 'claude.native', ...extra };
+  return { ...ATTIVA, cell: 'cella-a', engine: 'claude.native', ...extra };
 }
 
 function attivita(stato) {
@@ -29,7 +29,7 @@ function attivita(stato) {
 }
 
 describe('promptDeliveryBadge: unknown non è un fallimento', () => {
-  // Dev, DevAuditor, DevWorkerA, Research: {state: "unknown", launchId: "..."},
+  // Quattro celle lette dal nodo: {state: "unknown", launchId: "..."},
   // senza generation — il backend dice «non attestabile».
   const unknown = { state: 'unknown', launchId: 'bc446d765a11e330' };
 
@@ -70,19 +70,20 @@ describe('promptDeliveryBadge: unknown non è un fallimento', () => {
 });
 
 describe('cellRuntime: il terminale di un lancio non è lo stato di una cella viva', () => {
-  // DevAuditor: terminal {operator-stop, 02/11}, nessuna attività pubblicata.
+  // Una cella letta dal nodo: terminal {operator-stop, date vecchie}, nessuna
+  // attività pubblicata.
   const terminale = { reason: 'operator-stop', ts: 1793633162750 };
 
   it('con la cella viva il terminale non vince: decide l’attività (assente -> unverified)', () => {
-    // La forma vera di /api/sessions per DevAuditor: nessuna attività, e
-    // `working: false` dichiarato dal contratto della sessione.
+    // La forma vera di /api/sessions: nessuna attività, e `working: false`
+    // dichiarato dal contratto della sessione.
     const out = cellRuntime(cella({ terminal: terminale }), { working: false, status: '', attivita: null });
     expect(out.subtitle).toBe(t('cell-unknown'));
     expect(out.subtitle).not.toBe(t('cell-terminal-operator-stop'));
   });
 
   it('con la cella viva e ferma il terminale non vince: dice «stopped», non «stopped by operator»', () => {
-    // DevWorkerA: stesso terminale, attività `ferma`.
+    // Stesso terminale, attività `ferma`.
     const out = cellRuntime(cella({ terminal: terminale }), attivita('ferma'));
     expect(out.subtitle).toBe(t('cell-stopped'));
     expect(out.subtitle).not.toBe(t('cell-terminal-operator-stop'));
