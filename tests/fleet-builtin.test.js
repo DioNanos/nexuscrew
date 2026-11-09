@@ -1279,6 +1279,29 @@ test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON las
 // lstat) -> stessa Fleet unavailable (available:false, fail-closed), ma ora
 // con un reason che dice "non verificabile (EACCES)", distinto da "assente" /
 // "invalido". Il discriminante e' CHI ha fallito. Verdetto invariato.
+// La factory con il lease attivo consegna al runtime la modalità operativa.
+// Nessun oggetto finto: il manager È quello vero creato dalla factory e il
+// fault è ambientale (lo store per-cell non scrivibile: il track del manager
+// reale non può armare la lease). Se l'inoltro del flag si perde, l'up
+// riesce senza supervisione e questa prova diventa rossa.
+test('createBuiltinFleet: la modalità operativa arriva al runtime — lease non armabile -> rifiuto pre-ticket', async () => {
+  const w = makeWorld();
+  const leaseStateDir = path.join(w.root, 'lease-state');
+  fs.mkdirSync(leaseStateDir, { mode: 0o700 });
+  const fleet = await createBuiltinFleet({
+    home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+    cellLeaseEnabled: true, leaseStateDir, log: () => {},
+  });
+  try {
+    fs.chmodSync(leaseStateDir, 0o500);
+    await assert.rejects(() => fleet.up('Dev'), (e) => e.fleetCode === 'LEASE_ARM_FAILED');
+  } finally {
+    fs.chmodSync(leaseStateDir, 0o700);
+    if (typeof fleet.close === 'function') { try { await fleet.close(); } catch (_) {} }
+    w.cleanup();
+  }
+});
+
 test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same unavailable (available:false), ma reason dice "non verificabile (EACCES)"', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-eacces-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });

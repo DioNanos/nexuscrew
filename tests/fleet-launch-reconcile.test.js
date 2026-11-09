@@ -8,6 +8,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const launchTarget = require('../lib/fleet/launch-target.js');
 const radici = require('../lib/fleet/vl-roots.js');
@@ -133,39 +134,56 @@ test('prepared (vl) con root assente: host -> claim -> record, nell\'ordine', as
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.down(d.cella);
   assert.equal(r.outcome, 'resolved-unlaunched');
-  assert.equal(r.host, 'root-absent');
+  // La prova che chiude e' la fase (phase-proof rule): un record fermo in prepared non
+  // e' mai entrato nella creazione, root assente o meno.
+  assert.equal(r.host, 'never-materialized');
   assert.deepStrictEqual(ordine, ['record(claim=0)'], 'la claim e\' sciolta PRIMA del commit del record');
   assert.deepStrictEqual(W.lease(d), []);
   assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
 });
 
-test('prepared (vl) con root preesistente e nessun contesto: «prepared» non prova l\'assenza di un host', async (t) => {
+test('prepared (vl) con root preesistente e nessun contesto: la prova di fase chiude il tentativo, la root non si tocca', async (t) => {
   const d = W.scriviMondo({ famiglia: 'vl' });
   t.after(() => W.pulisci(d));
   const root = radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella);
   await radici.riserva({ home: d.home, root, launchId: LID, ownerInstanceId: OWNER_INSTANCE_ID, cellId: d.cella, budgetMs: 4000 });
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+  const fotoRoot = fotoRadice(root);
   scrivi(d, 'prepared');
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
-  assert.equal(W.lease(d).length, 1, 'claim intatta');
-  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'presente');
+  // Phase-proof rule: creating si impegna PRIMA della new-session, quindi un record
+  // fermo in prepared e' certamente precedente a qualunque creazione: si chiude
+  // con la prova della fase, senza esigere l'host-context (che per questo
+  // lancio non puo' mai esistere). La root preesistente e' del vecchio lancio:
+  // resta byte per byte.
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'never-materialized');
+  assert.deepStrictEqual(W.lease(d), [], 'la claim del tentativo (effetto preparatorio proprio) si scioglie');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+  assert.ok(fs.existsSync(quarantena(d)), 'record in quarantena');
+  assert.equal(fotoRadice(root), fotoRoot, 'la root del vecchio lancio resta byte per byte (path, mode, sha256)');
 });
 
-test('prepared (vl) con claim di un ALTRO lancio (mismatch): niente rilascio, niente quarantena', async (t) => {
+test('prepared (vl) con claim di un ALTRO lancio (mismatch): la claim altrui resta, il tentativo si chiude', async (t) => {
   const d = mondoVlCrashato(t);
   const leaseFile = W.lease(d)[0];
   const dl = JSON.parse(fs.readFileSync(leaseFile, 'utf8'));
   dl.launchId = 'ee'.repeat(8);
   fs.writeFileSync(leaseFile, `${JSON.stringify(dl)}\n`);
   const prima = fs.readFileSync(leaseFile, 'utf8');
+  const lid = launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
+  // Phase-proof rule: una lease certamente di un altro lancio non e' un effetto di
+  // questo tentativo e non ne blocca la chiusura; resta al suo proprietario.
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'never-materialized');
   assert.equal(fs.readFileSync(leaseFile, 'utf8'), prima, 'la claim altrui non si tocca');
-  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'presente');
-  assert.equal(fs.existsSync(quarantena(d)), false);
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+  assert.ok(fs.existsSync(quarantena(d, lid)), 'record in quarantena');
 });
 
 test('claim: assente prosegue (ripetibile), mismatch blocca', async (t) => {
@@ -489,12 +507,12 @@ test('legacy v1 completo con supervisore VIVO: bloccato', async (t) => {
 // famiglia dal record, non dalla definizione
 // ---------------------------------------------------------------------------
 
-test('famiglia cambiata nella definizione: conta quella REGISTRATA nel record (vl -> barriera host)', async (t) => {
+test('famiglia cambiata nella definizione: conta quella REGISTRATA nel record (vl -> chiusura effetti vl)', async (t) => {
   const d = W.scriviMondo({ famiglia: 'vl' });
   t.after(() => W.pulisci(d));
   const root = radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella);
   await radici.riserva({ home: d.home, root, launchId: LID, ownerInstanceId: OWNER_INSTANCE_ID, cellId: d.cella, budgetMs: 4000 });
-  fs.mkdirSync(root, { recursive: true, mode: 0o700 }); // root preesistente: serve la prova host
+  fs.mkdirSync(root, { recursive: true, mode: 0o700 }); // root preesistente
   scrivi(d, 'prepared');
   // La definizione diventa un client generico DOPO il lancio.
   const { atomicWrite } = require('../lib/fleet/definitions.js');
@@ -507,8 +525,16 @@ test('famiglia cambiata nella definizione: conta quella REGISTRATA nel record (v
   });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
-  assert.equal(W.lease(d).length, 1, 'il record dice vl: la barriera host vale ancora');
+  // Il record dice vl: la chiusura la governa la famiglia REGISTRATA, non la
+  // definizione corrente. Per un prepared si chiude sulla prova di fase E la
+  // claim vl (effetto vl del lancio registrato) si scioglie col protocollo vl:
+  // fosse contato il client generico, quella claim resterebbe orfana.
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'never-materialized');
+  assert.deepStrictEqual(W.lease(d), [], 'il record dice vl: la claim vl si scioglie');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+  assert.ok(fs.existsSync(quarantena(d)), 'record in quarantena');
 });
 
 // ---------------------------------------------------------------------------
@@ -730,42 +756,99 @@ function mondoVlCrashato(t) {
 
 function rootVl(d) { return radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella); }
 
+// Fotografia ricorsiva di una radice: path, tipo, mode e sha256 di ogni file.
+// E' l'oracolo «la root del vecchio lancio non si tocca»: un isDirectory o un
+// confronto su un file solo lascerebbero vedere qualunque altra scrittura.
+function fotoRadice(radice) {
+  const righe = [];
+  const percorri = (dir, rel) => {
+    const st = fs.statSync(dir);
+    righe.push(`${rel || '.'}|dir|${st.mode.toString(8)}`);
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name))) {
+      const p = path.join(dir, ent.name);
+      const r = rel ? `${rel}/${ent.name}` : ent.name;
+      if (ent.isDirectory()) percorri(p, r);
+      else if (ent.isSymbolicLink()) righe.push(`${r}|symlink|${fs.readlinkSync(p)}`);
+      else {
+        const s = fs.statSync(p);
+        righe.push(`${r}|file|${s.mode.toString(8)}|${crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex')}`);
+      }
+    }
+  };
+  percorri(radice, '');
+  return righe.join('\n');
+}
+
+// Vita VERA di un figlio, non la sola assenza di raccolta: exitCode===null
+// resta vero anche dopo un SIGKILL il cui exit e' gia' stato raccolto
+// (signalCode='SIGKILL'), e uno zombie risponderebbe comunque a kill(0).
+// Qui si chiedono entrambe le assenze E il pid raggiungibile.
+function processoVivo(figlio) {
+  if (figlio.exitCode !== null || figlio.signalCode !== null) return false;
+  try { process.kill(figlio.pid, 0); return true; } catch (_) { return false; }
+}
+
+// Sensibilità dell'oracolo stesso: un figlio ucciso per SIGKILL il cui exit
+// e' GIA' stato raccolto mantiene exitCode===null (signalCode='SIGKILL') e
+// uno zombie risponderebbe comunque a kill(0). L'oracolo deve vederlo morto,
+// altrimenti attestarebbe vivo un host che il prodotto avesse ucciso.
+test('oracolo host vivo: un figlio ucciso per SIGKILL e gia\' raccolto NON risulta vivo', async () => {
+  const host = spawnaHostFinto();
+  const uscita = new Promise((r) => host.once('exit', r));
+  process.kill(host.pid, 'SIGKILL');
+  await uscita;
+  assert.equal(host.exitCode, null, 'morto per segnale: exitCode resta null');
+  assert.equal(host.signalCode, 'SIGKILL', 'la morte per segnale si vede qui');
+  assert.equal(processoVivo(host), false, 'l\'oracolo vede il morto: il solo exitCode===null non attesta la vita');
+});
+
 test('vl: crash al broker, root assente => riconciliato, claim sciolta, nessun host da giudicare', async (t) => {
   const d = mondoVlCrashato(t);
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.down(d.cella);
   assert.equal(r.outcome, 'resolved-unlaunched');
-  assert.equal(r.host, 'root-absent');
+  assert.equal(r.host, 'never-materialized');
   assert.deepStrictEqual(W.lease(d), []);
 });
 
-test('vl: root preesistente senza host e contesto di QUESTO lancio + pin: status none => riconciliato', async (t) => {
+test('vl: root preesistente senza host e contesto di QUESTO lancio + pin: si chiude sulla prova di fase', async (t) => {
   const d = mondoVlCrashato(t);
   fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.down(d.cella);
   assert.equal(r.outcome, 'resolved-unlaunched');
-  assert.equal(r.host, 'none');
+  assert.equal(r.host, 'never-materialized');
   assert.deepStrictEqual(W.lease(d), []);
 });
 
-test('vl: root preesistente con host VIVO => nessun rilascio, nessun arresto, record intatto', async (t) => {
+test('vl: root preesistente con host VIVO => il tentativo si chiude, l\'host precedente resta vivo e intatto', async (t) => {
   const d = mondoVlCrashato(t);
   fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+  const fotoRoot = fotoRadice(rootVl(d));
   const host = spawnaHostFinto();
   host.ref();
-  t.after(async () => { if (host.exitCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
+  t.after(async () => { if (host.exitCode === null && host.signalCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
   fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
-  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  const hostpidPrima = fs.readFileSync(path.join(d.root, 'hostpid'), 'utf8');
+  const lid = launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
-  assert.equal(W.lease(d).length, 1);
-  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
-  assert.equal(host.exitCode, null, 'l\'host non e\' stato fermato dal prodotto');
-  assert.equal(fs.existsSync(quarantena(d)), false);
+  // Phase-proof rule: riconciliare un prepared mai materializzato NON ferma e NON
+  // adotta l'eventuale host precedente: qui e' certamente di un altro lancio
+  // (il nostro non e' mai entrato in creazione). Si chiude il tentativo, si
+  // scioglie la sola claim nostra, l'host e la root non si toccano.
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'never-materialized');
+  assert.deepStrictEqual(W.lease(d), [], 'la claim del tentativo si scioglie');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+  assert.ok(fs.existsSync(quarantena(d, lid)), 'record in quarantena');
+  assert.equal(fotoRadice(rootVl(d)), fotoRoot, 'la root vl del vecchio lancio resta byte per byte');
+  assert.equal(fs.readFileSync(path.join(d.root, 'hostpid'), 'utf8'), hostpidPrima, 'l\'hostpid non si tocca');
+  assert.ok(processoVivo(host), 'l\'host e\' vivo: nessun segnale, nessuna uscita, pid raggiungibile');
 });
 
 const GUASTI_BARRIERA = [
@@ -780,16 +863,24 @@ const GUASTI_BARRIERA = [
 ];
 
 for (const [nome, guasto] of GUASTI_BARRIERA) {
-  test(`vl: root preesistente e ${nome} => blocco, claim e record intatti`, async (t) => {
+  test(`vl: root preesistente e ${nome} => il tentativo si chiude sulla prova di fase`, async (t) => {
     const d = mondoVlCrashato(t);
     fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+    const fotoRoot = fotoRadice(rootVl(d));
     guasto(d);
+    const lid = launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
     const { runtime } = W.apriRuntime(d, {});
     t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-    await assert.rejects(() => runtime.down(d.cella), BLOCCO);
-    assert.equal(W.lease(d).length, 1);
-    assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'presente');
-    assert.equal(fs.existsSync(quarantena(d)), false);
+    // Phase-proof rule: la prova di fase e' autonoma da contesto e pin — un prepared
+    // mai materializzato non li ha mai prodotti — quindi nessuno di questi
+    // guasti puo' piu' trattenere la pratica. La root resta com'e'.
+    const r = await runtime.down(d.cella);
+    assert.equal(r.outcome, 'resolved-unlaunched');
+    assert.equal(r.host, 'never-materialized');
+    assert.deepStrictEqual(W.lease(d), [], 'la claim del tentativo si scioglie');
+    assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+    assert.ok(fs.existsSync(quarantena(d, lid)), 'record in quarantena');
+    assert.equal(fotoRadice(rootVl(d)), fotoRoot, 'la root preesistente resta byte per byte');
   });
 }
 
@@ -804,6 +895,119 @@ test('vl: la root del record non e\' quella canonica del nodo e della cella => b
   assert.equal(W.lease(d).length, 1);
 });
 
+// ---------------------------------------------------------------------------
+// Oltre prepared: con una prova di boot VALIDA (stesso nodo e namespace, boot
+// diverso) la valutazione ammette alla riconciliazione e la BARRIERA HOST
+// decide. Sono i negativi che sostituiscono i vecchi blocchi di GUASTI_BARRIERA
+// e P1B-02, ora divenuti positivi di fase: un v2 gia' entrato in creazione
+// (creating, created) non si chiude sul silenzio di contesto, pin, base o ack
+// (phase-proof rule, second paragraph). Il record avanza dal prepared del figlio; il
+// bootId del figlio e' quello reale, si riscrive quello di prima per rendere
+// la prova di boot valida.
+// ---------------------------------------------------------------------------
+function avanzaOltrePrepared(d, fase) {
+  const lid = LID_REALE(d);
+  let da = 'prepared';
+  for (const tappa of ['creating', 'created']) {
+    const campi = tappa === 'created' ? { sessionId: '$5', windowId: '@7', paneId: '%9' } : {};
+    const av = launchTarget.avanza(d.filesRoot, d.sessione, { launchId: lid, da, a: tappa, campi, ora: Date.now() });
+    assert.equal(av.ok, true, JSON.stringify(av));
+    da = tappa;
+    if (tappa === fase) break;
+  }
+  const file = W.fileRecord(d);
+  const dato = JSON.parse(fs.readFileSync(file, 'utf8'));
+  dato.bootId = BOOT_PRIMA;
+  // formato canonico del modulo: JSON + newline, cosi' il confronto
+  // byte per byte del record non vede la sola normalizzazione del file.
+  fs.writeFileSync(file, `${JSON.stringify(dato)}\n`);
+}
+
+const OLTRE_PREPARED_ROOT = [
+  ['root presente senza contesto', (d) => { fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 }); }],
+  ['base assente', () => {}],
+];
+
+for (const fase of ['creating', 'created']) {
+  for (const [nome, prepara] of OLTRE_PREPARED_ROOT) {
+    test(`oltre prepared (${fase}), ${nome}, prova di boot valida: la barriera NON si scioglie`, async (t) => {
+      const d = W.scriviMondo({ famiglia: 'vl' });
+      t.after(() => W.pulisci(d));
+      const root = radici.radiceServer(d.home, OWNER_INSTANCE_ID, d.cella);
+      await radici.riserva({ home: d.home, root, launchId: LID, ownerInstanceId: OWNER_INSTANCE_ID, cellId: d.cella, budgetMs: 4000 });
+      scrivi(d, fase);
+      prepara(d);
+      const recordPrima = fs.readFileSync(W.fileRecord(d));
+      const claimPrima = fs.readFileSync(W.lease(d)[0]);
+      const { runtime } = W.apriRuntime(d, conoscenza(d));
+      t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+      const r = await runtime.reconcile(d.cella, LID);
+      assert.equal(r.outcome, 'blocked', `${fase} senza prova host NON si chiude: ${JSON.stringify(r)}`);
+      assert.equal(r.code, 'HOST_BARRIER');
+      assert.deepStrictEqual(fs.readFileSync(W.fileRecord(d)), recordPrima, 'record intatto');
+      assert.deepStrictEqual(fs.readFileSync(W.lease(d)[0]), claimPrima, 'claim intatta');
+      assert.equal(fs.existsSync(quarantena(d)), false, 'nessuna quarantena');
+    });
+  }
+}
+
+const OLTRE_PREPARED_BASE = [
+  ['contesto di un ALTRO lancio', (d) => {
+    for (const f of W.trova(path.join(d.home), 'host-context.json')) {
+      const c = JSON.parse(fs.readFileSync(f, 'utf8')); c.launchId = 'ee'.repeat(8); fs.writeFileSync(f, JSON.stringify(c));
+    }
+  }],
+  ['contesto illeggibile', (d) => {
+    for (const f of W.trova(path.join(d.home), 'host-context.json')) fs.writeFileSync(f, '{ non json');
+  }],
+  ['pin del binario mancante', (d) => { fs.rmSync(path.join(d.home, '.nexuscrew', 'vl-control-pin'), { recursive: true, force: true }); }],
+  ['base spostata', (d) => { fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`); }],
+  ['base sostituita', (d) => { fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`); fs.mkdirSync(baseVl(d), { recursive: true, mode: 0o700 }); }],
+];
+
+for (const fase of ['creating', 'created']) {
+  for (const [nome, guasto] of OLTRE_PREPARED_BASE) {
+    test(`oltre prepared (${fase}), ${nome}: blocked, claim e record intatti`, async (t) => {
+      const d = mondoVlCrashato(t);
+      avanzaOltrePrepared(d, fase);
+      fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+      guasto(d);
+      const recordPrima = fs.readFileSync(W.fileRecord(d));
+      const claimPrima = fs.readFileSync(W.lease(d)[0]);
+      const { runtime } = W.apriRuntime(d, conoscenza(d));
+      t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+      const r = await runtime.reconcile(d.cella, LID_REALE(d));
+      assert.equal(r.outcome, 'blocked', `${fase} senza prova host NON si chiude: ${JSON.stringify(r)}`);
+      assert.equal(r.code, 'HOST_BARRIER');
+      assert.deepStrictEqual(fs.readFileSync(W.fileRecord(d)), recordPrima, 'record intatto');
+      assert.deepStrictEqual(fs.readFileSync(W.lease(d)[0]), claimPrima, 'claim intatta');
+      assert.equal(fs.existsSync(quarantena(d, LID_REALE(d))), false, 'nessuna quarantena');
+    });
+  }
+
+  test(`oltre prepared (${fase}) con host VIVO e contesto valido: blocked, host e root intatti`, async (t) => {
+    const d = mondoVlCrashato(t);
+    avanzaOltrePrepared(d, fase);
+    fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+    const fotoRoot = fotoRadice(rootVl(d));
+    const host = spawnaHostFinto();
+    host.ref();
+    t.after(async () => { if (host.exitCode === null && host.signalCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
+    fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
+    const recordPrima = fs.readFileSync(W.fileRecord(d));
+    const claimPrima = fs.readFileSync(W.lease(d)[0]);
+    const { runtime } = W.apriRuntime(d, conoscenza(d));
+    t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+    const r = await runtime.reconcile(d.cella, LID_REALE(d));
+    assert.equal(r.outcome, 'blocked', `un host osservato vivo blocca la chiusura: ${JSON.stringify(r)}`);
+    assert.equal(r.code, 'HOST_BARRIER');
+    assert.deepStrictEqual(fs.readFileSync(W.fileRecord(d)), recordPrima, 'record intatto');
+    assert.deepStrictEqual(fs.readFileSync(W.lease(d)[0]), claimPrima, 'claim intatta');
+    assert.equal(fs.existsSync(quarantena(d, LID_REALE(d))), false, 'nessuna quarantena');
+    assert.equal(fotoRadice(rootVl(d)), fotoRoot, 'la root resta byte per byte');
+    assert.ok(processoVivo(host), 'l\'host e\' vivo: nessun segnale, nessuna uscita, pid raggiungibile');
+  });
+}
 
 // ---------------------------------------------------------------------------
 // R2 / P1B-02: la base della cella scomparsa non prova l'assenza dell'host
@@ -817,37 +1021,63 @@ function avviaHostVivo(t, d) {
   fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
   const host = spawnaHostFinto();
   host.ref();
-  t.after(async () => { if (host.exitCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
+  t.after(async () => { if (host.exitCode === null && host.signalCode === null) { const f = new Promise((r) => host.once('exit', r)); host.kill('SIGTERM'); await f; } });
   fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));
   return host;
 }
 
 async function bloccatoSenzaEffetti(t, d, host) {
-  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  // Phase-proof rule: la base qualificata serve alla prova HOST (interrogare il
+  // binario pinnato); per un prepared mai materializzato la prova e' la fase,
+  // quindi la pratica si chiude comunque. Le garanzie del vecchio oracolo
+  // restano, spostate dove il disegno le mette: l'host vivo non si tocca, la
+  // root resta, la claim del tentativo si scioglie, il record in quarantena.
+  // In questi scenari la root vl vive DENTRO la base che il test stesso ha
+  // spostato o rimosso: la fotografia byte per byte va quindi sulla base che
+  // resta (spostata o sostituita), e una base rimossa non deve riapparire.
+  const fotoBasi = [];
+  for (const dir of [baseVl(d), `${baseVl(d)}.spostata`]) {
+    if (fs.existsSync(dir)) fotoBasi.push([dir, fotoRadice(dir)]);
+  }
+  const baseAssente = !fs.existsSync(baseVl(d));
+  const hostpid = path.join(d.root, 'hostpid');
+  const hostpidPrima = fs.existsSync(hostpid) ? fs.readFileSync(hostpid, 'utf8') : null;
+  const lid = launchTarget.leggi(d.filesRoot, d.sessione).record.launchId;
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.down(d.cella), BLOCCO);
-  assert.equal(W.lease(d).length, 1, 'claim intatta');
-  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'record intatto');
-  assert.equal(fs.existsSync(quarantena(d)), false);
-  if (host) assert.equal(host.exitCode, null, 'l\'host non e\' stato toccato');
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-unlaunched');
+  assert.equal(r.host, 'never-materialized');
+  assert.deepStrictEqual(W.lease(d), [], 'la claim del tentativo si scioglie');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente', 'record chiuso');
+  assert.ok(fs.existsSync(quarantena(d, lid)), 'record in quarantena');
+  for (const [dir, foto] of fotoBasi) {
+    assert.equal(fotoRadice(dir), foto, `${dir} resta byte per byte: il prodotto non scrive nel territorio del vecchio lancio`);
+  }
+  if (baseAssente) {
+    assert.equal(fs.existsSync(baseVl(d)), false, 'la base rimossa non viene ricreata dal prodotto');
+  }
+  if (hostpidPrima !== null) {
+    assert.equal(fs.readFileSync(hostpid, 'utf8'), hostpidPrima, 'l\'hostpid non si tocca');
+  }
+  if (host) assert.ok(processoVivo(host), 'l\'host e\' vivo: nessun segnale, nessuna uscita, pid raggiungibile');
 }
 
-test('R2/P1B-02: base qualificata SPOSTATA con host vivo => claim, record e host intatti', async (t) => {
+test('R2/P1B-02: base qualificata SPOSTATA con host vivo => il tentativo si chiude, host intatto', async (t) => {
   const d = mondoVlCrashato(t);
   const host = avviaHostVivo(t, d);
   fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`);
   await bloccatoSenzaEffetti(t, d, host);
 });
 
-test('R2/P1B-02: base RIMOSSA con host vivo => claim, record e host intatti', async (t) => {
+test('R2/P1B-02: base RIMOSSA con host vivo => il tentativo si chiude, host intatto', async (t) => {
   const d = mondoVlCrashato(t);
   const host = avviaHostVivo(t, d);
   fs.rmSync(baseVl(d), { recursive: true, force: true });
   await bloccatoSenzaEffetti(t, d, host);
 });
 
-test('R2/P1B-02: base SOSTITUITA da una directory nuova (senza il contesto del lancio) con host vivo => blocco', async (t) => {
+test('R2/P1B-02: base SOSTITUITA da una directory nuova (senza il contesto del lancio) con host vivo => chiusura di fase', async (t) => {
   const d = mondoVlCrashato(t);
   const host = avviaHostVivo(t, d);
   fs.renameSync(baseVl(d), `${baseVl(d)}.spostata`);
@@ -862,7 +1092,7 @@ test('R2/P1B-02: il positivo resta — root assente dentro una base qualificata 
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.down(d.cella);
   assert.equal(r.outcome, 'resolved-unlaunched');
-  assert.equal(r.host, 'root-absent');
+  assert.equal(r.host, 'never-materialized');
   assert.deepStrictEqual(W.lease(d), []);
 });
 

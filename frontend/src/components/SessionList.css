@@ -130,6 +130,12 @@
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
   overflow: hidden;
 }
+/* L'etichetta della supervisione NC sta in una riga SUA, sotto lo stato:
+   visibile, ma non è il testo di stato e non lo riscrive. */
+.nc-mcard-text .nc-nc-label {
+  font-size: 11px; opacity: .62; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dot.warn { background: #e0b020; box-shadow: 0 0 6px #e0b02088; }
 
 /* Titolo gruppo per-nodo remoto (B2): dot di stato inline nel titolo. */

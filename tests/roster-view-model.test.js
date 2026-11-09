@@ -69,7 +69,13 @@ test('healthDot maps health to a dot class and preserves the desktop/mobile pass
   const { healthDot } = await model();
   assert.equal(healthDot(null), null);
   assert.equal(healthDot(undefined), null);
-  assert.equal(healthDot({}), 'warn', 'absent status falls to warn');
+  // Contratto cambiato con lo strato C0 della vista VL, e vale per tutti i
+  // consumer: un oggetto senza `status` e' «nessuna affermazione», non un
+  // avviso. Un pallino acceso su un dato che nessuno ha dichiarato sarebbe
+  // una diagnosi nostra. Gli stati DICHIARATI e diversi da healthy restano
+  // warn (righe sotto).
+  assert.equal(healthDot({}), null, 'absent status is no statement');
+  assert.equal(healthDot({ status: null }), null);
   assert.equal(healthDot({ status: 'healthy' }), 'on', 'only a healthy probe is green');
   assert.equal(healthDot({ status: 'degraded' }), 'warn');
   assert.equal(healthDot({ status: 'down' }), 'warn');

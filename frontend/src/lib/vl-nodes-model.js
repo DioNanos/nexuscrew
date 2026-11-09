@@ -25,6 +25,8 @@
 // label su owner diversi sono distinguibili SOLO cosi' (brief, invariante
 // 2), ed e' anche cio' che decide a quale route va instradato un comando
 // (invariante 3) — sbagliare owner qui manda il comando al device sbagliato.
+import { connectionState, healthView } from './vl-node-view.js';
+
 export function vlNodeToPeer(node, owner = {}) {
   if (!node || typeof node !== 'object') return null;
   const nodeId = typeof node.nodeId === 'string' ? node.nodeId : '';
@@ -44,7 +46,10 @@ export function vlNodeToPeer(node, owner = {}) {
     lastSeen: node.lastSeen ?? null,
     generation: node.generation ?? null,
     version: node.version ?? null,
-    health: node.health ?? null,
+    // La salute NON si passa attraverso: il broker dichiara `state`, il dot
+    // legge `status`. La tabella (e la freschezza) sta in `vl-node-view.js`.
+    health: healthView(node.health, { online: node.online === true, lastSeen: node.lastSeen ?? null }),
+    connection: connectionState(node),
     // La sessione DICHIARATA dal device nell'heartbeat ({attached, profile},
     // gia' sanitizzata dal broker) — e' il dato con cui la sidebar scrive
     // «VL-Node-A · 1 sessione». Assente (hub o binario piu' vecchio) -> null,
@@ -76,6 +81,7 @@ export function vlSidebarGroups(peers) {
   for (const peer of Array.isArray(peers) ? peers : []) {
     if (!peer || peer.kind !== 'vl' || !peer.nodeId) continue;
     const online = peer.online === true;
+    const connection = peer.connection || connectionState(peer);
     const attached = online && peer.session?.attached === true;
     const ownerKey = peer.ownerInstanceId || 'local';
     out.push({
@@ -85,8 +91,8 @@ export function vlSidebarGroups(peers) {
       route: Array.isArray(peer.route) ? [...peer.route] : [],
       instanceId: null,
       direct: false,
-      status: online ? 'up' : 'offline',
-      downSince: online ? null : (peer.lastSeen ?? null),
+      status: connection === 'online' ? 'up' : connection,
+      downSince: connection === 'offline' ? (peer.lastSeen ?? null) : null,
       sessions: attached ? [{
         key: `vl:${ownerKey}:${peer.nodeId}`,
         name: peer.session.profile,

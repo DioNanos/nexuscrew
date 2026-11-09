@@ -15,7 +15,7 @@ import DeviceNameAsk from './components/DeviceNameAsk.jsx';
 import NotifyCenter from './components/NotifyCenter.jsx';
 import CellSwitcher from './components/CellSwitcher.jsx';
 import { CellActionsPopover, CellActionsSheet } from './components/CellActions.jsx';
-import { cellRuntime } from './lib/roster-view-model.js';
+import { cellRuntime, powerCellEvidence, powerCellFreshness } from './lib/roster-view-model.js';
 import { nextRendererPreference, readRendererPreference, writeRendererPreference } from './lib/terminal-renderer.js';
 import { leggiFilesTasto, scriviFilesTasto, leggiTastieraTasto, leggiPannelloTasto } from './lib/bar-files-tasto.js';
 import { readFontSize, writeFontSize } from './lib/terminal-fontsize.js';
@@ -23,6 +23,8 @@ import { liveHostDotClass, liveHostView } from './lib/live-host-view.js';
 import { createPollGuard } from './lib/poll-guard.js';
 import { subscribeFleetRoute, readFleetRoute, refreshFleetRoute } from './lib/fleet-poll.js';
 import VlSessionView from './components/VlSessionView.jsx';
+import { risolviVlSession } from './lib/vl-session-model.js';
+import { useVlNodeLive } from './hooks/useVlNodeLive.js';
 import ChatTileView from './components/chat/ChatTileView.jsx';
 import { DEMO } from './lib/chat-fixtures.js';
 import { ui0ChatEnabled } from './lib/ui0-chat-demo.js';
@@ -950,10 +952,43 @@ export default function App() {
   const openSingle = (ref) => setSingle(parseRef(ref));
   // Sessione di un nodo VL nella vista larga (VL_NODES_IN_SIDEBAR): il peer
   // arriva dalla sidebar (vlNodeToPeer), la vista riusa VlNodeEvents.
+  // La vista di un nodo VL non tiene il PEER del click: tiene la sua IDENTITA'
+  // (nodo + owner + route). Il peer si risolve dallo stato vivo, cosi' un
+  // cambio di generazione o di sessione arriva alla vista aperta invece di
+  // restare congelato a com'era quando si e' cliccato.
   const [vlSession, setVlSession] = useState(null);
+  const openVlSession = (peer) => {
+    if (!peer || typeof peer !== 'object' || !peer.nodeId) return;
+    setVlSession({
+      nodeId: peer.nodeId,
+      label: peer.label || peer.nodeId,
+      ownerInstanceId: peer.ownerInstanceId || null,
+      route: Array.isArray(peer.route) ? [...peer.route] : [],
+    });
+  };
   // Gruppi per-nodo remoto (B2): polling separato, best-effort;
   // zero nodi configurati -> [] e workspace identico a oggi.
   const nodeGroups = useNodes(token, isDesktop);
+  // Il peer della vista: si cerca nella lista viva di QUESTA shell. Su desktop
+  // `nodeGroups` c'e'; su mobile App chiama `useNodes(token, false)` e la lista
+  // e' disabilitata e vuota (la lista mobile vive dentro SessionList, che qui
+  // non e' montata). Quando non c'e' una fonte, la vista NON si chiude e NON
+  // finge: resta aperta sul nodo dell'identita' e dichiara che lo stato non e'
+  // aggiornato. Chiudere sarebbe un'altra bugia — «non esiste» invece di «non
+  // lo so».
+  // Su mobile la lista di gruppi non esiste: mentre una vista VL e' aperta si
+  // legge UNA volta ogni 4 s i nodi VL dell'owner (useVlNodeLive), cosi' la
+  // vista ha una fonte viva e il polling non resta sospeso per sempre. Non si
+  // accende `useNodes` su mobile: sarebbe il polling completo (nodi, sessioni
+  // remote, fleet per route) per leggere un solo nodo.
+  const vlLive = useVlNodeLive(token, vlSession, !!vlSession && !isDesktop);
+  const vlRisolto = risolviVlSession(vlSession, nodeGroups, { isDesktop, live: vlLive });
+  // Un publish intermedio della lista non chiude la vista: si chiude solo
+  // quando la risoluzione dice che il peer non c'e' piu'.
+  useEffect(() => {
+    if (vlSession && vlRisolto === null) setVlSession(null);
+  }, [vlSession, vlRisolto]);
+
   const deckOwners = useMemo(() => (nodeGroups || []).filter((g) => g.instanceId).map((g) => ({
     instanceId: g.instanceId, route: g.route, label: g.label, status: g.status, stale: g.stale === true, checking: g.checking === true,
   })), [nodeGroups]);
@@ -1006,6 +1041,15 @@ export default function App() {
     });
   }, [deckOwners, deckStore.localNodeId, deckStore.viewUpdate]);
   const [powerCell, setPowerCell] = useState(null);
+  // Il foglio desktop legge dalla stessa fonte della sidebar, non dalla copia
+  // congelata all'apertura: evidenze di esecuzione del lancio corrente
+  // (presenza, sessione, consegna del prompt, supervisione NC) e autorità
+  // della lettura per route — le scelte editabili restano dell'operatore.
+  const powerCellLive = useMemo(() => powerCellEvidence(powerCell, cells, nodeGroups), [powerCell, cells, nodeGroups]);
+  const powerCellFresh = useMemo(
+    () => powerCellFreshness(powerCell, { localAutorevole: localVerified, localFleetStale: fleetStale, cells, nodeGroups }),
+    [powerCell, localVerified, fleetStale, cells, nodeGroups],
+  );
   const [bootSettlement, setBootSettlement] = useState(null);
   const bootSettlementSeq = useRef(0);
   // Le riletture differite delle tuple la cui azione ha perso la risposta: una
@@ -1553,7 +1597,9 @@ export default function App() {
       return (
         <>
           <div className="nc-single-overlay">
-            <VlSessionView peer={vlSession} token={token} onBack={() => setVlSession(null)} />
+            {/* `vlRisolto` puo' essere null nel render in cui il peer sparisce: la vista
+                non deve esplodere prima che l'effetto chiuda la selezione. */}
+            <VlSessionView peer={vlRisolto ? vlRisolto.peer : null} nonCorrente={!!(vlRisolto && vlRisolto.nonCorrente)} token={token} onBack={() => setVlSession(null)} />
           </div>
           {settingsOverlays}
         </>
@@ -1562,7 +1608,7 @@ export default function App() {
     if (!session) {
       return (
         <>
-          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={setVlSession}
+          <SessionList onPick={pickSession} token={token} onSettings={openSettings} onOpenVlSession={openVlSession}
             panelPort={panelPort} nodePanelPorts={nodePanelPorts}
             hostByRoute={hostByRoute} onDesignateCell={designateCellHost} onClearHostCell={clearCellHost} />
           {settingsOverlays}
@@ -1622,7 +1668,7 @@ export default function App() {
           onVisibility={onVisibility}
           onNew={() => openSettings('fleet', true)}
           onSettings={openSettings}
-          onOpenVlSession={setVlSession}
+          onOpenVlSession={openVlSession}
           width={sideW}
           collapsed={sideMin}
           onResize={setSideW}
@@ -1671,7 +1717,9 @@ export default function App() {
 
       {vlSession && (
         <div className="nc-single-overlay">
-          <VlSessionView peer={vlSession} token={token} onBack={() => setVlSession(null)} />
+          {/* `vlRisolto` puo' essere null nel render in cui il peer sparisce: la vista
+                non deve esplodere prima che l'effetto chiuda la selezione. */}
+            <VlSessionView peer={vlRisolto ? vlRisolto.peer : null} nonCorrente={!!(vlRisolto && vlRisolto.nonCorrente)} token={token} onBack={() => setVlSession(null)} />
         </div>
       )}
       {single && (
@@ -1686,8 +1734,8 @@ export default function App() {
           />
         </div>
       )}
-      {powerCell && (
-        <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+      {powerCellLive && (
+        <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} autorevole={powerCellFresh.autorevole} fleetStale={powerCellFresh.fleetStale} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
       {settingsOverlays}
     </div>

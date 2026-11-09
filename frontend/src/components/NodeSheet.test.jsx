@@ -391,11 +391,37 @@ describe('UI nodi VL step 2: comandi VL da capabilities + stato da lastAck', () 
     expect(screen.queryByText('completed')).toBeNull();
   });
 
-  it('does not treat health.state as Fleet health.status — a running VL node is not shown as broken', () => {
+  // Il contratto e' cambiato qui: `running` senza prova del broker non e' una
+  // salute (vedi vl-node-view.js), ma non e' nemmeno un guasto. La classe e'
+  // quella di avvertenza, e il dettaglio del device resta quello che ha mandato.
+  it('a running VL node with no broker proof is a warning, not a fault and not healthy', () => {
     renderSheet(vlNode({ health: { state: 'running', detail: 'all good' } }), []);
     const box = screen.getByText('all good').closest('.nc-set-test');
-    expect(box.className).toContain(' ok');
+    expect(box.className).toContain(' warn');
     expect(box.className).not.toContain(' ko');
+    expect(box.className).not.toContain(' ok');
+  });
+
+  // La freschezza di VL vale per i nodi VL. Un peer Fleet sano non ha
+  // heartbeat VL (`online`, `lastSeen`): applicargli quella regola lo
+  // degradava, e il probe Fleet non c'entra con quel contratto.
+  it('a healthy Fleet peer stays healthy without VL heartbeat fields', () => {
+    const fleet = {
+      kind: 'direct', name: 'hub', label: 'Hub', status: 'up',
+      health: { status: 'healthy', detail: 'probe ok' },
+    };
+    renderSheet(fleet, []);
+    const box = screen.getByText('probe ok').closest('.nc-set-test');
+    expect(box.className).toContain(' ok');
+    expect(box.className).not.toContain(' warn');
+  });
+
+  it('a running VL node with the broker attested is healthy', () => {
+    // Un'osservazione di adesso: la freschezza fa parte della decisione, quindi
+    // una fixture con un lastSeen vecchio non sarebbe verde per costruzione.
+    renderSheet(vlNode({ lastSeen: Date.now(), health: { state: 'running', brokerReachable: true, detail: 'all good' } }), []);
+    const box = screen.getByText('all good').closest('.nc-set-test');
+    expect(box.className).toContain(' ok');
   });
 
   // /vl-nodes/* e' federato (2026-08-05): il foglio deve dire "federated",

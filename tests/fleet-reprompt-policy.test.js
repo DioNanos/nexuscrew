@@ -563,8 +563,14 @@ async function upWith(t, opts = {}) {
   t.after(() => fleet.close().catch(() => {}));
   attestaProprietario(fleet.lease, () => ticket);
   const result = await fleet.up('Dev');
-  return { w, result, calls: w.calls(), ticket: () => ticket };
+  return { w, result, calls: w.calls(), ticket: () => ticket, lease: fleet.lease };
 }
+
+test('runtime: il fixture del proprietario NON disarma il control del lancio operativo', async (t) => {
+  const { result, lease } = await upWith(t, { markerValue: 'paste-delivered' });
+  assert.ok(result && result.ok, 'il lancio operativo col manager vero della factory non rifiuta');
+  assert.equal(lease.controlArmato('Dev'), true, 'il control è armato dal manager reale, non dal fixture');
+});
 
 test('runtime: custom restartReprompt:false — zero paste/Enter dal runtime, esito letto dal report', async (t) => {
   const { result, calls } = await upWith(t, { engineExtra: { restartReprompt: false }, markerValue: 'paste-delivered' });

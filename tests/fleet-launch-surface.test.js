@@ -366,13 +366,14 @@ test('T82 vl: crash reale al broker, POST riconcilia col launchId del record', a
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
   const r = await runtime.reconcile(d.cella, letto.record.launchId);
   assert.equal(r.outcome, 'reconciled');
-  assert.equal(r.host, 'root-absent');
+  // Phase-proof rule: la prova che chiude e' la fase prepared, non l'assenza della root.
+  assert.equal(r.host, 'never-materialized');
   assert.equal(r.backup, true);
   assert.deepEqual(W.lease(d), [], 'la claim di quel lancio e\' sciolta');
   assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
 });
 
-test('T82 vl: barriera host senza base qualificata = blocked, claim e record restano', async (t) => {
+test('T82 vl: prepared senza base qualificata => la prova di fase chiude, con la claim del tentativo', async (t) => {
   const d = mondoPrepared(t, 'vl');
   await radici.riserva({
     home: d.home, root: radici.radiceServer(d.home, W.OWNER_INSTANCE_ID, d.cella),
@@ -380,10 +381,14 @@ test('T82 vl: barriera host senza base qualificata = blocked, claim e record res
   });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  // Phase-proof rule: la base qualificata serve alla prova host (binario pinnato);
+  // un prepared mai materializzato non l'ha mai richiesta e non la esige ora.
+  // La garanzia P1B-02 (base scomparsa non prova l'assenza di un host) resta
+  // per le fasi oltre prepared: qui la fase e' gia' la prova.
   const r = await runtime.reconcile(d.cella, LID);
-  assert.equal(r.outcome, 'blocked');
-  assert.equal(r.code, 'HOST_BARRIER');
-  assert.equal(r.host, 'base-mancante');
-  assert.equal(W.lease(d).length, 1, 'la claim non si tocca');
-  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'presente', 'il record non si tocca');
+  assert.equal(r.outcome, 'reconciled');
+  assert.equal(r.host, 'never-materialized');
+  assert.equal(r.backup, true);
+  assert.deepStrictEqual(W.lease(d), [], 'la claim del tentativo si scioglie');
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente', 'record chiuso');
 });

@@ -464,7 +464,8 @@ test('dispatch: status, stop and restart are public lifecycle commands', async (
   const { home } = initHome();
   const logs = [];
   const execImpl = (_bin, args) => args.includes('is-active') ? 'active' : '';
-  assert.equal(dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) }).code, 0);
+  // `status` legge lo stato NC delle celle dal server locale: promessa.
+  assert.equal((await dispatch(['status'], { home, platform: 'linux', execImpl, log: (x) => logs.push(x) })).code, 0);
   const lifecycle = { home, platform: 'linux', execImpl, ensureTmuxSurvivalImpl: () => ({ killMode: 'process' }), log: (x) => logs.push(x) };
   assert.equal(dispatch(['stop'], lifecycle).code, 0);
   // `restart` ora attende la salute del servizio, quindi restituisce una
@@ -858,8 +859,8 @@ test('stop termux: no pidfile e idempotente e pulisce supervisor orfani', () => 
   delete process.env.NEXUSCREW_PIDFILE;
 });
 
-test('status linux: systemctl is-active (mock)', () => {
-  const r = status({
+test('status linux: systemctl is-active (mock)', async () => {
+  const r = await status({
     platform: 'linux',
     execImpl: (b, a) => 'active',
     log: () => {},
@@ -869,19 +870,55 @@ test('status linux: systemctl is-active (mock)', () => {
   assert.equal(r.running, true);
 });
 
-test('status termux: boot-script + pidfile state', () => {
+test('status: celle con ncControl dal server locale, non fatale se non risponde', async () => {
+  const { home } = initHome();
+  // fetch iniettabile: il server locale risponde con una cella dello strato
+  // e una di un server PRECEDENTE (campo ncControl assente).
+  const fetchVivo = async (url) => {
+    if (!String(url).includes('/api/fleet/status')) return { status: 404 };
+    return {
+      status: 200,
+      json: async () => ({
+        cells: [
+          { cell: 'dev', label: 'Dev', active: true, tmux: true, ncControl: 'attested' },
+          { cell: 'vecchia', active: true, tmux: true },
+        ],
+      }),
+    };
+  };
+  const base = { home, platform: 'linux', execImpl: () => 'active', log: () => {}, fetchImpl: fetchVivo };
+  const r = await status(base);
+  assert.ok(Array.isArray(r.cells), 'server vivo: la sezione celle c\'e\'');
+  const dev = r.cells.find((c) => c.cell === 'dev');
+  assert.equal(dev.label, 'Dev');
+  assert.equal(dev.ncControl, 'attested');
+  assert.match(dev.ncControlText, /attestato/i);
+  const vecchia = r.cells.find((c) => c.cell === 'vecchia');
+  assert.equal(vecchia.ncControl, 'unverifiable', 'campo assente: MAI un none ricostruito');
+  assert.match(vecchia.ncControlText, /non verificabile/i);
+  // lingua esplicita: la stessa osservazione, testo localizzato
+  const ren = await status({ ...base, lang: 'en' });
+  assert.match(ren.cells.find((c) => c.cell === 'dev').ncControlText, /attested/i);
+  // server fermo (fetch che rifiuta): status NON fallisce, nessuna sezione celle
+  const rFermo = await status({ ...base, fetchImpl: async () => { throw new Error('connection refused'); } });
+  assert.equal(rFermo.cells, null);
+  assert.equal(rFermo.running, true);
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test('status termux: boot-script + pidfile state', async () => {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-st-'));
   const tmpPid = path.join(tmpHome, 'nexuscrew.pid');
   process.env.NEXUSCREW_PIDFILE = tmpPid;
   fs.rmSync(tmpPid, { force: true });
   // no boot script, no pidfile -> not installed, not running
-  const r = status({ platform: 'termux', execImpl: () => {}, log: () => {}, home: tmpHome });
+  const r = await status({ platform: 'termux', execImpl: () => {}, log: () => {}, home: tmpHome });
   assert.equal(r.bootScriptInstalled, false);
   assert.equal(r.running, false);
   // crea boot script -> installed
   fs.mkdirSync(path.join(tmpHome, '.termux', 'boot'), { recursive: true });
   fs.writeFileSync(path.join(tmpHome, '.termux', 'boot', 'nexuscrew.sh'), 'x');
-  const r2 = status({ platform: 'termux', execImpl: () => {}, log: () => {}, home: tmpHome });
+  const r2 = await status({ platform: 'termux', execImpl: () => {}, log: () => {}, home: tmpHome });
   assert.equal(r2.bootScriptInstalled, true);
   assert.equal(r2.running, false); // nessun pidfile vivo
   delete process.env.NEXUSCREW_PIDFILE;
@@ -894,7 +931,7 @@ test('linux/mac lifecycle riconosce un runtime portable anche col service manage
     fs.mkdirSync(path.join(home, '.nexuscrew'), { recursive: true });
     const { child } = portableFixture(home);
     t.after(() => { try { child.kill('SIGKILL'); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
-    const out = status({ home, platform, uid: 501, log: () => {}, execImpl: () => { throw new Error('inactive'); } });
+    const out = await status({ home, platform, uid: 501, log: () => {}, execImpl: () => { throw new Error('inactive'); } });
     assert.equal(out.running, true);
     assert.equal(out.runtimeOwner, 'portable');
     assert.equal(out.portablePid, child.pid);
@@ -962,12 +999,13 @@ test('url helper: costruisce URL autenticato', () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('status --json: roles+nodes progettati, porta da config, MAI il token', () => {
+test('status --json: roles+nodes progettati, porta da config, MAI il token', async () => {
   const { home, token, port } = initHome();
   const l = [];
-  status({
+  const r = await status({
     home, platform: 'linux', log: (m) => l.push(m),
     execImpl: () => { throw new Error('inactive'); },
+    fetchImpl: async () => { throw new Error('connection refused'); }, // isolato: mai una fetch reale
     json: true,
   });
   const out = JSON.parse(l.join('\n'));
@@ -975,15 +1013,17 @@ test('status --json: roles+nodes progettati, porta da config, MAI il token', () 
   assert.deepEqual(out.nodes, []);
   assert.equal(out.port, port);
   assert.equal(out.url, `http://127.0.0.1:${port}/`); // url in status SENZA token
+  assert.equal(out.cells, null); // server locale non raggiungibile: nessuna sezione celle
+  assert.ok(r.cells === null || r.cells === undefined);
   assert.ok(!l.join('\n').includes(token));
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('status: roles letti dal config.json (default entrambi off)', () => {
+test('status: roles letti dal config.json (default entrambi off)', async () => {
   const { home } = initHome();
   const cp = path.join(home, '.nexuscrew', 'config.json');
   fs.writeFileSync(cp, JSON.stringify({ port: 41822, roles: { client: true, node: false } }) + '\n');
-  const r = status({ home, platform: 'linux', json: true, log: () => {}, execImpl: () => { throw new Error('x'); } });
+  const r = await status({ home, platform: 'linux', json: true, log: () => {}, execImpl: () => { throw new Error('x'); } });
   assert.deepEqual(r.roles, { client: true, node: false });
   fs.rmSync(home, { recursive: true, force: true });
 });

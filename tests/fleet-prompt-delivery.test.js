@@ -2872,3 +2872,90 @@ for (const hooksOff of [false, true]) test(`registry: unreadable newer spare the
       'the refused launch never took authority: A stays current with its own diagnosis');
   } finally { for (const d of [p, q, dir]) if (fs.existsSync(d)) fs.chmodSync(d, 0o700); w.cleanup(); }
 });
+
+// ===========================================================================
+// Cattura REALE del composer di Claude Code (2026-11-08) e contratto di
+// produzione: consegna bootstrap su superfici reali e passaggio del
+// contratto da parte del supervisore (cell-exec).
+// ===========================================================================
+const { CLAUDE_CODE_COMPOSER_CONTRACT } = require('../lib/fleet/prompt-delivery.js');
+const {
+  REAL_CLAUDE_EMPTY_20261108, REAL_CLAUDE_READY_PLAIN_20261108,
+} = require('./helpers/composer-fixtures.js');
+
+test('delivery reale 2026-11-08: ready + composer vuoto con contratto di produzione -> submitted, UN paste e UN Enter', async () => {
+  // Il contratto di produzione deve esistere nel prodotto (e non e' undefined:
+  // la consegna con contratto assente salterebbe per unknown).
+  assert.ok(CLAUDE_CODE_COMPOSER_CONTRACT, 'il contratto di produzione deve essere esportato');
+  const { calls, exec } = fakeTmux();
+  const r = await deliverBootstrapPrompt({
+    ...BASE, tmuxExecImpl: exec,
+    captureImpl: async () => REAL_CLAUDE_READY_PLAIN_20261108,
+    captureAttrsImpl: async () => REAL_CLAUDE_EMPTY_20261108,
+    composerContract: CLAUDE_CODE_COMPOSER_CONTRACT,
+  });
+  assert.equal(r.delivered, true);
+  assert.equal(r.state, 'submitted');
+  assert.equal(r.reason, 'submitted');
+  assert.equal(r.attempts, 1);
+  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 1, 'un solo paste');
+  assert.equal(calls.filter((c) => c.startsWith('send-keys -t %42 Enter')).length, 1, 'un solo Enter sul %N pinnato');
+  assert.equal(calls.filter((c) => c.startsWith('load-buffer')).length, 1);
+});
+
+test('delivery reale: senza contratto il composer reale resta sconosciuto -> skipped-unknown, ZERO paste', async () => {
+  const { calls, exec } = fakeTmux();
+  const r = await deliverBootstrapPrompt({
+    ...BASE, tmuxExecImpl: exec,
+    captureImpl: async () => REAL_CLAUDE_READY_PLAIN_20261108,
+    captureAttrsImpl: async () => REAL_CLAUDE_EMPTY_20261108,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'skipped-unknown');
+  assert.equal(r.attempts, 0);
+  assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0, 'zero paste');
+  assert.equal(calls.filter((c) => c.startsWith('send-keys')).length, 0, 'zero Enter');
+});
+
+// Variante su cell-exec: il supervisore passa il contratto di produzione
+// SOLO al client claude (kimi resta senza contratto, consegna saltata).
+function seamsConContratto(fx) {
+  const visti = [];
+  return {
+    visti,
+    promptOutcome: fx,
+    setTimeout: (fn) => { queueMicrotask(() => { try { fn(); } catch (_) {} }); return { unref() {}, ref() {} }; },
+    clearTimeout: () => {},
+    writeError: () => {},
+    tmuxExec: async (bin, args) => {
+      if (args[0] === 'display-message') return { err: null, stdout: 'cloud-T\t0\t%42\n', stderr: '', code: 0 };
+      return { err: null, stdout: '', stderr: '', code: 0 };
+    },
+    deliverBootstrapPrompt: async (opts) => {
+      visti.push(opts);
+      return { delivered: true, state: 'submitted', notReady: '', attempts: 1 };
+    },
+  };
+}
+
+test('cell-exec reale: claude riceve il contratto di produzione, kimi nessuno', async () => {
+  assert.ok(CLAUDE_CODE_COMPOSER_CONTRACT, 'il contratto di produzione deve essere esportato');
+  const sClaude = seamsConContratto(fxPromptOutcome('1a2b3c4d5e6f7081'));
+  const ctlClaude = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'boot', client: 'claude', readyMs: 5, readyWaitMs: 1000 },
+    0, { exited: false }, sClaude,
+  );
+  await ctlClaude.settled;
+  assert.equal(sClaude.visti.length, 1, 'una sola consegna per generazione');
+  assert.equal(sClaude.visti[0].composerContract, CLAUDE_CODE_COMPOSER_CONTRACT,
+    'claude: contratto di produzione passato alla deliver');
+
+  const sKimi = seamsConContratto(fxPromptOutcome('2b3c4d5e6f708192'));
+  const ctlKimi = startGenerationPrompt(
+    { tmuxBin: 'tmux', tmuxSession: 'cloud-T', prompt: 'boot', client: 'kimi', readyMs: 5, readyWaitMs: 1000 },
+    0, { exited: false }, sKimi,
+  );
+  await ctlKimi.settled;
+  assert.equal(sKimi.visti.length, 1);
+  assert.equal(sKimi.visti[0].composerContract, undefined, 'kimi: nessun contratto (invariato)');
+});

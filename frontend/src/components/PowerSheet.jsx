@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { useLang } from '../hooks/useLang.js';
 import { fleetStatus, fleetDefinitions } from '../lib/api.js';
+import { ncControlCode, promptDeliveryBadge, promptInitialReasonKey, promptInitialStateKey } from '../lib/roster-view-model.js';
 import './PowerSheet.css';
 import EngineOptions from './fleet/EngineOptions.jsx';
 
@@ -12,6 +13,11 @@ import EngineOptions from './fleet/EngineOptions.jsx';
 //   cell:   oggetto cella flotta ({cell, engine, model, models, permissionPolicy,
 //           permissionPolicies, active, boot, tmuxSession, route?})
 //   route:  route Hydra ([] = locale)
+//   autorevole/fleetStale: autorità della LETTURA che ha prodotto `cell`, la
+//           stessa misura della card (roster-view-model). Il chiamante che non
+//           la dichiara afferma una lettura corrente; un inventario conservato
+//           (peer fermo, fleet locale caduto) non attesta nulla di corrente —
+//           né la consegna del prompt né il controllo NC.
 //   onConfirm(payload): il genitore esegue fleetUp/fleetDown. payload:
 //     OFF  -> {action:'up', engine, model, permissionPolicy, boot}   ("Salva e avvia")
 //     ON   -> {action:'down', boot}                                  ("Spegni" + rimuovi boot)
@@ -20,7 +26,12 @@ import EngineOptions from './fleet/EngineOptions.jsx';
 // (provider, credenziali, engine custom) resta in Impostazioni → Flotta. La policy è
 // PER-CELL PER-ENGINE (mappa permissionPolicies[engineId]): mai si tocca il default
 // globale dell'engine. Ricorda ultimo modello E ultima policy per engine.
-export default function PowerSheet({ cell, token, route = [], onConfirm, onClose }) {
+// Gli stati della consegna che hanno un QUANDO: solo gli esiti del lancio
+// corrente portano l'ora del record; «non applicabile» e «non verificabile»
+// non hanno un quando da prestare.
+const CONSEGNA_CON_ORA = ['prompt-initial-submitted', 'prompt-initial-pending', 'prompt-initial-skipped'];
+
+export default function PowerSheet({ cell, token, route = [], autorevole = true, fleetStale = false, onConfirm, onClose }) {
   useLang();
   const isOn = !!(cell && cell.active);
   const routeKey = Array.isArray(route) ? route.join('/') : '';
@@ -87,6 +98,22 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
   const selected = useMemo(() => engines.find((e) => e.id === engine) || null, [engines, engine]);
   const supportsUnsafe = !!(selected && ['claude', 'codex', 'codex-vl', 'agy', 'kimi'].includes(selected.client));
   const isShell = selected?.client === 'shell';
+
+  // P3-3 — La consegna del prompt iniziale, per esteso, vive nel FOGLIO:
+  // stato, ORA LOCALE del record e MOTIVO leggibile. In card resta solo il
+  // badge che chiede una risposta. Sotto, la supervisione NC con l'etichetta
+  // intera — in card sopravvive solo «scaduto».
+  const consegna = promptDeliveryBadge(cell, {
+    currentLaunchId: cell?.launchId || null,
+    autorevole: autorevole && !fleetStale,
+    preserved: cell?.preserved === true,
+  });
+  const consegnaStatoKey = promptInitialStateKey(consegna.badge);
+  const consegnaMotivoKey = promptInitialReasonKey(consegna.reason);
+  const consegnaOra = consegna.ts !== null && CONSEGNA_CON_ORA.includes(consegnaStatoKey)
+    ? `${t('prompt-initial-at')} ${new Date(consegna.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : '';
+  const ncCodice = ncControlCode(cell, { fleetStale });
 
   // Cambio engine: ricorda modello e policy dell'engine precedente (lo fa il
   // backend via permissionPolicies/models) e ripristina quelli ricordati per il nuovo.
@@ -182,6 +209,17 @@ export default function PowerSheet({ cell, token, route = [], onConfirm, onClose
             </label>
           </>
         )}
+
+        {/* Prompt iniziale + supervisione NC: i dettagli che la card non
+            porta. Stessa veste di nc-power-config, nessun componente nuovo. */}
+        <div className="nc-power-config nc-prompt-initial">
+          <span>{t('prompt-initial-title')}</span>
+          <b>{[t(consegnaStatoKey), consegnaOra].filter(Boolean).join(' ')}</b>
+          {consegnaMotivoKey && <small>{t(consegnaMotivoKey)}</small>}
+          {cell?.tmux === true && (
+            <small>{t('prompt-initial-control')}: {t(`nc-control-${ncCodice}`)}</small>
+          )}
+        </div>
 
         {err && <div className="nc-err">{err}</div>}
 

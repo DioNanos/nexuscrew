@@ -43,9 +43,11 @@ function attestaProprietario(leaseManager, getPayload, { generation = 0, applica
     };
   };
   leaseManager.promptSnapshotBinding = () => true;
-  // Nessun canale di controllo dello stop in questi mondi (i test del down
-  // restano quelli di sempre): solo la consultazione del fence e' attiva.
-  leaseManager.armControl = () => false;
+  // Il canale di controllo del lancio resta QUELLO del manager: il fixture
+  // attesta solo la consultazione del fence. Il manager vero della factory
+  // arma davvero (il lancio operativo lo esige); un manager finto senza
+  // armControl non ne riceve uno finto — il runtime chiama solo quello che
+  // esiste, e il payload resta senza canale come prima.
   return leaseManager;
 }
 

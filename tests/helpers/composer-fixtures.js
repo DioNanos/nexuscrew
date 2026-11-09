@@ -83,6 +83,29 @@ const CLAUDE_EMPTY_REGION = [
 const KIMI_BOX_EMPTY = ' ╭──────────────────────────────────────────╮\n │ >                                        │\n ╰──────────────────────────────────────────╯';
 
 // ---------------------------------------------------------------------------
+// Cattura REALE del composer di Claude Code (2026-11-08, autorizzata).
+// Byte esatti da `capture-pane -p -e` all'avvio a freddo: campioni a
+// t=2/5/10/20 s su due varianti di engine, pane privato 120x40; le otto
+// regioni catturate sono byte-identiche (md5 8d90ceb873f8d0372f93db4ba83f2a48,
+// verificata dal test del parser). A composer VUOTO non viene mostrato alcun
+// placeholder: la riga e' ESATTAMENTE SGR 39 (colore di primo piano di
+// default) + glifo U+276F + NBSP U+00A0. La regione e' chiusa dal bordo del
+// box (fila di U+2500, SGR 38;5;244). Il testo digitato segue il separatore.
+// ---------------------------------------------------------------------------
+const REAL_CLAUDE_BORDER_LINE = `\u001b[38;5;244m${'\u2500'.repeat(120)}`;
+const REAL_CLAUDE_COMPOSER_EMPTY_LINE = '\u001b[39m\u276f\u00a0';
+
+// Regione completa del composer vuoto: byte-identica alla cattura.
+const REAL_CLAUDE_EMPTY_20261108 = `${REAL_CLAUDE_BORDER_LINE}\n${REAL_CLAUDE_COMPOSER_EMPTY_LINE}\n${REAL_CLAUDE_BORDER_LINE}\n`;
+
+// Variante con testo digitato dopo il separatore NBSP.
+const REAL_CLAUDE_TYPED_20261108 = (t) => `${REAL_CLAUDE_BORDER_LINE}\n\u001b[39m\u276f\u00a0${t}\n${REAL_CLAUDE_BORDER_LINE}\n`;
+
+// Stessa superficie senza attributi (capture senza -e): la riga del glifo
+// classifica 'ready' per la fase di readiness.
+const REAL_CLAUDE_READY_PLAIN_20261108 = REAL_CLAUDE_EMPTY_20261108.replace(/\u001b\[[0-9;]*m/g, '');
+
+// ---------------------------------------------------------------------------
 // Superfici correnti NON interpretabili: il parser non puo' concludere
 // 'empty' quando il composer di adesso e' illeggibile, nemmeno se piu' in
 // alto resta un vecchio prompt perfettamente qualificato. La riga vuota che
@@ -156,4 +179,6 @@ module.exports = {
   CLAUDE_PARTIAL_ATTRS, CLAUDE_WRAPPED_MALFORMED_CONTINUATION,
   KIMI_BOX_EMPTY, CLAUDE_READY_LIKE, CLAUDE_ATTRS_EMPTY, CLAUDE_ATTRS_OCCUPIED,
   CLAUDE_CONSENT_LIKE, CLAUDE_TRUST_LIKE, CLAUDE_AUTH_LIKE,
+  REAL_CLAUDE_BORDER_LINE, REAL_CLAUDE_COMPOSER_EMPTY_LINE,
+  REAL_CLAUDE_EMPTY_20261108, REAL_CLAUDE_TYPED_20261108, REAL_CLAUDE_READY_PLAIN_20261108,
 };

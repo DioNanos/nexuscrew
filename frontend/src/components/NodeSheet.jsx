@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { t } from '../lib/i18n.js';
+import { healthView } from '../lib/vl-node-view.js';
 import { useLang } from '../hooks/useLang.js';
 import { nodeAction, removeNode, updateNode, setNodeVisibility, sendVlNodeCommand, fleetDefinitions } from '../lib/api.js';
 import { tunnelInfo, isValidLabel } from '../lib/settings-model.js';
@@ -212,6 +213,10 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
   const cellCandidates = cellScope === 'selected'
     ? cellScopeCandidates(node, localCells, cellQuery) : [];
 
+  // Il nodo arriva grezzo: la salute si deriva con la stessa tabella del
+  // modello, altrimenti qui `state` non verrebbe letto affatto.
+  const saluteVl = healthView(node && node.health, { online: node && node.online === true, lastSeen: node && node.lastSeen });
+
   const status = (
     <span className={`nc-set-tunnel${reach.up ? ' up' : ''}`}>
       {t(reach.key)}{ti.since ? ` · ${ti.since}` : ''}
@@ -271,15 +276,19 @@ export default function NodeSheet({ node, nodes, token, readonly, refresh, onClo
           {isVl && node.ownerLabel && <><dt>{t('node-detail-owner')}</dt><dd>{node.ownerLabel}</dd></>}
         </dl>
         {node.health?.detail && (
-          // Altro punto dove le due forme divergono: la salute Fleet usa
-          // `health.status` ('healthy'/'passive'/...), quella VL usa
-          // `health.state` ('starting'|'running'|'stopped'|'degraded'|
-          // 'error', lib/vl-nodes/broker.js) — leggere il campo sbagliato
-          // avrebbe mostrato un nodo VL sano dentro un riquadro rosso
-          // "guasto" per ogni stato, dato che `.status` e' sempre undefined.
+          // La salute Fleet arriva in `health.status` e si legge cosi' com'e'.
+          // Quella VL arriva in `health.state` (`starting|running|stopped|
+          // degraded|error`, lib/vl-nodes/broker.js) e NON si traduce in
+          // "sano per aver detto running": la derivazione (con la prova del
+          // broker e la freschezza) sta in vl-node-view.js, e `warn` e' un
+          // terzo esito che non e' ne' «ok» ne' «guasto».
           <div className={`nc-set-test${
             isVl
-              ? (node.health.state === 'running' ? ' ok' : node.health.state === 'starting' ? '' : ' ko')
+              ? (saluteVl.status === 'healthy' ? ' ok' : saluteVl.status === 'warn' ? ' warn' : '')
+              // Un peer Fleet NON passa dalla derivazione VL: il suo probe ha
+              // gia' la sua semantica (`health.status`, lib/nodes/health.js), e
+              // i campi di heartbeat VL (`online`/`lastSeen`) non fanno parte
+              // di quel contratto.
               : (node.health.status === 'healthy' ? ' ok' : node.health.status === 'passive' ? '' : ' ko')
           }`}>
             {node.health.detail}

@@ -35,7 +35,7 @@ const SESSIONE = 'cloud-CellaProva';
 // risponde «vivo» per sempre renderebbe impossibile provare il lancio riuscito
 // (il controllo in testa lo fermerebbe) — e un fake che risponde «nessuno» per
 // sempre renderebbe impossibile provare il caso della cella viva.
-function mondo(t, { vive = [], pronto = true, broker = null } = {}) {
+function mondo(t, { vive = [], pronto = true, broker = null, leaseManager = null, cellLeaseRequired = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-live-'));
   const home = path.join(root, 'home');
   fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
@@ -155,6 +155,8 @@ process.exit(0);
   const runtime = createBuiltinRuntime({
     cfg: { launchReadyMs: 0, filesRoot, activityHooks: true },
     home, defsPath, tmuxBin, readonly: () => false, launchBroker,
+    ...(leaseManager ? { leaseManager } : {}),
+    ...(cellLeaseRequired ? { cellLeaseRequired: true } : {}),
     boot: require('../lib/fleet/definitions.js').loadDefinitions(defsPath),
   });
   const genPath = path.join(filesRoot, SESSIONE, NOME_GENERAZIONE);
@@ -195,24 +197,122 @@ test('up su una cella viva: 409 «già in esecuzione» e activity.gen INTATTO', 
 
 // --- 2. il boot di flotta con celle gia' vive: nessuna scrittura ----------
 
-test('boot di flotta con la cella gia\' viva: salta e non scrive', async (t) => {
+test('boot di flotta con la cella gia\' viva PROVATA: salta qualificato e non scrive', async (t) => {
   const w = mondo(t, { vive: [SESSIONE] });
   const mtimePrima = genera(w, 'gen-del-lancio-vero');
   const prima = fs.readFileSync(w.genPath, 'utf8');
 
+  // Cella viva CON la prova corrente del suo lancio: record a fasi v2 in
+  // fase attested, canale di controllo posseduto dal daemon
+  // (classification live) e lease rinnovata ora (lease live nello status).
+  // Solo con tutti e tre i fatti il rifiuto e' uno skip qualificato.
   const fleet = {
     available: true,
-    status: async () => ({ cells: [{ cell: 'CellaProva', tmuxSession: SESSIONE, boot: true }] }),
+    status: async () => ({ cells: [{ cell: 'CellaProva', tmuxSession: SESSIONE, boot: true, lease: 'live' }] }),
     up: (id) => w.runtime.up(id),
+    launchState: async (id) => ({
+      ok: true, cell: id, inFlight: false,
+      classification: 'live', launchId: 'cd'.repeat(8), phase: 'attested',
+      control: { armed: true, connected: true, launchId: 'cd'.repeat(8) },
+    }),
   };
   const res = await bootCells(fleet, { log: () => {} });
 
-  assert.deepEqual(res.skipped, ['CellaProva'], 'una cella gia\' viva e\' uno SKIP, non un errore');
+  assert.deepEqual(res.skipped, [{ cell: 'CellaProva', code: 'ALREADY_RUNNING' }],
+    'una cella gia\' viva e provata e\' uno SKIP qualificato');
   assert.deepEqual(res.started, []);
   assert.deepEqual(res.failed, []);
   assert.equal(fs.readFileSync(w.genPath, 'utf8'), prima, 'la generazione resta quella del lancio vero');
   assert.equal(fs.statSync(w.genPath).mtimeMs, mtimePrima, 'e il file non e\' stato riscritto');
   assert.deepEqual(w.ticket, [], 'e non si e\' lanciato niente');
+});
+
+test('boot di flotta con la cella gia\' viva SENZA prova: fallisce dichiarato e non scrive', async (t) => {
+  const w = mondo(t, { vive: [SESSIONE] });
+  const mtimePrima = genera(w, 'gen-del-lancio-vero');
+  const prima = fs.readFileSync(w.genPath, 'utf8');
+
+  // Stessa cella viva ma SENZA la prova del lancio qualificato (omonima senza
+  // record: launch-state muto): il rifiuto e' un fallimento dichiarato, mai
+  // «avviata con successo». E anche qui non si scrive niente.
+  const fleet = {
+    available: true,
+    status: async () => ({ cells: [{ cell: 'CellaProva', tmuxSession: SESSIONE, boot: true }] }),
+    up: (id) => w.runtime.up(id),
+    launchState: async (id) => ({
+      ok: true, cell: id, inFlight: false,
+      classification: 'none', launchId: null, phase: null,
+    }),
+  };
+  const res = await bootCells(fleet, { log: () => {} });
+
+  assert.deepEqual(res.failed, [{ cell: 'CellaProva', code: 'SESSION_DUPLICATE' }],
+    'duplicato senza prova corrente: fallimento dichiarato');
+  assert.deepEqual(res.skipped, []);
+  assert.deepEqual(res.started, []);
+  assert.equal(fs.readFileSync(w.genPath, 'utf8'), prima, 'la generazione resta quella del lancio vero');
+  assert.equal(fs.statSync(w.genPath).mtimeMs, mtimePrima, 'e il file non e\' stato riscritto');
+  assert.deepEqual(w.ticket, [], 'e non si e\' lanciato niente');
+});
+
+// --- 2b. supervisione operativa obbligatoria: nessun lancio senza lease/control
+
+// Manager di prova per il runtime operativo: readiness di nodo OK ma, su
+// richiesta, track o armControl non armabili (fault injection ai confini).
+function managerDiProva({ trackNull = false, armNull = false } = {}) {
+  return {
+    readiness: () => ({ booted: true, listening: 0, tracked: 0 }),
+    track: async () => (trackNull
+      ? null
+      : { cellId: 'CellaProva', stablePath: '/tmp/nc-lease-prova.sock', launchEpoch: 'ab'.repeat(8) }),
+    armControl: () => (armNull ? null : { hash: 'a'.repeat(64) }),
+    status: () => ({ state: 'live' }),
+    controlArmato: () => !armNull && !trackNull,
+    controlConnesso: () => !armNull && !trackNull,
+    controlLaunchId: () => (armNull || trackNull ? null : 'ab'.repeat(8)),
+    setLaunchSubject: () => true,
+    revokeControl: () => true,
+  };
+}
+
+test('up operativo con track fallito: rifiuto PRIMA del ticket, nessun lancio', async (t) => {
+  const w = mondo(t, { vive: [], leaseManager: managerDiProva({ trackNull: true }), cellLeaseRequired: true });
+  await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
+    assert.equal(e.status, 500);
+    assert.equal(e.fleetCode, 'LEASE_ARM_FAILED');
+    return true;
+  });
+  assert.deepEqual(w.ticket, [], 'nessun ticket emesso: il rifiuto precede l\'impegno del lancio');
+});
+
+test('up operativo con armControl fallito: rifiuto PRIMA del ticket, nessun lancio', async (t) => {
+  const w = mondo(t, { vive: [], leaseManager: managerDiProva({ armNull: true }), cellLeaseRequired: true });
+  await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
+    assert.equal(e.status, 500);
+    assert.equal(e.fleetCode, 'CONTROL_ARM_FAILED');
+    return true;
+  });
+  assert.deepEqual(w.ticket, [], 'nessun ticket emesso: il rifiuto precede l\'impegno del lancio');
+});
+
+test('up operativo con lease e control armabili: il lancio procede normalmente', async (t) => {
+  const w = mondo(t, { vive: [], leaseManager: managerDiProva(), cellLeaseRequired: true });
+  const esito = await w.runtime.up('CellaProva');
+  assert.ok(esito, 'la supervisione armabile non blocca il lancio operativo');
+  assert.equal(w.ticket.length, 1, 'un ticket, un lancio');
+});
+
+test('up operativo SENZA manager: rifiuto fail-closed PRIMA del ticket', async (t) => {
+  // La modalità operativa dichiarata con manager assente è un errore di
+  // costruzione, non il percorso legacy dei caller diretti: il lancio
+  // rifiuta, non degrada a un payload senza supervisione.
+  const w = mondo(t, { vive: [], cellLeaseRequired: true });
+  await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
+    assert.equal(e.status, 500);
+    assert.equal(e.fleetCode, 'LEASE_MANAGER_MISSING');
+    return true;
+  });
+  assert.deepEqual(w.ticket, [], 'nessun ticket emesso: la supervisione mancante non lancia');
 });
 
 // --- 3. cella SPENTA: la generazione nasce nel payload, non su disco ------

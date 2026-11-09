@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { vlNodeToPeer, topologyVlOwners, vlSidebarGroups } from './vl-nodes-model.js';
+import { healthDot } from './roster-view-model.js';
 
 const RAW = {
   nodeId: 'a'.repeat(32),
@@ -33,9 +34,20 @@ describe('vlNodeToPeer', () => {
     expect(vlNodeToPeer({ ...RAW, pairedAt: null }).paired).toBe(false);
   });
 
-  it('carries health through untouched — same shape, not reinterpreted', () => {
-    expect(vlNodeToPeer(RAW).health).toEqual(RAW.health);
-    expect(vlNodeToPeer({ ...RAW, health: null }).health).toBeNull();
+  // Il contratto è cambiato qui, e non per comodità: la salute non si passa
+  // più attraverso. Il broker dichiara `state`, il pallino legge `status`, e
+  // `running` è un'auto-dichiarazione. La derivazione (con la tabella e la
+  // freschezza) sta in vl-node-view.js; qui si prova che il modello la usa.
+  it('derives health instead of passing it through', () => {
+    const fresco = { ...RAW, online: true, lastSeen: Date.now(), health: { state: 'running', brokerReachable: true } };
+    const peer = vlNodeToPeer(fresco);
+    expect(peer.health.status).toBe('healthy');
+    expect(peer.health.freshness).toBe('current');
+    // senza prova del broker, o senza salute, il pallino non è verde
+    expect(vlNodeToPeer({ ...RAW, health: { state: 'running' } }).health.status).toBe('warn');
+    // la salute assente non produce un oggetto: e' assenza, non un oggetto vuoto
+    const senza = vlNodeToPeer({ ...RAW, health: null });
+    expect(senza.health).toBeNull();
   });
 
   it('carries online/lastSeen for poll status instead of empty tunnel fields', () => {
@@ -232,5 +244,53 @@ describe('vlSidebarGroups', () => {
   it('a fresh peer carries no stale fleet state', () => {
     const peer = { ...vlNodeToPeer(RAW), stale: false };
     expect(vlSidebarGroups([peer])[0].fleetState).toBeNull();
+  });
+});
+
+// Il pallino grigio visto sul dispositivo: il broker dichiara `state`, il dot
+// legge `status`. Mappare il campo non basta — `running` è un'auto-dichiarazione
+// e non prova che l'host risponda. Questi due casi sono il confine.
+describe('salute del nodo VL: il pallino segue la prova, non la parola', () => {
+  const adesso = Date.now();
+
+  it('running SENZA prova del broker non è sano', () => {
+    const p = vlNodeToPeer({ nodeId: 'd'.repeat(32), label: 'N', online: true, lastSeen: adesso, health: { state: 'running' } });
+    expect(healthDot(p.health)).toBe('warn');
+    expect(p.health.detail).toBeTruthy();
+  });
+
+  it('running CON il broker attestato è sano', () => {
+    const p = vlNodeToPeer({ nodeId: 'e'.repeat(32), label: 'N', online: true, lastSeen: adesso, health: { state: 'running', brokerReachable: true } });
+    expect(healthDot(p.health)).toBe('on');
+  });
+});
+
+// «Mai collegato» e «offline» chiedono due cose diverse a chi legge.
+describe('collegamento del nodo VL', () => {
+  it('un nodo senza heartbeat è «mai collegato», non «offline»', () => {
+    const peer = vlNodeToPeer({ nodeId: 'f'.repeat(32), label: 'K', online: false, lastSeen: null });
+    expect(vlSidebarGroups([peer])[0].status).toBe('never-connected');
+  });
+
+  it('un nodo che ha perso il contatto resta offline', () => {
+    const peer = vlNodeToPeer({ nodeId: '0'.repeat(32), label: 'N2DS', online: false, lastSeen: 12345 });
+    expect(vlSidebarGroups([peer])[0].status).toBe('offline');
+  });
+});
+
+// La catena che l'operatore vede: adapter → gruppi → pallino. Una salute
+// assente non deve accendere niente, e il titolo deve ricadere sullo stato.
+describe('salute assente lungo la catena', () => {
+  it('un nodo senza heartbeat e senza salute non mostra un pallino', () => {
+    const peer = vlNodeToPeer({ nodeId: '1'.repeat(32), label: 'K', online: false, lastSeen: null, health: null });
+    const gruppo = vlSidebarGroups([peer]);
+    expect(healthDot(gruppo[0].health)).toBeNull();
+    expect(gruppo[0].health).toBeNull();
+  });
+
+  it('un vocabolario sconosciuto non accende un pallino, ma il dettaglio resta', () => {
+    const peer = vlNodeToPeer({ nodeId: '2'.repeat(32), label: 'N', online: true, lastSeen: Date.now(), health: { state: 'boh', detail: 'dice qualcosa' } });
+    expect(healthDot(peer.health)).toBeNull();
+    expect(peer.health.detail).toBe('dice qualcosa');
   });
 });

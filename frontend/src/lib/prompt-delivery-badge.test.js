@@ -116,7 +116,7 @@ describe('prompt delivery badge', () => {
       state: 'skipped', reason: 'failed-pre-paste', launchId: 'abcdef0123456789',
       message: 'Traceback (most recent call last): permission denied',
     }));
-    expect(Object.keys(out).sort()).toEqual(['badge', 'freschezza', 'key', 'launchId', 'priorita', 'reason']);
+    expect(Object.keys(out).sort()).toEqual(['badge', 'freschezza', 'key', 'launchId', 'notReady', 'priorita', 'reason', 'ts']);
     expect(out.key).toBe('prompt-badge-problem');
     expect(out.reason).toBe('failed-pre-paste');
     for (const v of Object.values(out)) {

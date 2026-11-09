@@ -103,6 +103,12 @@
   font-size: 12px; opacity: .75;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
 }
+/* L'etichetta della supervisione NC sta in una riga SUA, sotto lo stato:
+   visibile, ma non è il testo di stato e non lo riscrive. */
+.nc-cell-main .nc-nc-label, .nc-card-main .nc-nc-label {
+  font-size: 10px; opacity: .6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
 /* Azioni card: stesso design delle .nc-act mobile (desktop = mobile). */
 .nc-power, .nc-boot {
   flex: 0 0 auto; width: 28px; height: 28px; padding: 0;

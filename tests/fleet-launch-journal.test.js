@@ -557,11 +557,20 @@ test('riserva incerta (claim illeggibile): nessuna conclusione dal silenzio, nes
   await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
   assert.equal(W.lease(d).length, 1, 'la lease (illeggibile) non e\' stata toccata');
   assert.equal(fs.readFileSync(W.lease(d)[0], 'utf8'), '{ non json');
-  // Il rilascio esatto non ha dato `released`: il record del lancio resta a dire che c'e' una barriera.
-  const rec = leggiRecord(d);
-  assert.equal(rec.phase, 'prepared');
-  assert.equal(rec.incerto, true);
-  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
+  // Pure preflight rule: il rifiuto e\' arrivato PRIMA dell\'ammissione,
+  // quindi a zero scritture — nessun record prepared, nessun incerto
+  // in-process. La barriera resta quella vera (la lease illeggibile) e la
+  // dice lei: il silenzio non si conclude ne\' in rilascio ne\' in una
+  // pratica aperta che avvelena il tentativo successivo.
+  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente', 'nessun record scritto');
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
+  // Sparita la barriera fisica, l\'up riparte pulito: nessuno STOP_UNKNOWN.
+  // Il mondo finto di questo file non completa la readiness del peer host, ma
+  // questo e\' un limite del mondo, non un avvelenamento: quello che conta e\'
+  // che la pratica incerta non esiste e la barriera smessa non blocca.
+  fs.rmSync(W.lease(d)[0]);
+  const esito = await runtime.up(d.cella).then(() => 'ok', (e) => e.fleetCode);
+  assert.notEqual(esito, 'STOP_UNKNOWN', 'l\'up dopo la barriera non deve piu\' essere avvelenato');
 });
 
 test('rilascio incerto nel cleanup: il riferimento alla claim e il record si conservano', async (t) => {

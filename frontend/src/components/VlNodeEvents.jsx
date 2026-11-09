@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { t } from '../lib/i18n.js';
 import { getVlNodeEvents } from '../lib/api.js';
+import { raggruppaEventi } from '../lib/vl-event-rows.js';
 
 // La conversazione del nodo VL, in SOLA LETTURA.
 //
@@ -29,27 +30,41 @@ function labelOf(event) {
   return event.text || '';
 }
 
-export default function VlNodeEvents({ token, nodeId, route = [] }) {
+export default function VlNodeEvents({ token, nodeId, route = [], sessionKey = '', sospeso = false }) {
   const [events, setEvents] = useState([]);
   const [failed, setFailed] = useState(false);
   const cursor = useRef(0);
-  const busy = useRef(false);
+  // La richiesta in volo, se c'è (un oggetto per richiesta: identifica il giro
+  // anche quando l'identità della sessione cambia sotto i piedi).
+  const inVolo = useRef(null);
+
+  // Il confine di sessione: identità del nodo e generazione. Cambia QUESTO, e
+  // solo questo, la conversazione riparte da zero — un cursore vecchio
+  // mostrerebbe eventi di un'altra sessione. La freschezza del peer non è un
+  // confine di sessione: passare a «non corrente» la sospende, non la azzera.
+  useEffect(() => {
+    cursor.current = 0;
+    inVolo.current = null;
+    setEvents([]);
+    setFailed(false);
+  }, [token, nodeId, JSON.stringify(route), sessionKey]);
 
   useEffect(() => {
     let alive = true;
-    cursor.current = 0;
-    busy.current = false;
-    setEvents([]);
 
     const tick = async () => {
       // Un solo poll in volo: su un collegamento lento il periodo scade prima
       // della risposta, e un secondo poll partirebbe col cursore VECCHIO —
       // due risposte identiche, lista duplicata.
-      if (busy.current) return;
-      busy.current = true;
+      if (inVolo.current) return;
+      const mia = {};
+      inVolo.current = mia;
       try {
         const out = await getVlNodeEvents(token, nodeId, cursor.current, route);
-        if (!alive) return;
+        // Richiesta superata (l'identità della sessione è cambiata mentre era
+        // in volo, o l'effetto è chiuso): la sua risposta non appartiene più a
+        // quello che la vista sta mostrando.
+        if (!alive || inVolo.current !== mia) return;
         setFailed(false);
         const incoming = Array.isArray(out?.events) ? out.events : [];
         // Idempotente per seq: il filtro `after` del server e' un'ottimizzazione,
@@ -65,9 +80,9 @@ export default function VlNodeEvents({ token, nodeId, route = [] }) {
       } catch (_) {
         // Rete giu' o owner irraggiungibile: si segnala, NON si svuota. Un
         // riquadro che si azzera da solo racconta una bugia sullo stato.
-        if (alive) setFailed(true);
+        if (alive && inVolo.current === mia) setFailed(true);
       } finally {
-        busy.current = false;
+        if (inVolo.current === mia) inVolo.current = null;
       }
     };
 
@@ -76,10 +91,19 @@ export default function VlNodeEvents({ token, nodeId, route = [] }) {
     // diventerebbe una unhandled rejection invece di un riquadro "non
     // aggiornato".
     const safeTick = () => { tick().catch(() => {}); };
+    // Ultimo dato noto: con il peer non corrente si legge UNA volta — per
+    // avere qualcosa da mostrare — e non si polla. Il primo giro non e' un
+    // poll: e' la lettura che rende possibile «l'ultimo dato noto». Gli eventi
+    // gia' letti e il cursore restano: si sospende la lettura, non si cancella
+    // il dato.
+    if (sospeso) {
+      safeTick();
+      return () => { alive = false; };
+    }
     safeTick();
     const timer = setInterval(safeTick, POLL_MS);
     return () => { alive = false; clearInterval(timer); };
-  }, [token, nodeId, JSON.stringify(route)]);
+  }, [token, nodeId, JSON.stringify(route), sessionKey, sospeso]);
 
   return (
     <div className="nc-vl-events">
@@ -89,14 +113,26 @@ export default function VlNodeEvents({ token, nodeId, route = [] }) {
       )}
       {events.length > 0 && (
         <ol className="nc-vl-events-list">
-          {events.map((event) => (
-            <li
-              key={`${event.seq}-${event.kind}`}
-              data-testid={`vl-ev-${event.seq}`}
-              className={`nc-vl-ev nc-vl-ev-${event.kind}${event.isError ? ' error' : ''}${event.kind === 'gap' ? ' gap' : ''}`}
-            >
-              {labelOf(event)}
-            </li>
+          {raggruppaEventi(events).map((riga) => (
+            riga.type === 'event' ? (
+              <li
+                key={`${riga.event.seq}-${riga.event.kind}`}
+                data-testid={`vl-ev-${riga.event.seq}`}
+                className={`nc-vl-ev nc-vl-ev-${riga.event.kind}${riga.event.isError ? ' error' : ''}${riga.event.kind === 'gap' ? ' gap' : ''}`}
+              >
+                {labelOf(riga.event)}
+              </li>
+            ) : (
+              // I frammenti contigui sono UNA riga: il testo che il device ha
+              // mandato, non una parola per elemento.
+              <li
+                key={`${riga.seq}-${riga.seqFine}`}
+                data-testid={`vl-ev-${riga.seq}`}
+                className={`nc-vl-ev nc-vl-ev-${riga.type}`}
+              >
+                {riga.testo}
+              </li>
+            )
           ))}
         </ol>
       )}

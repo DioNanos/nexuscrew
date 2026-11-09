@@ -308,6 +308,10 @@ test('runtime reale: skip NORMALE distinto dal primo prompt non consegnato in qu
   assert.deepEqual(res.vlBootstrap, { state: 'skipped', reason: 'generation' },
     'respawn/riattacco nello stesso avvio: skip normale, nessun avviso');
   // Nuovo avvio, claim non ottenibile: il primo prompt NON è stato consegnato.
+  // Il control del lancio operativo si chiude con la revoca esplicita (nessun
+  // supervisore collegato al canale in questo mondo): il down resta sul
+  // percorso senza canale.
+  fleet.lease.revokeControl('CellaProva');
   await fleet.down('CellaProva');
   fs.writeFileSync(w.delivery, 'skipped-vl-bootstrap:claim-unavailable');
   res = await fleet.up('CellaProva');

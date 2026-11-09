@@ -150,7 +150,7 @@ describe('mobile roster parity', () => {
     expect(screen.getByRole('checkbox', { name: 'also remove from boot' }).checked).toBe(false);
   });
 
-  it('blips working cells and switches the one-line subtitle between work, idle and startup model', async () => {
+  it('blips working cells; the one-line row stays presence + turn, the model is not a state', async () => {
     const user = userEvent.setup();
     fixture.sessions[0] = session('local-live', 20, {
       working: true, status: 'Implement activity UI', paneTitle: '⠐ Implement activity UI',
@@ -161,13 +161,18 @@ describe('mobile roster parity', () => {
     fixture.cells[1].model = 'claude-opus-4-1';
     renderRoster();
 
-    const workingLabel = await screen.findByText(/Implement activity UI/);
-    const workingRow = workingLabel.closest('.nc-mcard');
-    expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(true);
+    // Senza un turno qualificato (niente hook, solo il titolo del pane) la
+    // riga dice la PRESENZA e basta: il titolo alimenta il pallino, non la
+    // parola della riga.
+    const workingRow = (await screen.findByText('Live Cell')).closest('.nc-mcard');
+    await waitFor(() => expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(true));
+    expect(within(workingRow).getByText('on')).toBeTruthy();
+    expect(within(workingRow).queryByText(/Implement activity UI/)).toBeNull();
     const offRow = screen.getByText('Off Cell').closest('.nc-mcard');
-    expect(within(offRow).getByText('claude.native · claude-opus-4-1')).toBeTruthy();
+    expect(within(offRow).getByText('off')).toBeTruthy();
+    expect(within(offRow).queryByText('claude.native · claude-opus-4-1')).toBeNull();
     expect(offRow.querySelector('.dot').classList.contains('on')).toBe(false);
-    const remoteRow = screen.getByText(/Review remote diff/).closest('.nc-mcard');
+    const remoteRow = screen.getByText('Relay Live').closest('.nc-mcard');
     expect(remoteRow.querySelector('.dot').classList.contains('working')).toBe(true);
 
     fixture.sessions = [
@@ -175,12 +180,15 @@ describe('mobile roster parity', () => {
       ...fixture.sessions.slice(1),
     ];
     await user.click(screen.getByTitle('refresh'));
-    // Senza il canale degli hook il titolo non prova lo stato fermo, e
-    // la riga lo dice incerto invece di affermare «idle».
-    await waitFor(() => expect(within(workingRow).getByText('unverified')).toBeTruthy());
-    expect(within(workingRow).queryByText('idle')).toBeNull();
-    expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(false);
+    // Il titolo non prova lo stato fermo: la riga resta sulla presenza e il
+    // pallino smette di lavorare. Mai «idle» dal silenzio, mai «unverified».
+    await waitFor(() => {
+      expect(within(workingRow).getByText('on')).toBeTruthy();
+      expect(workingRow.querySelector('.dot').classList.contains('working')).toBe(false);
+    });
     expect(workingRow.querySelector('.dot').classList.contains('on')).toBe(true);
+    expect(within(workingRow).queryByText('idle')).toBeNull();
+    expect(within(workingRow).queryByText('unverified')).toBeNull();
   });
 
   it('filters local and remote positions with the shared active/off model', async () => {
@@ -522,16 +530,20 @@ describe('righe remote route-qualified: mai dall\'omonima locale', () => {
       session('remote-shell', 15),
     ];
     renderRoster();
-    await screen.findByText('anteprima REMOTA');
+    await screen.findByText('Relay Live');
 
-    const remota = screen.getByText('anteprima REMOTA').closest('.nc-mcard');
+    // La riga della CELLA si trova per nome: dal P3-1 l'anteprima non è più
+    // il sottotitolo della riga (la riga dice presenza + turno), quindi non
+    // si può usare come ancoraggio.
+    const remota = screen.getByText('Relay Live').closest('.nc-mcard');
     // badge outbox: il conteggio della sessione di quella route
     expect(within(remota).getByText('2', { selector: '.nc-badge' })).toBeTruthy();
     expect(within(remota).queryByText('77')).toBeNull();
     // rel attività: quella della route (adesso → «ora»), non quella dell'omonima (1 → anni)
     expect(within(remota).getByText('ora', { selector: '.nc-rel' })).toBeTruthy();
-    // stato: il sottotitolo della route
+    // stato: la riga della cella dice la presenza, mai l'anteprima dell'omonima
     expect(within(remota).queryByText(/LOCALE/)).toBeNull();
+    expect(within(remota).queryByText(/REMOTA/)).toBeNull();
   });
 
   it('NEGATIVO dell\'omonima locale: la riga locale porta i SUOI numeri, e restano tali', async () => {
@@ -727,14 +739,18 @@ describe('foglio azioni, bollino LIVE, striscia, riordino a modalità', () => {
 });
 
 describe('prompt delivery badge in the mobile roster', () => {
-  it('shows the delivery state next to the cell row without touching it', async () => {
+  // P3-2 — In card resta solo la richiesta d'azione; gli altri esiti sono
+  // dettaglio del foglio (PromptBadge.test.jsx li prova sul componente,
+  // PowerSheet.test.jsx sul foglio).
+  it('shows only the action request next to the cell row, without touching it', async () => {
     fixture.cells = [
       { ...cell('Live Cell', 'local-live', true), promptDelivery: { state: 'pending', launchId: 'abcdef0123456789', generation: 1 } },
       { ...cell('Off Cell', 'local-off', false), promptDelivery: { state: 'skipped', reason: 'prompt-rejected', launchId: 'abcdef0123456789' } },
     ];
     renderRoster();
-    expect(await screen.findByText('delivering')).toBeTruthy();
-    expect(screen.getByText('a response is needed')).toBeTruthy();
+    expect(await screen.findByText('a response is needed')).toBeTruthy();
+    // «in consegna» non è un allarme da riga: sta nel foglio.
+    expect(screen.queryByText('delivering')).toBeNull();
     // la riga della cella resta la sua: il badge non riscrive lo stato
     expect(screen.getByText('Live Cell')).toBeTruthy();
   });
@@ -747,6 +763,101 @@ describe('prompt delivery badge in the mobile roster', () => {
     renderRoster();
     await screen.findByText('Off Cell');
     expect(screen.queryByText('delivered')).toBeNull();
-    expect(screen.getByText('earlier launch')).toBeTruthy();
+    expect(screen.queryByText('earlier launch')).toBeNull();
   });
+});
+
+// Independent reviewer probes; source snapshot untouched.
+describe('REVIEWER fresh sheet evidence', () => {
+ it('REVIEWER stale remote Fleet must not claim current NC attestation', async () => {
+  fixture.nodes[0].fleetState = 'stale';
+  fixture.nodes[0].fleetAvailable = false;
+  Object.assign(fixture.nodes[0].cells[0], { ncControl: 'attested', launchId: 'aaaaaaaaaaaaaaaa', promptDelivery: {state:'submitted', launchId:'aaaaaaaaaaaaaaaa', ts:1700000000000} });
+  renderRoster();
+  await screen.findByText('Relay Live');
+  fireEvent.click(screen.getByRole('button', {name:'power off Relay Live'}));
+  const section=(await screen.findByText('Initial prompt')).closest('div');
+  expect(section.textContent).not.toContain('NC control attested');
+  expect(section.textContent).toContain('not verifiable');
+ });
+ it('REVIEWER open sheet must follow current launch after roster refresh', async () => {
+  Object.assign(fixture.cells[0], { ncControl:'attested', launchId:'aaaaaaaaaaaaaaaa', promptDelivery:{state:'pending', launchId:'aaaaaaaaaaaaaaaa',ts:1700000000000} });
+  renderRoster();
+  await screen.findByText('Live Cell');
+  fireEvent.click(screen.getByRole('button', {name:'power off Live Cell'}));
+  const section=(await screen.findByText('Initial prompt')).closest('div');
+  expect(section.textContent).toContain('sending');
+  fixture.cells=fixture.cells.map(c=>c.cell==='Live Cell'?{...c,ncControl:'expired',launchId:'bbbbbbbbbbbbbbbb',promptDelivery:{state:'submitted',launchId:'bbbbbbbbbbbbbbbb',ts:1700000010000}}:c);
+  fireEvent.click(screen.getByTitle('refresh'));
+  await waitFor(()=>expect(screen.getAllByText('Live Cell').map(e=>e.closest('.nc-mcard')).find(Boolean)?.querySelector('.nc-nc-label')?.textContent).toContain('NC control expired'));
+  expect(section.textContent).toContain('NC control expired');
+  expect(section.textContent).toContain('sent');
+ });
+});
+
+// Stesso difetto del peer remoto, lato LOCALE: la lettura Fleet locale che
+// cade marca l'elenco conservato «ultimo dato noto» — il foglio della cella
+// non può presentare l'attestazione NC né la consegna del prompt come
+// CORRENTI. Con lettura viva, invece, l'attestazione si vede: il positivo
+// accompagna il negativo, così il degrado non si ottiene nascondendo tutto.
+describe('foglio power — lettura locale conservata', () => {
+  const STALE_EN = 'Fleet read failed: the cell list may not be up to date.';
+
+  function cellaAttestata() {
+    Object.assign(fixture.cells[0], {
+      ncControl: 'attested', launchId: 'aaaaaaaaaaaaaaaa',
+      promptDelivery: { state: 'submitted', launchId: 'aaaaaaaaaaaaaaaa', ts: 1700000000000 },
+    });
+  }
+
+  it('controllo positivo: lettura viva → il foglio mostra «NC control attested» e «sent»', async () => {
+    cellaAttestata();
+    renderRoster();
+    await screen.findByText('Live Cell');
+    fireEvent.click(screen.getByRole('button', { name: 'power off Live Cell' }));
+    const section = (await screen.findByText('Initial prompt')).closest('div');
+    expect(section.textContent).toContain('NC control attested');
+    expect(section.textContent).toContain('sent');
+  });
+
+  it('lettura locale caduta: il foglio degrada a «not verifiable», mai attestazione corrente', async () => {
+    cellaAttestata();
+    renderRoster();
+    await screen.findByText('Live Cell');
+    fleetStatus.mockRejectedValueOnce(new Error('fetch failed'));
+    fireEvent.click(screen.getByRole('button', { name: 'refresh' }));
+    expect(await screen.findByText(STALE_EN)).toBeTruthy();
+    expect(screen.getByText('Live Cell')).toBeTruthy(); // l'elenco conservato resta
+    fireEvent.click(screen.getByRole('button', { name: 'power off Live Cell' }));
+    const section = (await screen.findByText('Initial prompt')).closest('div');
+    expect(section.textContent).not.toContain('NC control attested');
+    expect(section.textContent).toContain('not verifiable');
+  });
+});
+
+describe('REVIEWER R2 disappearing current launch', () => {
+ it('REVIEWER R2 removed local cell must not keep current attestation in open sheet',async()=>{
+  Object.assign(fixture.cells[0],{ncControl:'attested',launchId:'aaaaaaaaaaaaaaaa',promptDelivery:{state:'submitted',launchId:'aaaaaaaaaaaaaaaa',ts:1700000000000}});
+  renderRoster();await screen.findByText('Live Cell');
+  fireEvent.click(screen.getByRole('button',{name:'power off Live Cell'}));
+  const section=(await screen.findByText('Initial prompt')).closest('div');
+  expect(section.textContent).toContain('NC control attested');
+  fixture.cells=fixture.cells.filter(c=>c.cell!=='Live Cell');
+  fireEvent.click(screen.getByRole('button',{name:'refresh'}));
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'power off Live Cell'})).toBeNull());
+  expect(section.textContent).not.toContain('NC control attested');
+  expect(section.textContent).toContain('not verifiable');
+ });
+ it('REVIEWER R2 removed remote cell in live group must not keep current attestation',async()=>{
+  Object.assign(fixture.nodes[0].cells[0],{ncControl:'attested',launchId:'aaaaaaaaaaaaaaaa',promptDelivery:{state:'submitted',launchId:'aaaaaaaaaaaaaaaa',ts:1700000000000}});
+  renderRoster();await screen.findByText('Relay Live');
+  fireEvent.click(screen.getByRole('button',{name:'power off Relay Live'}));
+  const section=(await screen.findByText('Initial prompt')).closest('div');
+  expect(section.textContent).toContain('NC control attested');
+  fixture.nodes=fixture.nodes.map(g=>({...g,cells:g.cells.filter(c=>c.cell!=='Relay Live')}));
+  fireEvent.click(screen.getByRole('button',{name:'refresh'}));
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'power off Relay Live'})).toBeNull());
+  expect(section.textContent).not.toContain('NC control attested');
+  expect(section.textContent).toContain('not verifiable');
+ });
 });

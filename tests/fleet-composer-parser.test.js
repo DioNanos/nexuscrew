@@ -121,3 +121,77 @@ test('parser: superficie corrente non interpretabile MAI scavalcata da un vecchi
   // Wrapping non interpretabile: continuazione malformata sotto un composer valido.
   assert.equal(composerOccupied(CLAUDE_WRAPPED_MALFORMED_CONTINUATION, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
 });
+
+// ===========================================================================
+// Cattura REALE del composer di Claude Code (2026-11-08) e contratto di
+// produzione (lib/fleet/prompt-delivery.js). La fixture e' byte-identica
+// alla cattura autorizzata; il contratto di produzione e' l'unico che
+// qualifica il client reale.
+// ===========================================================================
+const { CLAUDE_CODE_COMPOSER_CONTRACT } = require('../lib/fleet/prompt-delivery.js');
+const { createHash } = require('node:crypto');
+const {
+  CYAN, RESET, GRAY,
+  REAL_CLAUDE_EMPTY_20261108, REAL_CLAUDE_TYPED_20261108,
+} = require('./helpers/composer-fixtures.js');
+
+// T10: la cattura reale con il contratto di produzione.
+test('parser reale 2026-11-08: contratto di produzione esportato; vuoto (SGR39+glifo+NBSP, chiuso dal bordo) -> empty; testo digitato -> occupied', () => {
+  // Il contratto di produzione del client claude deve esistere nel prodotto.
+  assert.ok(CLAUDE_CODE_COMPOSER_CONTRACT, 'il contratto di produzione deve essere esportato');
+  assert.equal(CLAUDE_CODE_COMPOSER_CONTRACT.client, 'claude');
+  assert.equal(CLAUDE_CODE_COMPOSER_CONTRACT.emptyIsBlank, true, 'il rendering reale non mostra placeholder a vuoto');
+  assert.deepEqual([...CLAUDE_CODE_COMPOSER_CONTRACT.placeholderAttrs], [], 'nessun placeholder dichiarato');
+  // Fedelta' byte della fixture rispetto alla cattura dichiarata.
+  assert.equal(
+    createHash('md5').update(Buffer.from(REAL_CLAUDE_EMPTY_20261108, 'utf8')).digest('hex'),
+    '8d90ceb873f8d0372f93db4ba83f2a48',
+    'la fixture deve essere byte-identica alla cattura',
+  );
+  // Composer vuoto reale -> empty SOLO col contratto di produzione.
+  assert.equal(composerOccupied(REAL_CLAUDE_EMPTY_20261108, 'claude', CLAUDE_CODE_COMPOSER_CONTRACT), 'empty');
+  // Testo digitato dopo il separatore reale (NBSP, SGR 39 = default) -> occupied.
+  assert.equal(composerOccupied(REAL_CLAUDE_TYPED_20261108('abc'), 'claude', CLAUDE_CODE_COMPOSER_CONTRACT), 'occupied');
+});
+
+// T11: contenuto digitato dopo il separatore NBSP -> occupied (verde prima
+// e dopo l'introduzione del contratto reale).
+test('parser: testo digitato dopo il separatore NBSP -> occupied (strip di UN solo separatore)', () => {
+  // Rendering del simulatore (glifo ciano, run digitato a default): il
+  // separatore NBSP non e' input, il contenuto dopo resta testo digitato.
+  assert.equal(composerOccupied(`${CYAN}❯${RESET}\u00a0abc`, 'claude', SIM_CLAUDE_CONTRACT), 'occupied');
+  // Due separatori: il SECONDO NBSP e' contenuto digitato, non separatore.
+  assert.equal(composerOccupied(`${CYAN}❯${RESET}\u00a0\u00a0abc`, 'claude', SIM_CLAUDE_CONTRACT), 'occupied');
+});
+
+// T12: suggerimento in attributi NON dichiarati -> unknown (guardia invariata).
+test('parser: suggerimento in attributi non dichiarati dal contratto -> unknown', () => {
+  // Contratto in forma di produzione (nessun placeholder dichiarato,
+  // emptyIsBlank): il grigio del simulatore cade in attributi sconosciuti.
+  const productionLike = Object.freeze({
+    client: 'claude',
+    provenance: 'synthetic test simulator, NC 0.9.80 s2a tests only — qualifies no real client',
+    placeholderAttrs: Object.freeze([]),
+    typedAttrs: Object.freeze(['']),
+    emptyIsBlank: true,
+  });
+  assert.equal(
+    composerOccupied(`${CYAN}❯${RESET} ${GRAY}Try "search the docs"${RESET}`, 'claude', productionLike),
+    'unknown',
+  );
+  // Anche con il contratto di produzione, quando esistera'.
+  if (CLAUDE_CODE_COMPOSER_CONTRACT) {
+    assert.equal(
+      composerOccupied(`${CYAN}❯${RESET} ${GRAY}Try "search the docs"${RESET}`, 'claude', CLAUDE_CODE_COMPOSER_CONTRACT),
+      'unknown',
+    );
+  }
+});
+
+// T14: senza contratto resta unknown; senza emptyIsBlank resta unknown.
+test('parser reale: senza contratto -> unknown; contratto senza emptyIsBlank -> unknown (guardia conservativa)', () => {
+  assert.equal(composerOccupied(REAL_CLAUDE_EMPTY_20261108, 'claude', undefined), 'unknown');
+  // Il contratto del simulatore non dichiara emptyIsBlank: il vuoto senza
+  // placeholder resta rendering non qualificato.
+  assert.equal(composerOccupied(REAL_CLAUDE_EMPTY_20261108, 'claude', SIM_CLAUDE_CONTRACT), 'unknown');
+});

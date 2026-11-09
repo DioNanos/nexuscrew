@@ -254,6 +254,11 @@ test('runtime reale: stop/start — un paste NUOVO per il NUOVO avvio; la claim 
   fs.mkdirSync(w.hostRoot, { recursive: true, mode: 0o700 });
   const fleet = await w.fleet();
   await fleet.up('CellaProva');
+  // Il lancio operativo arma il control VERO del manager; questo mondo non ha
+  // un supervisore collegato al canale, quindi il ciclo del control si chiude
+  // con la revoca esplicita (il gesto reale di fine lancio) prima del down,
+  // che torna sul percorso senza canale.
+  fleet.lease.revokeControl('CellaProva');
   await fleet.down('CellaProva');
   const res2 = await fleet.up('CellaProva');
   assert.equal(res2.ok, true, 'restart immediato: cooldown 0');

@@ -26,6 +26,7 @@ import { runLiveHostCommand } from '../lib/live-host-command.js';
 import { liveHostView, liveHostDotClass } from '../lib/live-host-view.js';
 import {
   rel, nodeStateLabel, healthDot, healthTitle, buildLocalRoster, buildRemoteRoster,
+  powerCellEvidence, powerCellFreshness,
 } from '../lib/roster-view-model.js';
 import { OWNER_ID_RE } from '../lib/grid-model.js';
 import { isValidLabel } from '../lib/settings-model.js';
@@ -267,20 +268,19 @@ export default function SessionList({
   }
 
   // Stato fresco per il foglio di alimentazione: la copia presa all'apertura
-  // può restare indietro rispetto all'inventario (cella che parte mentre il
-  // foglio è aperto). Lo stato arriva dall'inventario corrente, per id,
-  // locale e remoto.
-  const powerCellLive = useMemo(() => {
-    if (!powerCell) return null;
-    const rk = (Array.isArray(powerCell.route) ? powerCell.route : []).join('/');
-    const pool = [
-      ...cells,
-      ...nodeGroups.flatMap((g) => (g.cells || []).map((c) => ({ ...c, route: g.route || [g.name] }))),
-    ];
-    const live = pool.find((c) => c.cell === powerCell.cell
-      && (Array.isArray(c.route) ? c.route.join('/') : '') === rk);
-    return live ? { ...powerCell, active: !!live.active } : powerCell;
-  }, [powerCell, cells, nodeGroups]);
+  // può restare indietro rispetto all'inventario (cella che parte, lancio che
+  // cambia mentre il foglio è aperto). Le evidenze di esecuzione arrivano
+  // dall'inventario corrente, per id, locale e remoto; le scelte editabili
+  // restano quelle dell'apertura.
+  const powerCellLive = useMemo(() => powerCellEvidence(powerCell, cells, nodeGroups), [powerCell, cells, nodeGroups]);
+  // Autorità della lettura che alimenta il foglio, per route — la stessa
+  // misura della card: una lettura conservata non attesta il prompt né il
+  // controllo NC come correnti, e nemmeno lo fa un inventario corrente che
+  // non contiene più la cella del foglio.
+  const powerCellFresh = useMemo(
+    () => powerCellFreshness(powerCell, { localAutorevole: localReadOk, localFleetStale: fleetStale, cells, nodeGroups }),
+    [powerCell, localReadOk, fleetStale, cells, nodeGroups],
+  );
 
   async function onKill(name, route = []) {
     try { await killSession(token, name, route); } catch (_) { return; }
@@ -461,6 +461,9 @@ export default function SessionList({
                 {azioni.isLive && <span className="nc-m-live">LIVE</span>}
               </span>
               <small title={item.subtitle}>{item.subtitle}</small>
+              {item.ncControlLabel && (
+                <span className="nc-nc-label" title={item.ncControlLabel}>{item.ncControlLabel}</span>
+              )}
               <PromptBadge prompt={item.prompt} />
             </span>
           </button>
@@ -666,7 +669,7 @@ export default function SessionList({
       </main>
 
       {powerCellLive && (
-        <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
+        <PowerSheet cell={powerCellLive} token={token} route={Array.isArray(powerCellLive.route) ? powerCellLive.route : []} autorevole={powerCellFresh.autorevole} fleetStale={powerCellFresh.fleetStale} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />
       )}
 
       {/* La finestra di anteprima, una per volta: `peekRow` si ri-risolve per

@@ -579,6 +579,9 @@ export default function Sidebar({
                 <span className="nc-cell-main">
                   <b title={c.cell}>{c.cell}{cellActionsState({ item, cellName: c.cell, route: [], pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                   <small title={item.subtitle}>{item.subtitle}</small>
+                  {item.ncControlLabel && (
+                    <span className="nc-nc-label" title={item.ncControlLabel}>{item.ncControlLabel}</span>
+                  )}
                   <PromptBadge prompt={item.prompt} />
                 </span>
                 {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}
@@ -773,6 +776,9 @@ export default function Sidebar({
                     <span className="nc-card-main">
                       <b>{c.cell}{cellActionsState({ item, cellName: c.cell, route, pins, hostByRoute }).isLive && <span className="nc-live-bollino">LIVE</span>}</b>
                       <small title={item.subtitle}>{item.subtitle}</small>
+                      {item.ncControlLabel && (
+                        <span className="nc-nc-label" title={item.ncControlLabel}>{item.ncControlLabel}</span>
+                      )}
                       <PromptBadge prompt={item.prompt} />
                     </span>
                     {item.activity ? <span className="nc-rel">{rel(item.activity)}</span> : null}

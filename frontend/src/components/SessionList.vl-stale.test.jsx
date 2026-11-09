@@ -46,7 +46,9 @@ const RAW = {
   lastAck: null,
 };
 
-const vlGroup = (stale) => vlSidebarGroups([{ ...vlNodeToPeer(RAW), stale }]);
+// Il gruppo «fresco» deve avere un'osservazione di adesso: la freschezza entra
+// nella decisione, quindi un lastSeen vecchio darebbe un avviso — giustamente.
+const vlGroup = (stale, lastSeen = Date.now()) => vlSidebarGroups([{ ...vlNodeToPeer({ ...RAW, lastSeen }), stale }]);
 
 // Renders SessionList and returns the section for the vl group, the way
 // useNodes would feed it (model output straight into the component).
@@ -77,5 +79,23 @@ describe('vl group stale marker in the sidebar indicator', () => {
     const section = renderVlSection();
     expect(section.querySelector('.dot.warn')).toBeNull();
     expect(section.querySelector('.dot.on')).toBeTruthy();
+  });
+});
+
+// «Mai collegato» e «offline» chiedono due cose diverse: il primo dice che il
+// device non ha mai parlato, il secondo che ha smesso. Renderizzato davvero,
+// non solo nel modello.
+describe('collegamento del nodo VL nella lista', () => {
+  it('un nodo mai collegato lo dice', () => {
+    fixture.groups = vlSidebarGroups([{ ...vlNodeToPeer({ ...RAW, online: false, lastSeen: null }), stale: false }]);
+    const section = renderVlSection();
+    expect(section.textContent).toContain('never connected');
+  });
+
+  it('un nodo che ha perso il contatto resta offline, con il tempo', () => {
+    fixture.groups = vlSidebarGroups([{ ...vlNodeToPeer({ ...RAW, online: false, lastSeen: RAW.lastSeen }), stale: false }]);
+    const section = renderVlSection();
+    expect(section.textContent).toMatch(/offline/i);
+    expect(section.textContent).not.toContain('never connected');
   });
 });

@@ -69,31 +69,87 @@ describe('promptDeliveryBadge: unknown non è un fallimento', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// P3-3 — La card non è più il posto dei dettagli della consegna: il FOGLIO
+// della cella la nomina per esteso, con stato, ORA del record e motivo
+// leggibile. Il badge quindi ESPONE ts e notReady, che prima perdeva: senza
+// quei campi il foglio non potrebbe dire né quando né perché.
+// ---------------------------------------------------------------------------
+describe('promptDeliveryBadge: espone ora e motivo per il foglio (P3-3)', () => {
+  const ts = 1794045762150;
+
+  it('uno skipped porta con sé ts, reason e notReady del record', () => {
+    const out = promptDeliveryBadge(cella({
+      launchId: 'bc446d765a11e330',
+      promptDelivery: {
+        state: 'skipped', reason: 'not-ready', notReady: 'busy',
+        ts, launchId: 'bc446d765a11e330', generation: 0,
+      },
+    }));
+    expect(out.badge).toBe('problem');
+    expect(out.reason).toBe('not-ready');
+    expect(out.notReady).toBe('busy');
+    expect(out.ts).toBe(ts);
+  });
+
+  it('uno submitted porta il ts del record, senza ragioni', () => {
+    const out = promptDeliveryBadge(cella({
+      promptDelivery: { state: 'submitted', ts, launchId: 'bc446d765a11e330', generation: 1 },
+    }));
+    expect(out.badge).toBe('submitted');
+    expect(out.ts).toBe(ts);
+    expect(out.reason).toBeNull();
+    expect(out.notReady).toBeNull();
+  });
+
+  it('il record di un lancio sostituito non presta la SUA ora al lancio corrente', () => {
+    const out = promptDeliveryBadge(
+      cella({
+        launchId: 'aaaaaaaaaaaaaaaa',
+        promptDelivery: { state: 'submitted', ts, launchId: 'bbbbbbbbbbbbbbbb', generation: 1 },
+      }),
+      { currentLaunchId: 'aaaaaaaaaaaaaaaa' },
+    );
+    expect(out.badge).toBe('stale');
+    expect(out.ts).toBeNull();
+  });
+
+  it('senza record non c\'è ora né motivo da mostrare', () => {
+    const out = promptDeliveryBadge(cella({}));
+    expect(out.badge).toBe('unavailable');
+    expect(out.ts).toBeNull();
+    expect(out.notReady).toBeNull();
+    expect(out.reason).toBeNull();
+  });
+});
+
 describe('cellRuntime: il terminale di un lancio non è lo stato di una cella viva', () => {
   // Una cella letta dal nodo: terminal {operator-stop, date vecchie}, nessuna
   // attività pubblicata.
   const terminale = { reason: 'operator-stop', ts: 1793633162750 };
 
-  it('con la cella viva il terminale non vince: decide l’attività (assente -> unverified)', () => {
+  it('con la cella viva il terminale non vince: la riga dice la presenza', () => {
     // La forma vera di /api/sessions: nessuna attività, e `working: false`
     // dichiarato dal contratto della sessione.
     const out = cellRuntime(cella({ terminal: terminale }), { working: false, status: '', attivita: null });
-    expect(out.subtitle).toBe(t('cell-unknown'));
-    expect(out.subtitle).not.toBe(t('cell-terminal-operator-stop'));
+    expect(out.subtitle).toBe(t('cell-present'));
+    expect(out.subtitle).not.toBe(`${t('cell-off')} · ${t('cell-terminal-operator-stop')}`);
+    expect(out.ncControlLabel).toBeUndefined();
   });
 
-  it('con la cella viva e ferma il terminale non vince: dice «stopped», non «stopped by operator»', () => {
+  it('con la cella viva e ferma il terminale non vince: dice «in attesa», non la ragione del lancio vecchio', () => {
     // Stesso terminale, attività `ferma`.
     const out = cellRuntime(cella({ terminal: terminale }), attivita('ferma'));
-    expect(out.subtitle).toBe(t('cell-stopped'));
-    expect(out.subtitle).not.toBe(t('cell-terminal-operator-stop'));
+    expect(out.subtitle).toBe(`${t('cell-present')} · ${t('cell-turn-idle')}`);
+    expect(out.subtitle).not.toContain(t('cell-terminal-operator-stop'));
+    expect(out.subtitle).not.toBe(t('cell-stopped'));
   });
 
   // Controllo positivo: a cella NON viva il terminale resta la spiegazione.
-  it('con la cella spenta il terminale vince, come prima', () => {
+  it('con la cella spenta il terminale vince: «spenta · ragione»', () => {
     const out = cellRuntime(cella({ active: false, tmux: false, terminal: terminale }), {});
     expect(out.stato).toBe('ferma');
     expect(out.terminale).toBe('operator-stop');
-    expect(out.subtitle).toBe(t('cell-terminal-operator-stop'));
+    expect(out.subtitle).toBe(`${t('cell-off')} · ${t('cell-terminal-operator-stop')}`);
   });
 });

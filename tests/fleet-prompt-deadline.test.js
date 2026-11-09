@@ -312,8 +312,9 @@ test('deadline 14: nessun marcatore del testo catturato o del prompt nel ritorno
 // ===========================================================================
 
 // 5. Input umano nel gate MCP: il composer e' occupato alla verifica fresca
-// -> ZERO paste con motivo bounded.
-test('fresh 5: composer occupato alla verifica fresca -> skipped-unknown, motivo bounded, 0 paste', async () => {
+// -> la consegna RIPROVA fino alla scadenza e chiude con ZERO paste, motivo
+// bounded conservato (F2-b: il primo esito negativo non chiude piu').
+test('fresh 5: composer occupato alla verifica fresca -> retry fino alla scadenza, skipped-unknown/busy, 0 paste', async () => {
   const clk = virtualClock();
   const t = mkTmux(clk);
   let attrsCalls = 0;
@@ -326,10 +327,11 @@ test('fresh 5: composer occupato alla verifica fresca -> skipped-unknown, motivo
     composerContract: SIM_CLAUDE_CONTRACT,
     mcpWait: async () => ({ state: 'ready', ready: ['a'], failed: [], pending: [] }),
   });
-  assert.equal(attrsCalls, 1, 'la verifica fresca legge il composer con attributi');
+  assert.ok(attrsCalls >= 2, 'la verifica fresca legge il composer a ogni giro di retry');
   assert.equal(r.delivered, false);
   assert.equal(r.state, 'skipped-unknown');
   assert.equal(r.notReady, 'busy', 'motivo bounded: il composer e' + ' occupato da input umano');
+  assert.equal(r.deadlineExceeded, true, 'il retry si ferma solo alla scadenza');
   assert.equal(pasteCount(t), 0);
   assert.equal(enterCount(t), 0);
 });
@@ -829,6 +831,88 @@ test('retry 27c: attributi oltre la deadline al retry -> failed-pre-paste + dead
   assert.equal(r.attempts, 1);
   assert.equal(t.count('load-buffer'), 1);
   assert.equal(pasteCount(t), 0);
+  assert.equal(enterCount(t), 0);
+});
+
+// ===========================================================================
+// F2-b (S4): la finestra della fase copre ANCHE il budget MCP (readyWaitMs +
+// mcpBudgetMs, lo stesso valore composto nel record pending del supervisore) e
+// una verifica fresca fallita senza deadline torna al ciclo di readiness
+// invece di chiudere la consegna al primo esito negativo.
+// ===========================================================================
+
+// T15: gate MCP pronto DOPO la finestra di readiness ma DENTRO il budget MCP
+// (pronto a 18 s con readyWait 15 s + budget 20 s) -> submitted. Prima del fix
+// la deadline della fase ignorava il budget MCP e l'esito era skip con
+// deadlineExceeded.
+test('S4 T15: MCP pronti a 18 s con readyWait 15 s e budget MCP 20 s -> submitted', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 15000, mcpBudgetMs: 20000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async () => CLAUDE_READY_LIKE,
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+    mcpWait: async () => { clk.advanceMono(18000); return { state: 'ready', ready: ['a'], failed: [], pending: [] }; },
+  });
+  assert.equal(r.delivered, true);
+  assert.equal(r.state, 'submitted');
+  assert.equal(r.mcp && r.mcp.state, 'ready', 'gate entro il budget: mcp ready nel ritorno');
+  assert.equal(r.attempts, 1);
+  assert.equal(pasteCount(t), 1);
+  assert.equal(enterCount(t), 1);
+});
+
+// T16: prima verifica fresca BUSY, seconda ready -> submitted al primo
+// tentativo di trasporto, ZERO paste prima che la verifica torni ready.
+// Prima del fix il primo esito negativo chiudeva subito la consegna.
+test('S4 T16: prima verifica fresca busy, seconda ready -> submitted, attempts 1, zero paste prima', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  let verifiche = 0;
+  let pasteAllaSecondaVerifica = -1;
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 30000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async (target) => {
+      if (target === undefined) return CLAUDE_READY_LIKE; // readiness: pronto
+      verifiche += 1;
+      if (verifiche === 2) pasteAllaSecondaVerifica = pasteCount(t);
+      return verifiche === 1 ? '⏺ working…\nesc to interrupt' : CLAUDE_READY_LIKE;
+    },
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.delivered, true);
+  assert.equal(r.state, 'submitted');
+  assert.equal(r.attempts, 1);
+  assert.equal(pasteAllaSecondaVerifica, 0, 'zero paste prima che la verifica fresca torni ready');
+  assert.equal(pasteCount(t), 1, 'un solo paste, solo dopo la verifica riuscita');
+  assert.equal(enterCount(t), 1);
+});
+
+// T17: verifica fresca BUSY fino alla scadenza -> skip con motivo bounded e
+// ZERO paste (at-most-once: nessun effetto prima di una verifica riuscita).
+test('S4 T17: verifica fresca busy fino alla scadenza -> skipped-unknown/busy, zero paste', async () => {
+  const clk = virtualClock();
+  const t = mkTmux(clk);
+  const r = await deliverBootstrapPrompt({
+    ...OPTS, readyWaitMs: 3000, pollMs: 500,
+    nowImpl: clk.now, sleepImpl: clk.sleep,
+    tmuxExecImpl: t.exec,
+    captureImpl: async (target) => (target === undefined
+      ? CLAUDE_READY_LIKE
+      : '⏺ working…\nesc to interrupt'),
+    captureAttrsImpl: async () => CLAUDE_ATTRS_EMPTY,
+    composerContract: SIM_CLAUDE_CONTRACT,
+  });
+  assert.equal(r.delivered, false);
+  assert.equal(r.state, 'skipped-unknown');
+  assert.equal(r.notReady, 'busy');
+  assert.equal(pasteCount(t), 0, 'zero paste con la verifica sempre busy');
   assert.equal(enterCount(t), 0);
 });
 

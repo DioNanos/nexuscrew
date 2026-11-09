@@ -10,7 +10,7 @@ import './VlSessionView.css';
 // testo a metà parola. Riusa VlNodeEvents (stesso canale in sola lettura),
 // non lo duplica; nessun renderer markdown: prima la sede giusta, poi si
 // guarda cosa resta davvero fastidioso.
-export default function VlSessionView({ peer, token, onBack }) {
+export default function VlSessionView({ peer, token, onBack, nonCorrente = false }) {
   useLang();
   if (!peer) return null;
   return (
@@ -26,7 +26,27 @@ export default function VlSessionView({ peer, token, onBack }) {
         <span className="nc-bar-right" />
       </header>
       <div className="nc-vl-session-body">
-        <VlNodeEvents token={token} nodeId={peer.nodeId} route={peer.route || []} />
+        {/* Il dato che si sta leggendo non e' aggiornato: la lista che lo
+            alimenta non c'e' (mobile senza poll) o e' una fotografia in cache.
+            Non si nasconde e non si chiude la vista: si dice. */}
+        {nonCorrente && (
+          <small className="nc-set-hint nc-vl-session-stale" data-testid="vl-session-stale">
+            {t('vl-session-stale')}
+          </small>
+        )}
+        <VlNodeEvents
+          token={token}
+          nodeId={peer.nodeId}
+          route={peer.route || []}
+          // Il confine di sessione: profilo dichiarato, attacco e generazione.
+          // Cambia uno dei tre, la conversazione riparte da zero — un cursore
+          // vecchio mostrerebbe eventi di un'altra sessione.
+          sessionKey={`${peer.session?.profile || ''}|${peer.session?.attached === true}|${peer.generation ?? ''}`}
+          // Ultimo dato noto: con il peer non corrente il polling si sospende;
+          // quando torna corrente riparte, e per una generazione nuova riparte
+          // da zero perche' sessionKey e' cambiato.
+          sospeso={nonCorrente}
+        />
       </div>
     </section>
   );

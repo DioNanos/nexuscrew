@@ -211,7 +211,7 @@ describe('Sidebar session identity', () => {
     });
   });
 
-  it('renders working, idle and off cell state from the shared runtime contract', () => {
+  it('renders working, presence and off cell state from the shared runtime contract', () => {
     const baseProps = {
       localNodeId: 'c'.repeat(32),
       cells: [
@@ -227,11 +227,15 @@ describe('Sidebar session identity', () => {
       }]} />,
     );
 
+    // Senza un turno qualificato la riga dice la PRESENZA: il titolo del pane
+    // alimenta il pallino, non la parola della riga (P3-1).
     const workingRow = screen.getByText('Working Cell').closest('[data-roster-key]');
-    expect(within(workingRow).getByText(/Implement activity UI/)).toBeTruthy();
+    expect(within(workingRow).getByText('on')).toBeTruthy();
+    expect(within(workingRow).queryByText(/Implement activity UI/)).toBeNull();
     expect(workingRow.querySelector('.nc-dot').classList.contains('working')).toBe(true);
     const offRow = screen.getByText('Off Cell').closest('[data-roster-key]');
-    expect(within(offRow).getByText('claude.native · claude-opus-4-1')).toBeTruthy();
+    expect(within(offRow).getByText('off')).toBeTruthy();
+    expect(within(offRow).queryByText('claude.native · claude-opus-4-1')).toBeNull();
     expect(offRow.querySelector('.nc-dot').classList.contains('on')).toBe(false);
 
     rerender(<Sidebar {...baseProps} sessions={[{
@@ -239,12 +243,13 @@ describe('Sidebar session identity', () => {
       working: false, status: '', paneTitle: 'Dev', preview: 'gpt-5.6-sol',
     }]} />);
     // La cella qui e' `codex.responses`, che NON ha il canale degli hook.
-    // Il titolo dice «non al lavoro», ma il titolo non prova nulla: lo
-    // stato e' dichiarato INCERTO, non «idle». Prima si affermava «idle» da un
-    // segnale che non lo dimostra.
+    // Il titolo dice «non al lavoro», ma il titolo non prova nulla: la riga
+    // resta sulla presenza e il pallino smette di lavorare. Mai «idle» da un
+    // segnale che non lo dimostra, e mai «unverified» per un dato che non c'e'.
     const idleRow = screen.getByText('Working Cell').closest('[data-roster-key]');
-    expect(within(idleRow).getByText('unverified')).toBeTruthy();
+    expect(within(idleRow).getByText('on')).toBeTruthy();
     expect(within(idleRow).queryByText('idle')).toBeNull();
+    expect(within(idleRow).queryByText('unverified')).toBeNull();
     expect(idleRow.querySelector('.nc-dot').classList.contains('working')).toBe(false);
     expect(idleRow.querySelector('.nc-dot').classList.contains('on')).toBe(true);
   });
@@ -266,7 +271,9 @@ describe('Sidebar session identity', () => {
       unmanaged: [], capabilities: [], engines: [],
     }]} />);
     const remoteRow = screen.getByText('Remote Worker').closest('[data-roster-key]');
-    expect(within(remoteRow).getByText(/Review remote diff/)).toBeTruthy();
+    // Il titolo del pane alimenta il pallino, non la parola della riga (P3-1):
+    // la riga remota dice la presenza.
+    expect(within(remoteRow).getByText('on')).toBeTruthy();
     expect(remoteRow.querySelector('.nc-dot').classList.contains('working')).toBe(true);
   });
 
@@ -604,22 +611,34 @@ describe('prompt delivery badge in the desktop sidebar', () => {
     onSettings: vi.fn(),
   });
 
-  it('mostra lo stato della consegna accanto alla cella, senza cambiare il suo stato', () => {
+  // P3-2 — In card resta solo la richiesta d'azione; gli altri esiti sono
+  // dettaglio del foglio della cella (PromptBadge.test.jsx li prova sul
+  // componente, PowerSheet.test.jsx sul foglio).
+  it('la consegna fallita NON sta più in card: la riga resta il suo stato', () => {
     render(<Sidebar {...props([
       { cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, engine: 'vl', key: 'native',
         promptDelivery: { state: 'skipped', reason: 'failed-pre-paste', launchId: 'abcdef0123456789' } },
     ])} />);
-    expect(screen.getByText('delivery failed')).toBeTruthy();
+    expect(screen.queryByText('delivery failed')).toBeNull();
     expect(screen.getByText('Local Cell')).toBeTruthy();
+    expect(screen.getByText('on')).toBeTruthy();
   });
 
-  it('non mostra come corrente il record di un lancio sostituito', () => {
+  it('la richiesta d\'azione resta in card, anche la sidebar la mostra', () => {
+    render(<Sidebar {...props([
+      { cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true, engine: 'vl', key: 'native',
+        promptDelivery: { state: 'skipped', reason: 'prompt-rejected', launchId: 'abcdef0123456789' } },
+    ])} />);
+    expect(screen.getByText('a response is needed')).toBeTruthy();
+  });
+
+  it('il record di un lancio sostituito non mostra nulla in card', () => {
     render(<Sidebar {...props([
       { cell: 'Local Cell', tmuxSession: 'local-cell', tmux: true, active: true,
         launchId: 'bbbbbbbbbbbbbbbb',
         promptDelivery: { state: 'submitted', launchId: 'aaaaaaaaaaaaaaaa', generation: 1 } },
     ])} />);
-    expect(screen.getByText('earlier launch')).toBeTruthy();
+    expect(screen.queryByText('earlier launch')).toBeNull();
     expect(screen.queryByText('delivered')).toBeNull();
   });
 });
