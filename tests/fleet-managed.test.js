@@ -25,23 +25,25 @@ function fakeClient(home, name) {
 // Fetta A: il seed cambia ORDINE (non insieme) rispetto a 0.8.55 perche' il
 // dropdown client e il seed derivano entrambi dall'ordine dell'array CATALOG
 // (publicCatalog preserva la prima apparizione; defaultDefinitions filtra
-// `default:true` in ordine di array). Invariante vero: (1) stesso insieme dei
-// 5 default, (2) claude.native primo (preselezione), (3) shell.local ultimo,
+// `default:true` in ordine di array). Dallo strato qwen della 0.9.83 il
+// catalogo espone qwen.native tra i default: l'INTENTO del seed e' 6 engine,
+// con qwen tra pi e shell. Invariante vero: (1) stesso insieme dei 6 default,
+// (2) claude.native primo (preselezione), (3) shell.local ultimo,
 // (4) codex-vl prima di codex.
 test('app defaults: seed invariato come INTENTO (claude primo, shell ultimo, codex-vl prima di codex)', () => {
   const d = defaultDefinitions();
   const ids = d.engines.map((e) => e.id);
-  assert.equal(ids.length, 5);
+  assert.equal(ids.length, 6);
   assert.equal(ids[0], 'claude.native', 'claude.native e la preselezione (primo default)');
   assert.equal(ids[ids.length - 1], 'shell.local', 'shell.local resta ultimo default');
-  assert.deepEqual([...ids].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local'], 'insieme dei 5 default invariato');
+  assert.deepEqual([...ids].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'qwen.native', 'shell.local'], 'insieme dei 6 default invariato');
   assert.ok(ids.indexOf('codex-vl.native') < ids.indexOf('codex.native'), 'codex-vl precede codex nel seed');
-  assert.deepEqual(d.engines.map((e) => e.label), ['claude', 'codex-vl', 'codex', 'pi', 'shell']);
+  assert.deepEqual(d.engines.map((e) => e.label), ['claude', 'codex-vl', 'codex', 'pi', 'qwen', 'shell']);
   assert.equal(d.engines.find((e) => e.id === 'claude.native').managed.permissionPolicy, 'unsafe');
   assert.ok(d.engines.filter((e) => e.id !== 'claude.native').every((e) => e.managed.permissionPolicy === 'standard'));
   assert.deepEqual(d.cells, []);
   assert.ok(parseDefinitions(d));
-  assert.equal(CATALOG.filter((p) => p.default).length, 5);
+  assert.equal(CATALOG.filter((p) => p.default).length, 6);
 });
 
 test('Shell locale: path runtime, command via login interattivo -lic e policy standard', () => {
@@ -90,6 +92,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
     'codex-vl.openrouter', 'codex-vl.lmstudio', 'codex-vl.ollama-cloud', 'codex-vl.custom',
     'pi.native', 'pi.anthropic', 'pi.openai', 'pi.openai-codex', 'pi.google',
     'pi.github-copilot', 'pi.ollama', 'pi.openrouter', 'pi.deepseek', 'pi.zai', 'pi.custom',
+    'qwen.native',
     'agy.native', 'kimi.native',
     'shell.local',
   ]) assert.equal(ids.has(id), true, `${id} deve essere nel catalogo base`);
@@ -111,7 +114,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
   assert.equal(catalog.find((p) => p.id === 'claude.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'codex-vl.openrouter').credentialEnv, 'OPENROUTER_API_KEY');
   assert.equal(catalog.find((p) => p.id === 'claude.kimi-code').credentialEnv, 'KIMI_API_KEY');
-  assert.equal(catalog.filter((p) => p.default).length, 5, 'Shell e un engine standard senza cambiare il primo default');
+  assert.equal(catalog.filter((p) => p.default).length, 6, 'Shell, qwen e gli engine standard senza cambiare il primo default');
 });
 
 // --- Fetta A: ordine semantico del CATALOG -----------------------------------
@@ -123,7 +126,7 @@ test('catalogo pubblico: provider base per CLI, nessun profilo credenziale A/P',
 test('CATALOG: client in ordine di prima apparizione', () => {
   const clients = [];
   for (const p of publicCatalog()) if (!clients.includes(p.client)) clients.push(p.client);
-  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'grok', 'vl', 'pi', 'opencode', 'agy', 'kimi', 'shell']);
+  assert.deepEqual(clients, ['claude', 'codex-vl', 'codex', 'grok', 'vl', 'pi', 'qwen', 'opencode', 'agy', 'kimi', 'shell']);
 });
 
 test('Fetta A: native primo e custom ultimo dentro ogni client', () => {
@@ -401,9 +404,9 @@ test('Claude Kimi Code isola config, usa API_KEY child-only e applica il profilo
   const home = tmp();
   try {
     fakeClient(home, 'claude');
-    for (const [model, context, effort] of [
-      ['k3', '262144', true], ['k3[1m]', '1048576', true],
-      ['kimi-for-coding', '262144', false], ['kimi-for-coding-highspeed', '262144', false],
+    for (const [model, context, compact, effort] of [
+      ['k3', '262144', '262144', true], ['k3[1m]', '1048576', '1000000', true],
+      ['kimi-for-coding', '262144', '262144', false], ['kimi-for-coding-highspeed', '262144', '262144', false],
     ]) {
       const r = resolveManagedEngine({ id: `claude.kimi-${model}`, label: 'Kimi Code', managed: { client: 'claude', provider: 'kimi-code', model } }, { id: 'CellaProva' }, { home, env: { KIMI_API_KEY: 'synthetic-kimi-token' } });
       assert.equal(r.ok, true);
@@ -413,7 +416,7 @@ test('Claude Kimi Code isola config, usa API_KEY child-only e applica il profilo
       assert.equal(r.engine.env.ANTHROPIC_DEFAULT_FABLE_MODEL, model);
       assert.equal(r.engine.env.CLAUDE_CODE_SUBAGENT_MODEL, model);
       assert.equal(r.engine.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, context);
-      assert.equal(r.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, context);
+      assert.equal(r.engine.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, compact);
       assert.equal(r.engine.env.API_TIMEOUT_MS, '3000000');
       assert.equal(r.engine.env.CLAUDE_CODE_EFFORT_LEVEL, effort ? 'max' : undefined);
       assert.equal(r.engine.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT, effort ? '1' : undefined);

@@ -112,57 +112,62 @@ test('hasFreshOutput reads the seen-marker from injectable storage', async () =>
 test('cellRuntime exposes one shared off, idle, working and legacy contract', async () => {
   const { cellRuntime } = await model();
   const { t } = await i18n();
+  // The off row says the PRESENCE only; the engine is read in the cell sheet.
+  // The NC supervision code travels in its own field and stays unverifiable
+  // when the cell carries no ncControl reading.
   assert.deepEqual(
     cellRuntime({ tmux: false, model: 'claude-opus-4-1', engine: 'claude.native' }),
-    { working: false, subtitle: 'claude.native · claude-opus-4-1' },
-    'off cells show the configured startup engine and model',
+    { working: false, subtitle: t('cell-off'), ncControl: 'unverifiable' },
+    'off cells show the presence word, not the configured engine and model',
   );
   assert.deepEqual(
     cellRuntime({ tmux: false, engine: 'codex.responses' }),
-    { working: false, subtitle: 'codex.responses' },
-    'off cells fall back to the startup engine when model is provider-default',
+    { working: false, subtitle: t('cell-off'), ncControl: 'unverifiable' },
+    'off cells never guess the startup engine either',
   );
   // Dallo stato pubblicato dagli hook: tre stati, e il titolo non li scavalca.
   assert.deepEqual(
     cellRuntime({ tmux: true }, { attivita: { stato: 'lavora' }, working: false, status: 'Implement activity UI' }),
-    { working: true, stato: 'lavora', subtitle: `${t('cell-working')} · Implement activity UI` },
+    { working: true, stato: 'lavora', subtitle: `${t('cell-present')} · ${t('cell-working')} · Implement activity UI`, ncControl: 'unverifiable' },
     'lo stato degli hook vince sul titolo',
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { attivita: { stato: 'attesa' } }),
-    { working: true, stato: 'attesa', subtitle: t('cell-permission') },
+    { working: true, stato: 'attesa', subtitle: `${t('cell-present')} · ${t('cell-permission')}`, ncControl: 'unverifiable' },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { attivita: { stato: 'ferma' }, working: true }),
-    { working: false, stato: 'ferma', subtitle: t('cell-stopped') },
+    { working: false, stato: 'ferma', subtitle: `${t('cell-present')} · ${t('cell-turn-idle')}`, ncControl: 'unverifiable' },
+    'a finished turn is waiting, never «stopped»',
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { attivita: { stato: 'lavora' }, status: '' }),
-    { working: true, stato: 'lavora', subtitle: t('cell-working') },
+    { working: true, stato: 'lavora', subtitle: `${t('cell-present')} · ${t('cell-working')}`, ncControl: 'unverifiable' },
   );
-  // Senza il canale il titolo resta un INDIZIO, dichiarato incerto: mai «idle»
-  // affermato da un segnale che non lo dimostra.
+  // Senza un turno qualificato la riga dice SOLO la presenza: il titolo del
+  // pane resta un INDIZIO, e l'anteprima non e' uno stato.
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: false, paneTitle: 'Dev' }),
-    { working: false, stato: 'ignoto', subtitle: t('cell-unknown') },
+    { working: false, stato: 'ignoto', subtitle: t('cell-present'), ncControl: 'unverifiable' },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: 'Implement activity UI' }),
-    { working: true, stato: 'ignoto', subtitle: `${t('cell-unknown')} · Implement activity UI` },
+    { working: true, stato: 'ignoto', subtitle: t('cell-present'), ncControl: 'unverifiable' },
+    'the pane status is not a state: the row says presence only',
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: '' }),
-    { working: true, stato: 'ignoto', subtitle: t('cell-unknown') },
+    { working: true, stato: 'ignoto', subtitle: t('cell-present'), ncControl: 'unverifiable' },
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { working: true, status: 'Working...' }),
-    { working: true, stato: 'ignoto', subtitle: t('cell-unknown') },
-    'Pi generic status is localized without a duplicated label',
+    { working: true, stato: 'ignoto', subtitle: t('cell-present'), ncControl: 'unverifiable' },
+    'a generic Pi status is not a state either',
   );
   assert.deepEqual(
     cellRuntime({ tmux: true }, { preview: 'older peer preview' }),
-    { working: false, stato: 'ignoto', subtitle: 'older peer preview' },
-    'older peers without an explicit boolean keep their preview and never fake working',
+    { working: false, stato: 'ignoto', subtitle: t('cell-present'), ncControl: 'unverifiable' },
+    'older peers never fake working and their preview is not a state',
   );
 });
 
@@ -191,10 +196,12 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   assert.deepEqual(items[0], {
     type: 'cell', value: cells[0], key: positionKey([], 'local-live'), label: 'Live Cell',
     live: true, fresh: true, activity: 20, working: true, stato: 'ignoto',
-    subtitle: `${t('cell-unknown')} · Implement activity UI`,
+    subtitle: t('cell-present'),
+    // NC supervision travels in its own field, unverifiable without a reading.
+    ncControl: 'unverifiable', ncControlLabel: undefined,
     // la consegna del prompt e' una riga ACCOSTATA allo stato della cella:
     // senza campo dal nodo resta «non disponibile», mai un invito dedotto
-    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, ts: null, notReady: null, freschezza: 'current' },
     searchText: 'claude K1 p-live Implement activity UI',
   });
   // Off cell: no matching session -> blank fresh/preview, key is the bare tmuxSession
@@ -207,7 +214,7 @@ test('buildLocalRoster normalizes cells and unmanaged with route-qualified local
   assert.equal(off.fresh, false);
   assert.equal(off.activity, 0);
   assert.equal(off.working, false);
-  assert.equal(off.subtitle, 'gpt-5.4');
+  assert.equal(off.subtitle, t('cell-off'));
   assert.equal(off.searchText, 'gpt-5.4');
   // Unmanaged tmux sessions.
   assert.deepEqual(items[2], {
@@ -258,8 +265,9 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   // Active remote cell: activity/preview from the matched session.
   assert.deepEqual(rawItems[0], {
     type: 'cell', value: group.cells[0], key: positionKey(['relay'], 'remote-live'), label: 'Relay Live',
-    live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-unknown'),
-    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, freschezza: 'current' },
+    live: true, fresh: false, activity: 30, working: false, stato: 'ignoto', subtitle: t('cell-present'),
+    ncControl: 'unverifiable', ncControlLabel: undefined,
+    prompt: { badge: 'unavailable', priorita: -1, key: 'prompt-badge-unavailable', reason: null, launchId: null, ts: null, notReady: null, freschezza: 'current' },
     searchText: 'glm G1 rp-live',
   });
   // Orphan cell (no matching session): falls back to the cell's own activity/preview.
@@ -267,7 +275,7 @@ test('buildRemoteRoster qualifies keys with the node route and falls back to cel
   assert.equal(orphan.key, positionKey(['relay'], 'remote-x'));
   assert.equal(orphan.activity, 2, 'cell.activity fallback when session missing');
   assert.equal(orphan.working, false);
-  assert.equal(orphan.subtitle, group.cells[1].engine || t('cell-off'));
+  assert.equal(orphan.subtitle, t('cell-off'));
   assert.equal(orphan.searchText, 'cp-orphan', 'preview remains searchable while off subtitle wins');
   assert.equal(orphan.fresh, false);
   // Remote unmanaged session, route-qualified key.

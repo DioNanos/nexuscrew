@@ -20,6 +20,18 @@ function duplicateError() {
   return e;
 }
 
+// The 409 that does NOT prove a duplicate: unknown blocks, STOP_UNKNOWN code.
+// It must never become "already running".
+function notClosedError() {
+  const e = new Error('launch not closed');
+  e.status = 409;
+  e.data = {
+    error: 'launch not closed', code: 'STOP_UNKNOWN', phase: 'preflight',
+    prove: { classificazione: 'proven-dead', proofs: { server: 'replaced-unknown' }, blocchi: ['SERVER_UNKNOWN'], riconciliabile: false },
+  };
+  return e;
+}
+
 function slowRouteError() {
   const e = new Error('node non raggiungibile');
   e.status = 502;
@@ -65,6 +77,27 @@ describe('fleetActionErrorNotice', () => {
     expect(fleetActionErrorNotice(duplicateError(), 'up')).toMatchObject({
       code: 'FLEET_SESSION_DUPLICATE', text: 'fleet-up-duplicate',
     });
+  });
+
+  it('409 con prove.blocchi SERVER_UNKNOWN: NON è FLEET_SESSION_DUPLICATE', () => {
+    const n = fleetActionErrorNotice(notClosedError(), 'up');
+    expect(n.code).toBe('FLEET_LAUNCH_NOT_CLOSED');
+    expect(n.code).not.toBe('FLEET_SESSION_DUPLICATE');
+    expect(n.text).toContain('fleet-up-not-closed');
+    expect(n.text).toContain('SERVER_UNKNOWN');
+  });
+
+  it('409 con blocchi che provano il duplicato: resta «già in esecuzione»', () => {
+    const e = duplicateError();
+    e.data.prove = { blocchi: ['SESSION_PRESENT'], proofs: { session: 'present' } };
+    expect(fleetActionErrorNotice(e, 'up')).toMatchObject({ code: 'FLEET_SESSION_DUPLICATE' });
+  });
+
+  it('409 STOP_UNKNOWN senza blocchi: comunque non «già in esecuzione»', () => {
+    const e = new Error('uncertain launch');
+    e.status = 409;
+    e.data = { code: 'STOP_UNKNOWN', prove: { blocchi: [], proofs: {} } };
+    expect(fleetActionErrorNotice(e, 'up')).toMatchObject({ code: 'FLEET_LAUNCH_NOT_CLOSED' });
   });
 
   it('down non ha esiti benigni: il 409 resta un errore', () => {
@@ -120,13 +153,23 @@ describe('runFleetPowerAction', () => {
   const powerCell = { cell: 'X', route: [] };
   const fleetApi = (up, down) => ({ fleetUp: up, fleetDown: down });
 
-  it('up ok senza degradi: nessuna notice, esito pieno', async () => {
+  it('up ok senza degradi: notice di successo, esito pieno', async () => {
     const onNotice = vi.fn();
     const up = vi.fn(async () => ({}));
     const out = await runFleetPowerAction({ token: 't', powerCell, payload: { action: 'up', boot: true }, onNotice, fleetApi: fleetApi(up) });
     expect(out).toBe(undefined);
-    expect(onNotice).not.toHaveBeenCalled();
+    expect(onNotice).toHaveBeenCalledTimes(1);
+    expect(onNotice).toHaveBeenCalledWith('fleet-up-started');
     expect(up).toHaveBeenCalledWith('t', { cell: 'X', boot: true }, []);
+  });
+
+  it('up ok con actionRequired: UNA sola notice, quella specifica', async () => {
+    const onNotice = vi.fn();
+    const up = vi.fn(async () => ({ actionRequired: { code: 'KIMI_AUTH_ACTION_REQUIRED', recovery: 'kimi-cli-login' } }));
+    const out = await runFleetPowerAction({ token: 't', powerCell, payload: { action: 'up' }, onNotice, fleetApi: fleetApi(up) });
+    expect(out).toBe(undefined);
+    expect(onNotice).toHaveBeenCalledTimes(1);
+    expect(onNotice).toHaveBeenCalledWith('fleet-recovery-kimi-cli-login');
   });
 
   it('la route del click vince: powerCell.route arriva all\'azione con engine/model/policy', async () => {
@@ -175,12 +218,25 @@ describe('runFleetPowerAction', () => {
     expect(onNotice).not.toHaveBeenCalled();
   });
 
-  it('down ok: esito pieno, corpo minimo', async () => {
+  it('down ok: esito pieno, corpo minimo, notice di successo', async () => {
     const onNotice = vi.fn();
     const down = vi.fn(async () => ({ ok: true, killed: false }));
     const out = await runFleetPowerAction({ token: 't', powerCell, payload: { action: 'down', boot: true }, onNotice, fleetApi: fleetApi(null, down) });
     expect(out).toBe(undefined);
     expect(down).toHaveBeenCalledWith('t', { cell: 'X', boot: true }, []);
+    expect(onNotice).toHaveBeenCalledTimes(1);
+    expect(onNotice).toHaveBeenCalledWith('fleet-down-stopped');
+  });
+
+  it('409 STOP_UNKNOWN con blocchi ignoti: benigno «pratica non chiusa», mai «già in esecuzione»', async () => {
+    const onNotice = vi.fn();
+    const up = vi.fn(() => Promise.reject(notClosedError()));
+    const out = await runFleetPowerAction({ token: 't', powerCell, payload: { action: 'up' }, onNotice, fleetApi: fleetApi(up) });
+    expect(out).toEqual({ benign: 'FLEET_LAUNCH_NOT_CLOSED' });
+    expect(onNotice).toHaveBeenCalledTimes(1);
+    expect(onNotice.mock.calls[0][0]).toContain('fleet-up-not-closed');
+    expect(onNotice.mock.calls[0][0]).not.toContain('fleet-up-duplicate');
+    expect(up).toHaveBeenCalledTimes(1);
   });
 
   it('timeout su down: benigno, notice di arresto in corso', async () => {

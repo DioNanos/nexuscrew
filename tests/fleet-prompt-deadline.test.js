@@ -100,7 +100,9 @@ test('deadline 3: kind qualificati al limite -> skipped-unknown, kind bounded, 0
     [CLAUDE_CONSENT_LIKE, 'not-ready-consent'],
     [CLAUDE_TRUST_LIKE, 'not-ready-onboarding'],
     [CLAUDE_AUTH_LIKE, 'not-ready-auth'],
-    ['schermo mai riconosciuto', ''],
+    // S6: alla scadenza il kind c'e' SEMPRE (un terminale deve dire perche' si
+    // e' aspettato); una superficie non qualificata vale 'unknown'.
+    ['schermo mai riconosciuto', 'unknown'],
   ]) {
     const clk = virtualClock();
     const t = mkTmux(clk);
@@ -113,7 +115,7 @@ test('deadline 3: kind qualificati al limite -> skipped-unknown, kind bounded, 0
     assert.equal(r.delivered, false, `${kind}: non consegnato`);
     assert.equal(r.state, 'skipped-unknown', `${kind}: a deadline lo stato resta skipped-unknown (C7)`);
     assert.equal(r.deadlineExceeded, true, `${kind}: dettaglio deadline`);
-    assert.equal(r.notReady, kind, `${kind || 'unknown'}: kind bounded conservato come dettaglio`);
+    assert.equal(r.notReady, kind, `${kind}: kind bounded conservato come dettaglio`);
     assert.equal(pasteCount(t), 0, `${kind}: zero paste`);
     assert.equal(enterCount(t), 0, `${kind}: zero Enter`);
   }

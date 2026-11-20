@@ -126,7 +126,9 @@ test('killPidfile: PID reuse (cmd mismatch) -> NO kill, remove stale', () => {
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
 
-test('killPidfile: EPERM rimuove solo il pidfile e non segnala il processo estraneo', () => {
+test('killPidfile: EPERM non segnala il processo estraneo e NON rimuove il pidfile', () => {
+  // EPERM non e' morte attestata: rimuovere il pidfile cancellerebbe la prova
+  // che un processo e' vivo. Il rifiuto e' fail-closed, il file resta.
   const p = tmpPid();
   writePidfile(p, 424242, 'node tunnel-supervisor.js');
   const signals = [];
@@ -140,7 +142,7 @@ test('killPidfile: EPERM rimuove solo il pidfile e non segnala il processo estra
   assert.deepEqual(signals, [0], 'solo ownership probe, nessun SIGTERM');
   assert.equal(r.killed, false);
   assert.match(r.reason, /not owned/);
-  assert.equal(readPidfile(p), null);
+  assert.equal(readPidfile(p) !== null, true, 'il pidfile sopravvive: nessuna morte attestata');
   fs.rmSync(path.dirname(p), { recursive: true, force: true });
 });
 

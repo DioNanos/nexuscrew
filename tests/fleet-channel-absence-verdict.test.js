@@ -21,10 +21,13 @@ const { attestazioneAssenzaCanale } = require('../lib/fleet/runtime.js');
 // --- unit: la conversione del seam del down --------------------------------
 
 const canaleChe = (esitoHas) => ({ morto: () => false, hasSession: async () => esitoHas });
+// Il seam non parte senza un budget (niente finestra di default): qui il budget
+// e' esplicito, i casi provano il VERDETTO, non il taglio.
+const BUDGET = 1000;
 
 test('seam: verdetto specifico (assente) -> true', async () => {
   const r = await attestazioneAssenzaCanale(
-    canaleChe({ ok: false, assente: true, testo: "can't find session: $7" }), '$7',
+    canaleChe({ ok: false, assente: true, testo: "can't find session: $7" }), '$7', BUDGET,
   );
   assert.equal(r, true);
 });
@@ -35,23 +38,23 @@ test('seam: client morto PRIMA della verifica -> false, senza chiamare has-sessi
     morto: () => true,
     hasSession: async () => { chiamato = true; return { ok: true }; },
   };
-  assert.equal(await attestazioneAssenzaCanale(canale, '$7'), false);
+  assert.equal(await attestazioneAssenzaCanale(canale, '$7', BUDGET), false);
   assert.equal(chiamato, false);
 });
 
 test('seam: timeout del comando ({ok:false, morto:true}) -> false', async () => {
-  assert.equal(await attestazioneAssenzaCanale(canaleChe({ ok: false, morto: true }), '$7'), false);
+  assert.equal(await attestazioneAssenzaCanale(canaleChe({ ok: false, morto: true }), '$7', BUDGET), false);
 });
 
 test('seam: %error generico -> false', async () => {
   assert.equal(
-    await attestazioneAssenzaCanale(canaleChe({ ok: false, testo: 'generic protocol refusal' }), '$7'),
+    await attestazioneAssenzaCanale(canaleChe({ ok: false, testo: 'generic protocol refusal' }), '$7', BUDGET),
     false,
   );
 });
 
 test('seam: sessione viva (ok:true) -> false', async () => {
-  assert.equal(await attestazioneAssenzaCanale(canaleChe({ ok: true, testo: '' }), '$7'), false);
+  assert.equal(await attestazioneAssenzaCanale(canaleChe({ ok: true, testo: '' }), '$7', BUDGET), false);
 });
 
 test('seam: hasSession che throw -> false', async () => {
@@ -59,12 +62,12 @@ test('seam: hasSession che throw -> false', async () => {
     morto: () => false,
     hasSession: async () => { throw new Error('canale illeggibile'); },
   };
-  assert.equal(await attestazioneAssenzaCanale(canale, '$7'), false);
+  assert.equal(await attestazioneAssenzaCanale(canale, '$7', BUDGET), false);
 });
 
 test('seam: canale senza hasSession o nullo -> false', async () => {
-  assert.equal(await attestazioneAssenzaCanale({ morto: () => false }, '$7'), false);
-  assert.equal(await attestazioneAssenzaCanale(null, '$7'), false);
+  assert.equal(await attestazioneAssenzaCanale({ morto: () => false }, '$7', BUDGET), false);
+  assert.equal(await attestazioneAssenzaCanale(null, '$7', BUDGET), false);
 });
 
 // --- canale vero su client finto: il verdetto tipizzato di hasSession ------

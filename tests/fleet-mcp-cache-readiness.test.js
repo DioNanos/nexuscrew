@@ -10,7 +10,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  ADAPTER_CLIENT_VERSION, bootStampOf, encodeCwdForCache, readinessNow, waitMcpReadiness,
+  ADAPTER_CLIENT_VERSION, bootStampOf, encodeCwdForCache, encodeServerForCache, readinessNow, waitMcpReadiness,
 } = require('../lib/fleet/mcp-cache-readiness.js');
 
 function tmpRoot(t) {
@@ -20,7 +20,7 @@ function tmpRoot(t) {
 }
 
 function writeBoot(root, cwd, server, stamp, lines) {
-  const dir = path.join(root, encodeCwdForCache(cwd), `mcp-logs-${server}`);
+  const dir = path.join(root, encodeCwdForCache(cwd), `mcp-logs-${encodeServerForCache(server)}`);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${stamp}.jsonl`),
     lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
@@ -133,4 +133,48 @@ test('waitMcpReadiness: ritorna subito su insieme concluso (anche degraded), att
     isCancelled: () => true,
   });
   assert.strictEqual(cancelled.cancelled, true);
+});
+
+test('encodeServerForCache normalizza i caratteri fuori da [A-Za-z0-9-] come Claude Code', () => {
+  assert.strictEqual(encodeServerForCache('memory'), 'memory');
+  assert.strictEqual(encodeServerForCache('mcp-vision-rs'), 'mcp-vision-rs');
+  assert.strictEqual(encodeServerForCache('playwright_desktop'), 'playwright-desktop');
+  assert.strictEqual(
+    encodeServerForCache('claude.ai Interactive Brokers (IBKR)'),
+    'claude-ai-Interactive-Brokers--IBKR-',
+  );
+  assert.strictEqual(encodeServerForCache('plugin:playwright:playwright'), 'plugin-playwright-playwright');
+});
+
+test('readinessNow trova i log dei server con underscore, punti, spazi e parentesi preservando i nomi attesi', () => {
+  const root = tmpRoot({ after() {} });
+  const cwd = '/tmp/probe-norm';
+  const expected = ['memory', 'playwright_desktop', 'claude.ai Interactive Brokers (IBKR)'];
+  for (const name of expected) {
+    writeBoot(root, cwd, name, START_STAMP, [
+      { debug: 'Starting connection with timeout of 30000ms' },
+      { debug: 'Successfully connected (transport: stdio) in 50ms' },
+    ]);
+  }
+  const r = readinessNow({ cacheRoot: root, cwd, expectedServers: expected, notBeforeMs: START });
+  assert.strictEqual(r.state, 'ready');
+  assert.deepStrictEqual(r.ready, [...expected].sort());
+  assert.deepStrictEqual(r.pending, []);
+  assert.strictEqual(r.servers['playwright_desktop'], 'ready');
+  assert.strictEqual(r.servers['claude.ai Interactive Brokers (IBKR)'], 'ready');
+});
+
+test('readinessNow con collisione di normalizzazione: due nomi distinti leggono la stessa cartella senza errore', () => {
+  const root = tmpRoot({ after() {} });
+  const cwd = '/tmp/probe-collision';
+  // Claude Code scrive entrambi in mcp-logs-foo-bar: i due nomi restano chiavi distinte in servers
+  // ma condividono la stessa directory di log normalizzata.
+  writeBoot(root, cwd, 'foo_bar', START_STAMP, [
+    { debug: 'Successfully connected (transport: stdio) in 20ms' },
+  ]);
+  const r = readinessNow({ cacheRoot: root, cwd, expectedServers: ['foo_bar', 'foo.bar'], notBeforeMs: START });
+  assert.strictEqual(r.state, 'ready');
+  assert.strictEqual(r.servers['foo_bar'], 'ready');
+  assert.strictEqual(r.servers['foo.bar'], 'ready');
+  assert.deepStrictEqual(r.ready, ['foo.bar', 'foo_bar']);
 });

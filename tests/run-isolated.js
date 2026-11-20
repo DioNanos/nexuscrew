@@ -15,7 +15,21 @@ const { elencaServerTmuxLeak, chiudiServerTmux } = require('./tmux-containment.j
 const { elencaSupervisorTunnelLeak, chiudiSupervisorTunnel } = require('./tunnel-supervisor-containment.js');
 const { allPidfiles, chiudiLeakDaPidfile } = require('./pidfile-containment.js');
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexuscrew-tests-'));
+// The suite root must stay as shallow as /tmp itself: it hosts the per-worker
+// TMPDIRs (set by tests/isolated-home.cjs), and test fixtures bind unix sockets
+// inside their TMPDIR trees, so every derived path must fit sockaddr_un's
+// sun_path. os.tmpdir() can be nested (e.g. /tmp/user/1000 under
+// systemd-run --user), long enough to push fixture sockets past the limit;
+// prefer /tmp when it is a writable directory and fall back to os.tmpdir()
+// otherwise (Termux has no /tmp). The prefix is short for the same reason.
+function writableDir(p) {
+  try {
+    fs.accessSync(p, fs.constants.W_OK | fs.constants.X_OK);
+    return fs.statSync(p).isDirectory();
+  } catch (_) { return false; }
+}
+const tmpBase = writableDir('/tmp') ? '/tmp' : os.tmpdir();
+const root = fs.mkdtempSync(path.join(tmpBase, 'nc-'));
 const tmuxRoot = path.join(root, 'tmux');
 fs.mkdirSync(tmuxRoot, { recursive: true, mode: 0o700 });
 const bootstrap = path.join(__dirname, 'isolated-home.cjs');

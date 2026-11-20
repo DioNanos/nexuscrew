@@ -186,7 +186,12 @@ test('con il lock il secondo non entra finche il primo non esce', async () => {
   });
   await attendi(() => entrati(hold).length === 1);
   const secondo = await radici.riserva({
-    home, root, launchId: id(), ownerInstanceId: 'own', cellId: 'Cella', budgetMs: 500,
+    // Budget ampio: la preparazione del pin puo consumare da sola fino a
+    // ~0.6 s con runtime Node grandi, e con 500 ms il rifiuto arriverebbe
+    // come BUDGET nel preambolo, prima di attendere il lock. Con respiro
+    // sufficiente l'esito e deterministicamente il timeout del lock, che e
+    // l'esclusione che questo test vuole provare.
+    home, root, launchId: id(), ownerInstanceId: 'own', cellId: 'Cella', budgetMs: 4000,
   });
   assert.equal(secondo.outcome, 'refused');
   assert.equal(secondo.code, 'LOCK_TIMEOUT');

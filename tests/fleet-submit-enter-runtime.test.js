@@ -21,6 +21,10 @@ process.on('exit', () => { for (const d of FX_DIRS) { try { fs.rmSync(d, { recur
 function world({ markerFile = '', markerValue = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncsubmit-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'Dev');
   const binDir = path.join(home, 'bin');
   fs.mkdirSync(cwd, { recursive: true });
@@ -134,7 +138,7 @@ async function up(opts = {}) {
   let ticket = null;
   const fleet = await createBuiltinFleet({
     cellLeaseEnabled: true,
-    home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+    home: w.home, filesRoot: path.join(w.root, 'files'), fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'win32', env: {},
     launchReadyMs: 0,
     // Nessuna attesa cieca nella prova: il fake risponde subito.

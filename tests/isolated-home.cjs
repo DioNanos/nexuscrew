@@ -39,11 +39,20 @@ const tmuxBase = process.env.NEXUSCREW_TEST_TMUX_ROOT || path.join(root, 'tmux')
 const tmuxRoot = path.join(tmuxBase, `pid-${process.pid}`);
 fs.mkdirSync(tmuxRoot, { recursive: true, mode: 0o700 });
 
+// A private TMPDIR per test process. Without one, parallel test files share
+// os.tmpdir() and race on the same content-addressed paths (e.g. the VL node
+// pin cache); children spawned by a test inherit the private directory. The
+// name is short on purpose: fixtures bind unix sockets below TMPDIR and the
+// whole path must fit sockaddr_un's sun_path; the single-char prefix buys one
+// byte of headroom under that limit.
+const tmpDir = fs.mkdtempSync(path.join(root, 't'));
+
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.XDG_CONFIG_HOME = configHome;
 process.env.NEXUSCREW_CONFIG_FILE = path.join(home, '.nexuscrew', 'config.json');
 process.env.NEXUSCREW_AUTO_UPDATE = '0';
+process.env.TMPDIR = tmpDir;
 process.env.TMUX_TMPDIR = tmuxRoot;
 delete process.env.TMUX;
 delete process.env.TMUX_PANE;

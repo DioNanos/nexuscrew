@@ -432,7 +432,7 @@ test('VL vero: il diagnostico punta a un ALTRO processo vivo — tuple del vero 
   assert.equal(vivo(decoy.pid), true, 'il processo-decoy è VIVO: zero stop su di lui');
   assert.equal(vivo(host.figlio.pid), true, 'il vero host è VIVO: senza prova, nessuno stop');
   // Il lancio incerto non si riapre da solo e non genera nuovi comandi.
-  await assert.rejects(() => fleet.up('CellaPre'), (e) => e.fleetCode === 'STOP_UNKNOWN',
+  await assert.rejects(() => fleet.up('CellaPre'), (e) => e.status === 409 && e.fleetCode === 'SESSION_DUPLICATE',
     'il lancio bloccato dal down incompleto non si riapre da solo');
   assert.equal(vivo(decoy.pid), true, 'il decoy è ancora vivo');
   assert.equal(vivo(host.figlio.pid), true, 'il vero host è ancora vivo');
@@ -525,7 +525,7 @@ test('VL vero: host SOSTITUITO fra osservazione e stop — il CLI rifiuta peer_m
     && e.data.motivoIsolamento === 'ignoto',
   'il down rifiuta fail-closed: la tuple osservata (B) non è quella registrata (A)');
   assert.equal(vivo(b.figlio.pid), true, 'B ancora vivo dopo il down rifiutato');
-  await assert.rejects(() => fleet.up('CellaPre'), (e) => e.fleetCode === 'STOP_UNKNOWN',
+  await assert.rejects(() => fleet.up('CellaPre'), (e) => e.status === 409 && e.fleetCode === 'SESSION_DUPLICATE',
     'record e lease trattenuti: il lancio bloccato non si riapre da solo');
   assert.equal(vivo(b.figlio.pid), true, 'B sempre vivo');
 });

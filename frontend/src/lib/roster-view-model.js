@@ -23,6 +23,7 @@ const RAGIONI_TERMINALI_CELLA = [
   'lease-lost',
   'spawn-error',
   'operator-stop',
+  'readiness-rollback',
 ];
 
 // Tempo relativo compatto da epoch sec: 'ora' | 'Nm' | 'Nh' | 'Ng'.

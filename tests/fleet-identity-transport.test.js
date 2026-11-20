@@ -12,6 +12,7 @@ const { createLaunchBroker, MAX_PAYLOAD } = require('../lib/fleet/launch-broker.
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
 const { issueLaunchIdentity } = require('../lib/fleet/identity-transport.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
 
 const DAEMON = 'daemon-good';
@@ -157,10 +158,14 @@ test('lease_register_authority_rejects_forged_subject', async () => {
   });
   const manager = createLeaseManager({ home, log: () => {} });
   await manager.track('Dev');
+  const catalog = catalogFixture([{ id: 'Dev' }]);
   const app = express();
   app.use(express.json({ limit: '8kb' }));
   app.use('/api/lease', leaseRoutes({
-    fleetP: Promise.resolve({ available: true, lease: manager, identityAuthority: auth }),
+    fleetP: Promise.resolve({
+      available: true, lease: manager, identityAuthority: auth,
+      leaseCellCatalog: catalog.leaseCellCatalog,
+    }),
     identityMode: 'authority',
   }));
   const server = app.listen(0, '127.0.0.1');
@@ -179,6 +184,7 @@ test('lease_register_authority_rejects_forged_subject', async () => {
   } finally {
     server.close();
     manager.close();
+    catalog.cleanup();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

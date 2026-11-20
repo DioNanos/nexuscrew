@@ -121,5 +121,82 @@ test('stop non dimostrato: il record resta e un nuovo avvio e rifiutato', async 
   assert.equal(fs.readFileSync(w.stato, 'utf8').includes(SESSIONE), true);
   await assert.rejects(() => w.runtime.down('CellaInc'), (e) => e.fleetCode === 'IDENTITY_LOST');
   assert.equal(JSON.parse(fs.readFileSync(w.record, 'utf8')).incerto, true);
-  await assert.rejects(() => w.runtime.up('CellaInc'), (e) => e.fleetCode === 'STOP_UNKNOWN');
+  await assert.rejects(() => w.runtime.up('CellaInc'), (e) => e.status === 409
+    && e.fleetCode === 'SESSION_DUPLICATE',
+    'presenza viva provata: duplicato vivo, nessun up riuscito');
+  assert.equal(fs.readFileSync(w.stato, 'utf8').includes(SESSIONE), true, 'la sessione resta una');
+  assert.equal(JSON.parse(fs.readFileSync(w.record, 'utf8')).incerto, true, 'il record resta incerto');
+});
+
+// --- S3 giro 3: presenza IGNOTA sul canale posseduto ----------------------
+//
+// Con un record incerto e un canale posseduto NON morto, un timeout/un throw/
+// una risposta non qualificata NON provano l'assenza: il canale e la sua entry
+// restano (nessun chiudi/delete/revoke), nessuna riconciliazione e nessun
+// nuovo lancio; il rifiuto e' STOP_UNKNOWN con SESSION_UNKNOWN. La presenza
+// positiva resta un duplicato vivo; l'assenza QUALIFICATA apre il percorso
+// condiviso.
+test('S3-g3: presenza ignota -> SESSION_UNKNOWN e canale conservato; positiva -> duplicato; assenza qualificata -> percorso condiviso', async (t) => {
+  const w = mondo(t);
+  const tc = require('../lib/fleet/tmux-control.js');
+  const origApri = tc.apri;
+  const origCrea = tc.creaSessionePosseduta;
+  const spia = { chiusi: 0, modo: 'reale', ultimo: null };
+  const avvolgi = (c) => {
+    if (!c || c.__spiato === true) return c;
+    Object.defineProperty(c, '__spiato', { value: true, enumerable: false });
+    spia.ultimo = c;
+    const chiudiOrig = c.chiudi.bind(c);
+    c.chiudi = () => { spia.chiusi += 1; return chiudiOrig(); };
+    const hasOrig = c.hasSession.bind(c);
+    c.hasSession = async (...a) => {
+      if (spia.modo === 'timeout') return { ok: false };
+      if (spia.modo === 'throw') throw new Error('boom');
+      if (spia.modo === 'brutta') return { ok: false, testo: ['errore generico'] };
+      if (spia.modo === 'assente') return { ok: false, assente: true };
+      if (spia.modo === 'positiva') return { ok: true, testo: [] };
+      return hasOrig(...a);
+    };
+    return c;
+  };
+  tc.creaSessionePosseduta = async (opts) => {
+    const r = await origCrea(opts);
+    if (r && r.canale) avvolgi(r.canale);
+    return r;
+  };
+  tc.apri = async (opts) => avvolgi(await origApri(opts));
+  t.after(() => { tc.apri = origApri; tc.creaSessionePosseduta = origCrea; });
+  await w.runtime.up('CellaInc');
+  await assert.rejects(() => w.runtime.down('CellaInc'), (e) => e.fleetCode === 'IDENTITY_LOST');
+  assert.equal(JSON.parse(fs.readFileSync(w.record, 'utf8')).incerto, true);
+  assert.ok(spia.ultimo, 'canale posseduto del lancio catturato');
+  const recordPrima = fs.readFileSync(w.record, 'utf8');
+
+  for (const modo of ['timeout', 'throw', 'brutta']) {
+    spia.modo = modo;
+    const chiusiPrima = spia.chiusi;
+    const err = await w.runtime.up('CellaInc').then(() => null, (e) => e);
+    assert.ok(err, `${modo}: nessun up riuscito`);
+    assert.equal(err.fleetCode, 'STOP_UNKNOWN', modo);
+    assert.ok(err.data && err.data.prove, `${modo}: prove nel data`);
+    assert.equal(err.data.prove.proofs.session, 'unknown', `${modo}: la presenza non e' una prova`);
+    assert.ok(err.data.prove.blocchi.includes('SESSION_UNKNOWN'), `${modo}: ${JSON.stringify(err.data.prove.blocchi)}`);
+    assert.equal(spia.chiusi, chiusiPrima, `${modo}: il canale posseduto NON si chiude`);
+    assert.equal(fs.readFileSync(w.record, 'utf8'), recordPrima, `${modo}: record intatto`);
+  }
+
+  // La stessa entry e' ancora posseduta: una presenza positiva e' un duplicato.
+  spia.modo = 'positiva';
+  const dup = await w.runtime.up('CellaInc').then(() => null, (e) => e);
+  assert.equal(dup && dup.fleetCode, 'SESSION_DUPLICATE', 'presenza positiva: duplicato vivo');
+
+  // Assenza qualificata: il canale si rilascia e parte il percorso condiviso.
+  spia.modo = 'assente';
+  const chiusiPrima = spia.chiusi;
+  const esito = await w.runtime.up('CellaInc').then(
+    (r) => ({ ok: r.ok === true }),
+    (e) => ({ ok: false, code: e.fleetCode }),
+  );
+  assert.ok(spia.chiusi > chiusiPrima, 'assenza qualificata: il canale viene rilasciato');
+  assert.notEqual(esito.code, 'SESSION_DUPLICATE', 'un\'assenza qualificata non e\' un duplicato vivo');
 });

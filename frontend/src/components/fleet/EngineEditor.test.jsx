@@ -15,6 +15,7 @@ const catalog = [
   { id: 'codex-vl.openrouter', client: 'codex-vl', clientLabel: 'codex-vl', provider: 'openrouter', label: 'OpenRouter', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, requiresModel: true, credentialEnv: 'OPENROUTER_API_KEY', authConfigured: true, credentialSource: 'local', credentialUsedBy: ['codex.shared'], notice: 'codex-openrouter' },
   { id: 'codex-vl.alibaba-token-plan', client: 'codex-vl', clientLabel: 'codex-vl', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai_responses', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: 'qwen3.8-max', models: ['qwen3.8-max', 'qwen3.7-max', 'qwen3.7-plus', 'qwen3.6-flash'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
   { id: 'pi.alibaba-token-plan', client: 'pi', clientLabel: 'pi', provider: 'alibaba-token-plan', label: 'Alibaba Token Plan Personal', protocol: 'openai-completions', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: 'qwen3.8-max', models: ['qwen3.8-max', 'qwen3.7-plus', 'qwen3.7-max', 'qwen3.6-flash', 'glm-5.2', 'deepseek-v4-pro'], credentialEnv: 'ALIBABA_CODE_API_KEY', authConfigured: false, credentialSource: 'missing', credentialUsedBy: [], notice: 'alibaba-token-plan' },
+  { id: 'qwen.native', client: 'qwen', clientLabel: 'qwen', provider: 'native', label: 'Qwen Code account', protocol: 'qwen_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false, notice: 'qwen-native' },
   { id: 'agy.native', client: 'agy', clientLabel: 'agy', provider: 'native', label: 'Agy', protocol: 'agy_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false },
   { id: 'kimi.native', client: 'kimi', clientLabel: 'kimi', provider: 'native', label: 'Kimi account (CLI login)', protocol: 'kimi_native', permissionPolicyDefault: 'standard', supportsUnsafe: true, model: '', models: [], rc: false, notice: 'kimi-native' },
   { id: 'vl.native', client: 'vl', clientLabel: 'vl', provider: 'native', label: 'VL', protocol: 'vl_native', permissionPolicyDefault: 'standard', supportsUnsafe: false, model: '', models: [], rc: false },
@@ -635,6 +636,24 @@ describe('EngineEditor vl fields', () => {
     expect(Object.prototype.hasOwnProperty.call(saved.managed, 'vlBinary')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(saved.managed, 'vlConfigFile')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(saved.managed, 'effort')).toBe(false);
+  });
+});
+
+// --- qwen.native (0.9.83, Qwen 0.x only): the retired 1.0 selector inputs are
+// gone from the editor; the backend refuses them in any payload shape.
+describe('EngineEditor qwen fields', () => {
+  beforeEach(() => localStorage.setItem('nc_lang', 'en'));
+
+  const qwenForm = () => profileForm('qwen.native');
+  const BINARY_PH = 'absolute path of the Qwen Code binary on the executing node (empty = qwen from PATH; the 1.0 preview is selected here, no automatic fallback)';
+  const CONFIG_PH = 'configuration root of the 1.0 family (empty = ~/.config/qwen-preview; separate from the 0.x store, same path used by the manual login)';
+
+  // R7 — taglio «solo Qwen 0.x»: i due input non esistono più nell'editor.
+  // Nasce rosso (gli input ci sono) e diventa verde con lo strato di rimozione.
+  it('no longer renders the retired qwen binary/config-dir inputs', () => {
+    render(<Harness initial={qwenForm()} />);
+    expect(screen.queryByPlaceholderText(BINARY_PH)).toBeNull();
+    expect(screen.queryByPlaceholderText(CONFIG_PH)).toBeNull();
   });
 });
 

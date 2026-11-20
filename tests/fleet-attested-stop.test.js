@@ -136,6 +136,233 @@ test('attendiFermataGruppo: il seam della sessione corre DOPO la prova di uscita
   assert.equal(esitoEsploso.attestato, undefined);
 });
 
+// --- additive reason of the post-exit probe (no decision changes) -----------
+test('attendiFermataGruppo: the post-exit probe reason travels in a closed field, never in the decision', async () => {
+  const ora = () => Number(process.hrtime.bigint() / 1000000n);
+  const fabbrica = (motivo) => {
+    const ascoltatori = [];
+    let chiusura = null;
+    const mgr = {
+      controlConnesso: () => true,
+      controlLaunchId: () => null,
+      ascoltaControl: (fn) => { ascoltatori.push(fn); return () => {}; },
+      suChiusuraControl: (_id, cb) => { chiusura = cb; return () => { chiusura = null; }; },
+      sendControl: (cellId, frame) => {
+        setImmediate(() => {
+          for (const fn of ascoltatori) fn(cellId, {
+            op: 'ready-to-exit', requestId: hexId(), launchId: frame.launchId, epoch: 1,
+            payload: { tokenHash: 'ab'.repeat(32), stopRequestId: frame.requestId, conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } },
+          });
+          if (chiusura) chiusura();
+        });
+        return true;
+      },
+    };
+    return {
+      mgr,
+      attendiUscita: async () => ({ provato: true }),
+      osserva: () => (motivo === null
+        ? { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti' }
+        : { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti', motivo }),
+    };
+  };
+  const base = (s) => ({
+    leaseManager: s.mgr, cellId: 'c', launchId: hexId(),
+    monoNow: ora, deadlineAt: ora() + 2000, graziaMs: 400,
+    attendiUscita: s.attendiUscita, osserva: s.osserva,
+    verificaSessioneAssente: async () => false,
+  });
+
+  const conMotivo = await gruppo.attendiFermataGruppo(base(fabbrica('identita')));
+  assert.equal(conMotivo.outcome, 'stop-unknown', 'the reason does not close the launch');
+  assert.equal(conMotivo.dopoMotivo, 'identita');
+  assert.deepEqual(conMotivo.dopo, { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti' }, 'the counts stay as before');
+
+  const fuoriElenco = await gruppo.attendiFermataGruppo(base(fabbrica('testo libero')));
+  assert.equal(fuoriElenco.outcome, 'stop-unknown');
+  assert.equal(fuoriElenco.dopoMotivo, null, 'a value outside the closed list never reaches the data');
+
+  const senzaMotivo = await gruppo.attendiFermataGruppo(base(fabbrica(null)));
+  assert.equal(senzaMotivo.dopoMotivo, null);
+});
+
+test('osservaGruppoDopoUscita: the unknown reading carries its bounded reason', async () => {
+  const ora = () => Number(process.hrtime.bigint() / 1000000n);
+  const argomenti = await gruppo.osservaGruppoDopoUscita({
+    pgrp: null, identita: null, deadlineAt: ora() + 1000, monoNow: ora,
+  });
+  assert.deepEqual(argomenti, { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti', motivo: 'argomenti' });
+  const identita = await gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: null, deadlineAt: ora() + 1000, monoNow: ora,
+  });
+  assert.deepEqual(identita, { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti', motivo: 'identita' });
+  const scaduta = await gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: { nascita: 1 }, deadlineAt: ora() - 1, monoNow: ora,
+  });
+  assert.deepEqual(scaduta, { inGruppo: 0, fuoriGruppo: 0, qualita: 'ignoti', motivo: 'scaduta' });
+});
+
+// --- post-exit probe repetition: only ESRCH closes, inside the budget --------
+test('osservaGruppoDopoUscita: un PGID tenuto da un figlio NON visto resta ignoto, senza giro da 1,5 s', async () => {
+  const ora = () => Date.now();
+  let chiamate = 0;
+  const sempreVivo = () => { chiamate += 1; };
+  const esito = await gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: { nascita: 1 }, deadlineAt: ora() + 4000, monoNow: ora,
+    inviaSegnaleZero: sempreVivo, attesa: () => new Promise((r) => setTimeout(r, 5)),
+  });
+  // Censimento completo con ZERO eseguibili e ZERO zombie visti: la sonda e'
+  // positiva, quindi la vista e' ristretta e non si promuove mai a pulito.
+  assert.equal(esito.qualita, 'ignoti');
+  assert.equal(esito.motivo, 'sonda');
+  // Voce 13: la ripetizione da 1,5 s non c'e' piu'. Resta solo la finestra
+  // breve di assestamento (<= 4 giri), e nessun conteggio di tentativi lunghi.
+  assert.equal(esito.tentativi, undefined, 'nessun giro lungo da 1,5 s');
+  assert.equal(esito.msRipetizione, undefined);
+  assert.ok(chiamate <= 6, `giri contenuti: ${chiamate}`);
+});
+
+test('osservaGruppoDopoUscita: zero eseguibili e un Z contato chiudono subito il conteggio', async () => {
+  const ora = () => Date.now();
+  const esito = await gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: { nascita: 1 }, deadlineAt: ora() + 4000, monoNow: ora,
+    inviaSegnaleZero: () => {},
+    // Elenco dei membri noti COMPLETO e vuoto: la promozione lo richiede.
+    noti: [],
+    // Il censimento vero non vede questa /proc: si inietta il seam delle
+    // letture per dichiarare un solo membro, gia' uscito (Z).
+    leggiDir: async () => ['700001'],
+    leggiStat: async (p) => (String(p).endsWith('/700001/stat')
+      ? '700001 (syn) Z 1 999999 999999 0 0 -1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0\n'
+      : (() => { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; })()),
+    attesa: () => new Promise((r) => setTimeout(r, 5)),
+  });
+  assert.deepEqual(esito, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 1 });
+});
+
+test('osservaGruppoDopoUscita: il verdetto non supera il budget residuo', async () => {
+  const ora = () => Date.now();
+  const sempreVivo = () => {};
+  const inizio = ora();
+  const esito = await gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: { nascita: 1 }, deadlineAt: inizio + 400, monoNow: ora,
+    inviaSegnaleZero: sempreVivo,
+  });
+  assert.equal(esito.motivo, 'sonda');
+  assert.ok(ora() - inizio <= 1000, `bounded by the deadline: ${ora() - inizio} ms`);
+});
+
+test('osservaGruppoDopoUscita: a positive census is not a repetition case, and other reasons never repeat', async () => {
+  const ora = () => Date.now();
+  const figlio = spawn(process.execPath, ['-e', 'setTimeout(()=>{}, 1500)'], { detached: true, stdio: 'ignore' });
+  figlio.unref();
+  try {
+    await new Promise((r) => setTimeout(r, 150));
+    const pid = figlio.pid;
+    const ident = gruppo.leggiIdentitaDa('/proc', pid);
+    const positivo = await gruppo.osservaGruppoDopoUscita({
+      pgrp: pid, identita: ident, deadlineAt: ora() + 2000, monoNow: ora,
+      attesa: () => new Promise((r) => setTimeout(r, 5)),
+    });
+    assert.equal(positivo.qualita, 'almeno', 'a live member is counted, not re-probed');
+    assert.ok(positivo.inGruppo >= 1);
+    assert.equal(positivo.tentativi, undefined, 'no repetition on a positive census');
+
+    const riuso = await gruppo.osservaGruppoDopoUscita({
+      pgrp: pid, identita: { nascita: 0 }, deadlineAt: ora() + 2000, monoNow: ora,
+      attesa: () => new Promise((r) => setTimeout(r, 5)),
+    });
+    assert.equal(riuso.motivo, 'riuso');
+    assert.equal(riuso.tentativi, undefined, 'a different reason never repeats');
+
+    const argomenti = await gruppo.osservaGruppoDopoUscita({
+      pgrp: null, identita: null, deadlineAt: ora() + 1000, monoNow: ora,
+    });
+    assert.equal(argomenti.motivo, 'argomenti');
+    assert.equal(argomenti.tentativi, undefined);
+
+    const identita = await gruppo.osservaGruppoDopoUscita({
+      pgrp: 999999, identita: null, deadlineAt: ora() + 1000, monoNow: ora,
+    });
+    assert.equal(identita.motivo, 'identita');
+    assert.equal(identita.tentativi, undefined);
+  } finally {
+    try { process.kill(figlio.pid, 'SIGKILL'); } catch (_) { /* già uscito */ }
+  }
+});
+
+// --- R1: lo zombie non basta, due censimenti e l'elenco dei noti -----------
+
+// /proc sintetica: state, ppid, pgrp e nascita (campo 22) per i soli pid noti.
+function procNota(mappa) {
+  return async (percorso) => {
+    const v = mappa[String(percorso).split('/')[2]];
+    if (!v) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }
+    const campi = new Array(20).fill('0');
+    campi[0] = v[0]; campi[1] = '1'; campi[2] = String(v[1]); campi[19] = String(v[2]);
+    return `${String(percorso).split('/')[2]} (x) ${campi.join(' ')}\n`;
+  };
+}
+
+function dopoUscita(extra) {
+  return gruppo.osservaGruppoDopoUscita({
+    pgrp: 999999, identita: { nascita: 1 }, deadlineAt: Date.now() + 3000,
+    inviaSegnaleZero: () => {}, attesa: async () => {}, ...extra,
+  });
+}
+
+test('R1: zombie + un eseguibile censito resta un gruppo NON chiuso', async () => {
+  const esito = await dopoUscita({
+    noti: [],
+    leggiIdentita: () => ({ esito: 'presente', nascita: 1, stato: 'Z' }),
+    leggiDir: async () => ['700001', '700002'],
+    leggiStat: procNota({ 700001: ['Z', 999999, 7], 700002: ['S', 999999, 8] }),
+  });
+  assert.equal(esito.inGruppo, 1, 'l eseguibile letto vivo conta');
+  assert.equal(esito.qualita, 'almeno');
+});
+
+test('R1: capo vivo e un solo zombie — mai killed-zombie-held', async () => {
+  const esito = await dopoUscita({
+    noti: [],
+    leggiIdentita: () => ({ esito: 'presente', nascita: 1, stato: 'S' }),
+    leggiDir: async () => ['700001'],
+    leggiStat: procNota({ 700001: ['Z', 999999, 7] }),
+  });
+  assert.notEqual(esito.qualita, 'noti', 'un positivo di vitalita non promuove');
+  assert.ok(esito.inGruppo >= 1);
+});
+
+test('R1: membro NOTO uscito dal gruppo e vivo — bloccato', async () => {
+  const esito = await dopoUscita({
+    noti: [{ pid: 700002, nascita: 8 }],
+    leggiIdentita: () => ({ esito: 'presente', nascita: 1, stato: 'Z' }),
+    leggiDir: async () => ['700001', '700002'],
+    leggiStat: procNota({ 700001: ['Z', 999999, 7], 700002: ['S', 4242, 8] }),
+  });
+  assert.equal(esito.fuoriGruppo, 1, 'il membro noto fuori dal gruppo e un residuo vivo');
+  assert.equal(esito.qualita, 'almeno');
+});
+
+test('R1: zero eseguibili e un solo Z — DUE censimenti completi, con l elenco noto', async () => {
+  let censimenti = 0;
+  const leggiDir = async () => { censimenti += 1; return ['700001']; };
+  const stat = { 700001: ['Z', 999999, 7] };
+  const esito = await dopoUscita({
+    noti: [], leggiDir, leggiStat: procNota(stat),
+    leggiIdentita: () => ({ esito: 'presente', nascita: 1, stato: 'Z' }),
+  });
+  assert.deepEqual(esito, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 1 });
+  assert.equal(censimenti, 2, 'una sola enumerazione non e una prova atomicita');
+  // Senza elenco dei noti `fuoriGruppo` non e una prova: nessuna promozione.
+  const senzaElenco = await dopoUscita({
+    leggiDir: async () => ['700001'], leggiStat: procNota(stat),
+    leggiIdentita: () => ({ esito: 'presente', nascita: 1, stato: 'Z' }),
+  });
+  assert.equal(senzaElenco.qualita, 'ignoti');
+  assert.equal(senzaElenco.motivo, 'sonda');
+});
+
 // --- /proc sintetico: affollato (> CAP_SCAN) oppure svuotato ---------------
 
 function affollaProc(t, quanti = 400) {
@@ -277,14 +504,13 @@ if (cmd(args) === 'has-session') {
     }, ms);
     return;
   }
-  if (leggi().some((x) => x.id === bersaglio)) process.exit(0);
+  if (leggi().some((x) => x.id === bersaglio || x.nome === bersaglio)) process.exit(0);
   process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
   process.exit(1);
 }
 if (cmd(args) === 'display-message') {
   const iF = args.indexOf('-F');
   const fmt = (iF >= 0 ? args[iF + 1] : args[args.length - 1]) || '';
-  if (fmt.includes('socket_path')) { process.stdout.write('/tmp/nc-fake/socket\\t4242\\n'); process.exit(0); }
   if (fmt.includes('pane_pid')) { process.stdout.write(SERVER_PID + '\\t' + PANE_PID + '\\n'); process.exit(0); }
   if (fmt.includes('pane_dead')) { process.stdout.write('0\\t0\\t%7\\n'); process.exit(0); }
   process.stdout.write('0\\t\\t%7\\n'); process.exit(0);
@@ -384,8 +610,11 @@ function attaccaSupervisore(t, w, { uccidiSessione = true, bloccaHasDopoUscita =
                 if (bloccaHasDopoUscita) {
                   // il canale resta vivo ma smette di rispondere a has-session
                   // dopo l'uscita provata del supervisore: il comando va in
-                  // timeout e la sua mancata risposta NON puo' valere assenza
+                  // timeout e la sua mancata risposta NON puo' valere assenza.
+                  // Vale anche per la lettura CLI su una connessione NUOVA: la
+                  // sessione e' viva, la lettura e' indisponibile -> unknown.
                   try { fs.writeFileSync(w.marker.bloccaHas, '1'); } catch (_) {}
+                  try { fs.writeFileSync(w.marker.bloccaHasCli, '1'); } catch (_) {}
                 }
                 if (uccidiSessione) {
                   // la sessione muore col gruppo: il client -C attached esce
@@ -453,10 +682,23 @@ test('cablaggio: l\'attestazione identifica il server in forma TERNARIA e si fer
   // Si inietta SOLO il lettore ternario: la funzione di attestazione e' quella
   // vera. La morte dell'incarnazione si decide proprio su quella lettura, che
   // deve distinguere «assente» da «illeggibile».
+  // Il socket del lancio e' quello condiviso del processo
+  // (<TMUX_TMPDIR>/tmux-<uid>/default, runtime/env.js): senza isolarlo il test
+  // dipende dal server tmux dell'host, che puo' esistere gia', e il ramo
+  // «socket assente» non si verifica mai. Qui la base e' una directory nuova,
+  // che nessuno crea.
+  const tmpPrec = process.env.TMUX_TMPDIR;
+  const tmuxDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ternaria-'));
+  process.env.TMUX_TMPDIR = tmuxDir;
   const chiamate = [];
   const w = creaMondo(t, {
     serverPid: process.pid,
     leggiIdentita: (pid) => { chiamate.push(pid); return leggiIdentitaProc(pid); },
+  });
+  t.after(() => {
+    if (tmpPrec === undefined) delete process.env.TMUX_TMPDIR;
+    else process.env.TMUX_TMPDIR = tmpPrec;
+    fs.rmSync(tmuxDir, { recursive: true, force: true });
   });
   graceScaduta(w);
   await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
@@ -845,6 +1087,45 @@ test('down su /proc affollato: uscita provata + client morto con la sessione NON
   assert.equal(w.sessioni().length, 1);
 });
 
+// --- voce 17: rilascio della lease di controllo sul ramo «risposta persa» --
+
+test('voce 17: la lease si rilascia SOLO per il lancio della risposta persa', () => {
+  const chiamate = [];
+  const lm = (id) => ({ controlLaunchId: () => id, revokeControl: (c) => chiamate.push(c) });
+  const mio = 'ab'.repeat(8);
+  assert.equal(gruppo.rilasciaLeaseDelLancio(lm(mio), 'Cella', mio), true);
+  assert.deepEqual(chiamate, ['Cella']);
+  // La lease di un ALTRO lancio non e' un effetto di questo tentativo.
+  assert.equal(gruppo.rilasciaLeaseDelLancio(lm('cd'.repeat(8)), 'Cella', mio), false);
+  assert.equal(chiamate.length, 1, 'la lease altrui resta al suo proprietario');
+  // Nessun manager, manager incompleto o lettura che lancia: nessun effetto.
+  assert.equal(gruppo.rilasciaLeaseDelLancio(null, 'Cella', mio), false);
+  assert.equal(gruppo.rilasciaLeaseDelLancio({}, 'Cella', mio), false);
+  assert.equal(gruppo.rilasciaLeaseDelLancio({
+    controlLaunchId: () => { throw new Error('x'); }, revokeControl: () => { chiamate.push('mai'); },
+  }, 'Cella', mio), false);
+  assert.equal(chiamate.length, 1);
+});
+
+// R2: la lease EFFETTIVA dello stesso lancio si chiude, quella altrui no.
+test('R2: la lease in grace si chiude solo per il launchId del suo binding', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lease-r2-'));
+  const mgr = createLeaseManager({ home });
+  t.after(() => { try { mgr.close(); } catch (_) {} fs.rmSync(home, { recursive: true, force: true }); });
+  const mio = 'ab'.repeat(8);
+  const ora = Date.now();
+  const lease = { cellId: 'CellaX', launchEpoch: 'cd'.repeat(8), generation: 0, leaseId: '1'.repeat(32),
+    state: 'grace', openedAt: ora, lastRefreshedAt: ora, eofArmedAt: ora, graceDeadline: ora + 60000 };
+  mgr._cells.set('CellaX', { cellId: 'CellaX', launchEpoch: 'cd'.repeat(8), graceDeadline: ora + 60000,
+    lease, controlLaunchId: 'ef'.repeat(8) });
+  assert.equal(mgr.rilasciaLeaseDelLancio('CellaX', mio), false, 'binding di un ALTRO lancio');
+  assert.equal(mgr.status('CellaX').state, 'grace', 'la lease altrui resta com era');
+  mgr._cells.get('CellaX').controlLaunchId = mio;
+  assert.equal(mgr.rilasciaLeaseDelLancio('CellaX', mio), true);
+  assert.equal(mgr.status('CellaX').state, 'expired', 'il valutatore non vede piu LEASE_BLOCKS');
+  assert.equal(mgr.rilasciaLeaseDelLancio('CellaX', mio), false, 'nessun secondo effetto');
+});
+
 // --- (b) risposta del teardown persa: uscita provata + tre prove chiudono ---
 
 test('down con censimento pulito e risposta persa: uscita provata + kill partito, le tre prove chiudono NELLA STESSA down (attested-recovery, killed)', async (t) => {
@@ -874,6 +1155,38 @@ test('down con censimento pulito e risposta persa: uscita provata + kill partito
   w.pulisciMarker();
   const secondo = await w.runtime.up('CellaAtt');
   assert.equal(secondo.ok, true);
+});
+
+// R2 (ramo completo): risposta persa, uscita provata e nessuna attestazione:
+// la grace armata dall'EOF non deve bloccare l'up che segue.
+test('R2: down con lease in grace e risposta persa — la lease del lancio si chiude, l up non trova LEASE_BLOCKS', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  fs.writeFileSync(w.marker.muoriKill, '1');
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: false });
+  assert.ok(sup);
+  svuotaProc(t);
+  // Il socket del server finto non esiste: la nuova connessione non attesta e
+  // il recupero a tre prove si ferma sul lease in grace.
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'il down doveva rifiutare');
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.equal(w.mgr.status('CellaAtt').state, 'expired', 'la grace del lancio uscito non resta appesa');
+  w.pulisciMarker();
+  const dopo = await w.runtime.up('CellaAtt');
+  assert.equal(dopo.ok, true, 'l up successivo non vede LEASE_BLOCKS');
+});
+
+test('R2: senza uscita provata la lease del lancio non si tocca', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: false, ritardoUscitaMs: 20000 });
+  assert.ok(sup);
+  const err = await w.runtime.down('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'senza prova di uscita il down non dichiara');
+  assert.notEqual(w.mgr.status('CellaAtt').state, 'expired', 'nessun rilascio senza uscita provata');
 });
 
 // --- (b) negativo: canale morto alla verifica senza supervisore -----------
@@ -938,8 +1251,13 @@ test('down con has-session in timeout dopo l uscita provata e sessione ancora vi
   // famiglia dello stop non dimostrato — mai un esito pulito senza prova.
   await assert.rejects(
     () => w.runtime.down('CellaAtt'),
+    // Due rami, stesso esito: il verdetto del gruppo («stop del gruppo
+    // stop-unknown, nessuna sessione fermata») oppure — da quando la lettura
+    // del canale porta il residuo della fase — la morte del canale osservata
+    // DENTRO questa down («connessione di controllo persa dopo il comando di
+    // teardown»). In entrambi: nessun esito pulito, record incerto, zero kill.
     (e) => (e.fleetCode === 'STOP_UNKNOWN' || e.fleetCode === 'STOP_INCOMPLETE')
-      && /stop del gruppo stop-(unknown|incomplete)/.test(e.message),
+      && /stop del gruppo stop-(unknown|incomplete)|connessione di controllo persa dopo il comando di teardown/.test(e.message),
   );
   const record = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(record.stato, 'presente');
@@ -949,6 +1267,55 @@ test('down con has-session in timeout dopo l uscita provata e sessione ancora vi
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0);
   // l'up resta bloccato dall'incertezza: nessuno sblocco cieco
   await assert.rejects(() => w.runtime.up('CellaAtt'), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+});
+
+// --- S3 (decisione 1): lettura corrente vs prova nuova ---------------------
+
+test('lettura della sessione in timeout: SESSION_UNKNOWN, mai assenza inventata', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: false, bloccaHasDopoUscita: true });
+  assert.ok(sup);
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => (e.fleetCode === 'STOP_UNKNOWN' || e.fleetCode === 'STOP_INCOMPLETE'),
+  );
+  const err = await w.runtime.up('CellaAtt').then(() => null, (e) => e);
+  assert.ok(err, 'un timeout non autorizza un nuovo lancio');
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.ok(err.data && err.data.prove, 'le prove nel data');
+  assert.equal(err.data.prove.proofs.session, 'unknown', 'un timeout non e\' assenza');
+  assert.notEqual(err.data.prove.blocchi.length, 0, 'nessuna chiusura senza una prova di morte');
+});
+
+test('assenza qualificata dopo un timeout precedente: la nuova valutazione e\' lecita', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up('CellaAtt');
+  const sup = await attaccaSupervisore(t, w, { uccidiSessione: false, bloccaHasDopoUscita: true });
+  assert.ok(sup);
+  await assert.rejects(
+    () => w.runtime.down('CellaAtt'),
+    (e) => (e.fleetCode === 'STOP_UNKNOWN' || e.fleetCode === 'STOP_INCOMPLETE'),
+  );
+  // Lettura ripristinata e sessione davvero finita: il verdetto qualificato di
+  // assenza vale, e l'incertezza della chiamata precedente non lo inquina.
+  w.pulisciMarker();
+  fs.writeFileSync(path.join(w.root, 'sessions.json'), '[]');
+  graceScaduta(w);
+  const dopo = await w.runtime.up('CellaAtt').then(
+    (r) => ({ ok: r.ok === true }),
+    (e) => ({ ok: false, code: e.fleetCode, prove: e.data && e.data.prove }),
+  );
+  if (dopo.ok) {
+    // La prova nuova (assenza qualificata) ha permesso di chiudere la pratica.
+    assert.ok(true);
+  } else {
+    assert.equal(dopo.prove && dopo.prove.proofs.session, 'absent',
+      `la prova nuova deve essere l'assenza qualificata, non il timeout vecchio: ${JSON.stringify(dopo)}`);
+    assert.equal(dopo.prove.blocchi.includes('SESSION_UNKNOWN'), false, 'nessuna eredita\' del timeout');
+  }
 });
 
 // --- (c) negativi del recupero NELLA STESSA down: una prova che manca ------

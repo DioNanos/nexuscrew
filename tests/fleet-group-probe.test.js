@@ -220,7 +220,19 @@ test('sonda reale: capo vivo -> almeno; dopo la morte del gruppo -> noti/0', asy
     { detached: true, stdio: 'ignore' });
   figlio.unref();
   t.after(() => { try { process.kill(figlio.pid, 'SIGKILL'); } catch (_) { /* gia' morto */ } });
-  const pgrp = gruppo.leggiPgrp(figlio.pid);
+  // Bounded barrier: with detached:true the child runs setsid() after fork
+  // and before exec, so right after the spawn /proc can still report the
+  // test runner's own group. Poll until the child owns its process group,
+  // with a deadline, before asserting on it.
+  const deadline = Date.now() + 10000;
+  let pgrp = gruppo.leggiPgrp(figlio.pid);
+  while (pgrp !== figlio.pid) {
+    if (Date.now() >= deadline) {
+      throw new Error(`detached child did not get its own process group within 10000 ms (pgrp=${pgrp}, pid=${figlio.pid})`);
+    }
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+    pgrp = gruppo.leggiPgrp(figlio.pid);
+  }
   assert.equal(pgrp, figlio.pid, 'il figlio staccato apre un gruppo proprio');
   const id = gruppo.leggiIdentitaDa('/proc', pgrp);
   assert.equal(id.esito, 'presente');

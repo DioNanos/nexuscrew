@@ -30,6 +30,112 @@ function serverPids() {
   return found;
 }
 
+function unixSocketPathsByInode() {
+  const byInode = new Map();
+  let raw;
+  try { raw = fs.readFileSync('/proc/net/unix', 'utf8'); } catch (_) { return byInode; }
+  for (const line of raw.split('\n')) {
+    const match = line.match(/^\S+:\s+(?:\S+\s+){5}(\d+)\s+(\/.*)$/);
+    if (match) byInode.set(match[1], match[2]);
+  }
+  return byInode;
+}
+
+// Seam for the deterministic regressions below: the default reads the real
+// /proc, the synthetic one is injected. Same error contract (errno codes) so
+// the filter logic is exercised unchanged.
+const defaultProcIo = {
+  unixSocketTable: () => unixSocketPathsByInode(),
+  listFds: (pid) => fs.readdirSync(`/proc/${pid}/fd`),
+  readFdLink: (pid, fd) => fs.readlinkSync(`/proc/${pid}/fd/${fd}`),
+  readEnviron: (pid) => fs.readFileSync(`/proc/${pid}/environ`),
+};
+
+// The fd survey counts ONLY fds that resolve to a unix socket through
+// /proc/net/unix. An ordinary file or directory fd under the suite root (a
+// logfile, a working directory) is not socket evidence: counting it made a
+// non-sibling server disappear from the watched set and silently pass the
+// disappearance check.
+function pidSocketPaths(pid, inodePaths, io = defaultProcIo) {
+  let fds;
+  try { fds = io.listFds(pid); } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ESRCH')) return { gone: true, denied: false, paths: [] };
+    return { gone: false, denied: true, paths: [] };
+  }
+  const paths = [];
+  let denied = false;
+  for (const fd of fds) {
+    let target = '';
+    try { target = io.readFdLink(pid, fd); } catch (e) {
+      if (e && (e.code === 'EACCES' || e.code === 'EPERM')) denied = true;
+      continue;
+    }
+    if (target.startsWith('socket:[') && target.endsWith(']')) {
+      const resolved = inodePaths.get(target.slice(8, -1));
+      if (resolved) paths.push(resolved);
+    }
+  }
+  return { gone: false, denied, paths };
+}
+
+function isUnderDir(candidate, dir) {
+  if (!candidate || !dir) return false;
+  const base = path.resolve(dir);
+  const resolved = path.resolve(candidate);
+  return resolved === base || resolved.startsWith(`${base}${path.sep}`);
+}
+
+function environValue(environ, key) {
+  const prefix = `${key}=`;
+  for (const entry of environ.toString('utf8').split('\0')) {
+    if (entry.startsWith(prefix)) return entry.slice(prefix.length);
+  }
+  return '';
+}
+
+// The before/after comparison of these tests must not react to tmux servers
+// owned by SIBLING test files of the same suite: the isolated runner keeps
+// more than one test file in flight under NEXUSCREW_TEST_HOME_ROOT, so a
+// server spawned by a sibling can appear or vanish while this test holds its
+// survey. Sibling tests that sanitize child environments strip
+// NEXUSCREW_TEST_HOME_ROOT before launching tmux, so matching the environment
+// marker alone misses them. Recognising a sibling by a socket path or
+// TMUX_TMPDIR under the suite root (checked via /proc/<pid>/fd + /proc/net/unix
+// and /proc/<pid>/environ), with the NEXUSCREW_TEST_HOME_ROOT marker as
+// fallback, catches both marked and sanitized siblings. Everything else stays
+// under surveillance: operator servers carry neither a socket nor a variable
+// under the suite root, another host user's servers deny /proc inspection
+// (kept watched, see below), and servers under this test's ownRoot are
+// matched first so they can never be mistaken for siblings. When
+// NEXUSCREW_TEST_HOME_ROOT is unset, no sibling filtering runs at all.
+// The watched set is computed ONCE, on the before pids, BEFORE the code
+// under test runs, and is never re-derived afterwards: re-reading a pid after
+// the code under test runs would let a killed server disappear from the
+// watched set and pass silently. In the snapshot, unreadable /proc entries
+// split by cause: ENOENT/ESRCH means already exited before the window, while
+// EACCES/EPERM is another user's server and stays watched.
+function surveyedServerPids(pids = serverPids(), ownRoot = '', io = defaultProcIo) {
+  const suiteRoot = process.env.NEXUSCREW_TEST_HOME_ROOT;
+  const marker = suiteRoot ? `NEXUSCREW_TEST_HOME_ROOT=${suiteRoot}\0` : null;
+  const inodePaths = io.unixSocketTable();
+  return pids.filter((pid) => {
+    const sockInfo = pidSocketPaths(pid, inodePaths, io);
+    if (sockInfo.gone) return false;
+    let environ = null;
+    try { environ = io.readEnviron(pid); } catch (e) {
+      if (e && (e.code === 'ENOENT' || e.code === 'ESRCH')) return false;
+    }
+    if (ownRoot && ((environ && environ.includes(ownRoot)) || sockInfo.paths.some((p) => isUnderDir(p, ownRoot)))) {
+      return true;
+    }
+    if (environ === null || sockInfo.denied) return true;
+    if (!suiteRoot) return true;
+    if (sockInfo.paths.some((p) => isUnderDir(p, suiteRoot))) return false;
+    if (isUnderDir(environValue(environ, 'TMUX_TMPDIR'), suiteRoot)) return false;
+    return !environ.includes(marker);
+  });
+}
+
 function runRaw(env, args) {
   return new Promise((resolve) => {
     execFile(TMUX_BIN, args, { env, timeout: 5000 }, (err, stdout, stderr) => {
@@ -67,6 +173,11 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
   fs.mkdirSync(home, { mode: 0o700 });
   fs.mkdirSync(run, { mode: 0o700 });
   fs.mkdirSync(trapDir, { mode: 0o700 });
+  // Watched set: one snapshot of the before survey, taken here, before any
+  // code under test runs (the directory setup above spawns no tmux server).
+  // Filtering the before pids at comparison time instead would drop a server
+  // the code under test killed, and the disappearance check could not fail.
+  const watched = surveyedServerPids(before, root);
   const trapSock = path.join(trapDir, 'selected.sock');
   const source = {
     PATH: '/usr/bin:/bin',
@@ -142,7 +253,9 @@ test('socket policy: discordant private TMUX never selects the NexusCrew client'
   }
   assert.deepEqual(extras, [], `server di test inatteso: ${extras.join(',')}`);
   const after = serverPids();
-  for (const pid of before) assert.ok(after.includes(pid), `server preesistente sparito: ${pid}`);
+  for (const pid of watched) {
+    assert.ok(after.includes(pid), `server preesistente sparito: ${pid}`);
+  }
   for (const pid of after) {
     if (before.includes(pid)) continue;
     let mine = false;
@@ -159,6 +272,10 @@ test('socket policy: relative, empty, absent and absolute TMUX_TMPDIR use the re
   const abs = path.join(root, 'abs');
   fs.mkdirSync(home, { mode: 0o700 });
   fs.mkdirSync(abs, { mode: 0o700 });
+  // Watched set: one snapshot of the before survey, taken here, before the
+  // code under test runs; the final comparison restricts the after pids to
+  // this snapshot instead of re-reading the before environs after the fact.
+  const watched = surveyedServerPids(before, root);
   const trap = path.join(root, 'trap.sock');
   const label = `nc-s6f-${process.pid}`;
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
@@ -209,5 +326,276 @@ test('socket policy: relative, empty, absent and absolute TMUX_TMPDIR use the re
     fs.rmSync(root, { recursive: true, force: true });
   }
   assert.deepEqual(extras, []);
-  assert.deepEqual(serverPids(), before);
+  const after = serverPids();
+  assert.deepEqual(after.filter((pid) => watched.includes(pid)), watched);
+});
+
+// ---------------------------------------------------------------------------
+// Deterministic regressions for the fd survey, on a synthetic /proc seam.
+// No real tmux server is created or signalled here: every /proc read is
+// injected through syntheticProcIo, with errno codes preserved so the filter
+// logic above runs unchanged. These pin the sibling-evidence contract:
+// only unix sockets RESOLVED through /proc/net/unix count, environmental
+// criteria and the marker still work, ownRoot wins, the path boundary needs
+// a separator, refusals stay watched, vanished pids are dropped, and the
+// watched set is a snapshot taken before the code under test runs.
+// ---------------------------------------------------------------------------
+
+function setSuiteRoot(value) {
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'NEXUSCREW_TEST_HOME_ROOT');
+  const prev = process.env.NEXUSCREW_TEST_HOME_ROOT;
+  if (value === undefined) delete process.env.NEXUSCREW_TEST_HOME_ROOT;
+  else process.env.NEXUSCREW_TEST_HOME_ROOT = value;
+  return () => {
+    if (had) process.env.NEXUSCREW_TEST_HOME_ROOT = prev;
+    else delete process.env.NEXUSCREW_TEST_HOME_ROOT;
+  };
+}
+
+function envBuffer(vars) {
+  const entries = [];
+  for (const [key, val] of Object.entries(vars)) {
+    if (val !== undefined) entries.push(`${key}=${val}`);
+  }
+  return Buffer.from(`${entries.join('\0')}\0`, 'utf8');
+}
+
+function syntheticIoError(code) {
+  const err = new Error(`synthetic ${code}`);
+  err.code = code;
+  return err;
+}
+
+// Synthetic /proc: pids maps pid -> { fds, environ }. fds maps an fd number
+// to its readlink target ('socket:[<inode>]', a path, a pipe, ...) or to
+// { throws: 'EACCES' | 'EPERM' } for one fd, or is itself { throws } when the
+// whole listing is refused. environ is a Buffer or { throws } for the refused
+// read. A pid removed with forget() reads as ENOENT from then on.
+function syntheticProcIo({ pids, unixTable = new Map() }) {
+  const live = pids;
+  const refusal = (value) => (
+    value && typeof value === 'object' && value.throws ? syntheticIoError(value.throws) : null
+  );
+  return {
+    unixSocketTable: () => unixTable,
+    listFds: (pid) => {
+      const rec = live[pid];
+      if (!rec) throw syntheticIoError('ENOENT');
+      const err = refusal(rec.fds);
+      if (err) throw err;
+      return Object.keys(rec.fds);
+    },
+    readFdLink: (pid, fd) => {
+      const err = refusal(live[pid].fds[fd]);
+      if (err) throw err;
+      return live[pid].fds[fd];
+    },
+    readEnviron: (pid) => {
+      const rec = live[pid];
+      if (!rec) throw syntheticIoError('ESRCH');
+      const err = refusal(rec.environ);
+      if (err) throw err;
+      return rec.environ;
+    },
+    forget: (pid) => { delete live[pid]; },
+  };
+}
+
+const CLEAN_ENV = { HOME: '/home/other', TMUX_TMPDIR: '/var/other-run' };
+
+test('fd survey: an ordinary fd under the suite root does not hide a non-sibling server', () => {
+  const restore = setSuiteRoot('/suite-root');
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([['111', '/var/other-run/tmux-1000/outer']]),
+      pids: {
+        '4242': {
+          fds: {
+            3: 'socket:[111]',
+            4: '/suite-root/logs/server.log',
+            5: '/suite-root',
+            6: 'pipe:[7]',
+            7: 'anon_inode:[eventpoll]',
+          },
+          environ: envBuffer(CLEAN_ENV),
+        },
+      },
+    });
+    assert.deepEqual(surveyedServerPids(['4242'], '', io), ['4242']);
+  } finally { restore(); }
+});
+
+test('fd survey: a resolved sibling socket excludes the server even without the marker', () => {
+  const restore = setSuiteRoot('/suite-root');
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([
+        ['222', '/suite-root/tmux-1000/sib'],
+        ['223', '/var/other-run/tmux-1000/mk'],
+      ]),
+      pids: {
+        '510': {
+          fds: { 3: 'socket:[222]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '515': {
+          fds: { 3: 'socket:[223]' },
+          environ: envBuffer({ ...CLEAN_ENV, NEXUSCREW_TEST_HOME_ROOT: '/suite-root' }),
+        },
+        '516': {
+          fds: { 3: 'pipe:[9]' },
+          environ: envBuffer({ HOME: '/home/other', TMUX_TMPDIR: '/suite-root/tmpdir-run' }),
+        },
+      },
+    });
+    assert.deepEqual(surveyedServerPids(['510', '515', '516'], '', io), []);
+  } finally { restore(); }
+});
+
+test('fd survey: ownRoot wins, the boundary needs a separator, missing proof stays watched', () => {
+  const restore = setSuiteRoot('/suite-root');
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([
+        ['222', '/suite-root/tmux-1000/sib'],
+        ['225', '/own-root/tmux-1000/mine'],
+        ['226', '/suite-root-evil/tmux-1000/evil'],
+      ]),
+      pids: {
+        '511': {
+          fds: { 3: 'socket:[222]' },
+          environ: envBuffer({ HOME: '/own-root/home', TMUX_TMPDIR: '/var/other-run' }),
+        },
+        '512': {
+          fds: { 3: 'socket:[225]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '513': {
+          fds: { 3: 'socket:[226]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '514': {
+          fds: { 3: 'socket:[999]', 4: 'pipe:[8]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+      },
+    });
+    assert.deepEqual(surveyedServerPids(['511', '512', '513', '514'], '/own-root', io),
+      ['511', '512', '513', '514']);
+  } finally { restore(); }
+});
+
+test('fd survey: injected EACCES and EPERM keep the server watched', () => {
+  const restore = setSuiteRoot('/suite-root');
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([['111', '/var/other-run/tmux-1000/outer']]),
+      pids: {
+        '600': { fds: { throws: 'EACCES' }, environ: envBuffer(CLEAN_ENV) },
+        '601': { fds: { throws: 'EPERM' }, environ: envBuffer(CLEAN_ENV) },
+        '602': { fds: { 3: 'socket:[111]' }, environ: { throws: 'EACCES' } },
+        '603': { fds: { 3: 'socket:[111]' }, environ: { throws: 'EPERM' } },
+        '604': {
+          fds: { 3: 'socket:[111]', 4: { throws: 'EACCES' } },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '605': {
+          fds: { 3: { throws: 'EPERM' }, 4: 'socket:[111]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '606': {
+          fds: { throws: 'EACCES' },
+          environ: envBuffer({ ...CLEAN_ENV, NEXUSCREW_TEST_HOME_ROOT: '/suite-root' }),
+        },
+        '607': {
+          fds: { throws: 'EPERM' },
+          environ: envBuffer({ HOME: '/home/other', TMUX_TMPDIR: '/suite-root/tmpdir-run' }),
+        },
+        '608': {
+          fds: { 3: { throws: 'EACCES' } },
+          environ: envBuffer({ ...CLEAN_ENV, NEXUSCREW_TEST_HOME_ROOT: '/suite-root' }),
+        },
+        '609': {
+          fds: { 3: { throws: 'EPERM' } },
+          environ: envBuffer({ HOME: '/home/other', TMUX_TMPDIR: '/suite-root/tmpdir-run' }),
+        },
+      },
+    });
+    assert.deepEqual(
+      surveyedServerPids(['600', '601', '602', '603', '604', '605', '606', '607', '608', '609'], '', io),
+      ['600', '601', '602', '603', '604', '605', '606', '607', '608', '609'],
+    );
+  } finally { restore(); }
+});
+
+test('fd survey: ENOENT and ESRCH of the pid are ignored, not watched', () => {
+  const restore = setSuiteRoot('/suite-root');
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([['111', '/var/other-run/tmux-1000/outer']]),
+      pids: {
+        '700': { fds: { throws: 'ENOENT' }, environ: envBuffer(CLEAN_ENV) },
+        '701': { fds: { throws: 'ESRCH' }, environ: envBuffer(CLEAN_ENV) },
+        '702': { fds: { 3: 'socket:[111]' }, environ: { throws: 'ENOENT' } },
+        '703': { fds: { 3: 'socket:[111]' }, environ: { throws: 'ESRCH' } },
+        '704': { fds: { 3: 'socket:[111]' }, environ: envBuffer(CLEAN_ENV) },
+      },
+    });
+    assert.deepEqual(surveyedServerPids(['700', '701', '702', '703', '704'], '', io), ['704']);
+  } finally { restore(); }
+});
+
+test('fd survey: without NEXUSCREW_TEST_HOME_ROOT no sibling exclusion runs', () => {
+  const restore = setSuiteRoot(undefined);
+  try {
+    const io = syntheticProcIo({
+      unixTable: new Map([['227', '/suite-root/tmux-1000/any']]),
+      pids: {
+        '800': {
+          fds: { 3: 'socket:[227]' },
+          environ: envBuffer(CLEAN_ENV),
+        },
+        '801': {
+          fds: { 3: 'pipe:[9]' },
+          environ: envBuffer({ ...CLEAN_ENV, NEXUSCREW_TEST_HOME_ROOT: '/suite-root' }),
+        },
+        '802': {
+          fds: { 3: 'pipe:[10]' },
+          environ: envBuffer({ HOME: '/home/other', TMUX_TMPDIR: '/suite-root/tmpdir-run' }),
+        },
+      },
+    });
+    assert.deepEqual(surveyedServerPids(['800', '801', '802'], '', io), ['800', '801', '802']);
+  } finally { restore(); }
+});
+
+test('fd survey: a server vanishing after the snapshot stays flagged in both assertion forms', () => {
+  const restore = setSuiteRoot('/suite-root');
+  const io = syntheticProcIo({
+    unixTable: new Map([
+      ['31', '/var/other-run/tmux-1000/outer-a'],
+      ['32', '/var/other-run/tmux-1000/outer-b'],
+    ]),
+    pids: {
+      '100': { fds: { 3: 'socket:[31]' }, environ: envBuffer(CLEAN_ENV) },
+      '4242': { fds: { 3: 'socket:[32]' }, environ: envBuffer(CLEAN_ENV) },
+    },
+  });
+  try {
+    const before = ['100', '4242'];
+    // Watched set: one snapshot of the before survey, taken here, BEFORE the
+    // code under test runs. Re-deriving it after the fact would let the
+    // vanished pid slip out of the watched set and hide the disappearance.
+    const watched = surveyedServerPids(before, '', io);
+    assert.deepEqual(watched, ['100', '4242']);
+    // The code under test runs and the non-sibling 4242 exits: its /proc
+    // entries now read as ENOENT.
+    io.forget('4242');
+    const after = ['100'];
+    // Membership form, as in the first policy test above.
+    const missing = watched.filter((pid) => !after.includes(pid));
+    assert.deepEqual(missing, ['4242'], 'the vanished server must be flagged');
+    // deepEqual form, as in the second policy test above.
+    assert.notDeepEqual(after.filter((pid) => watched.includes(pid)), watched);
+  } finally { restore(); }
 });

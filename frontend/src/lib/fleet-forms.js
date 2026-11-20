@@ -63,6 +63,9 @@ export function buildEngine(form, creating, catalog = []) {
         if (value) managed[key] = value;
       }
     }
+    // qwen: no dedicated fields anymore (0.9.83 = Qwen 0.x only). The retired
+    // 1.0 selectors never travel in a payload, whatever a stale form state
+    // still carries: the backend refuses them in any shape.
     const profile = catalogEntry(catalog, form);
     if (profile?.credentialEnv === true) managed.envKey = form.envKey;
     if (form.provider === 'custom') Object.assign(managed, { displayName: form.displayName, protocol: form.protocol, baseUrl: form.baseUrl, envKey: form.envKey, providerId: form.providerId });

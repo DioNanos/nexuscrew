@@ -12,6 +12,7 @@ const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const net = require('node:net');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 
 const rpc = (id, method, params) => JSON.stringify({ jsonrpc: '2.0', id, method, params });
 
@@ -40,10 +41,14 @@ test('MCP register attraversa HTTP e lease manager reali in authority mode', asy
   const lease = await manager.track('Dev');
   tuple.launchEpoch = lease.launchEpoch;
   assert.equal(manager.setLaunchSubject('Dev', tuple), true);
+  const catalog = catalogFixture([{ id: 'Dev' }]);
   const app = express();
   app.use(express.json({ limit: '8kb' }));
   app.use('/api/lease', leaseRoutes({
-    fleetP: Promise.resolve({ available: true, lease: manager, identityAuthority: authority }),
+    fleetP: Promise.resolve({
+      available: true, lease: manager, identityAuthority: authority,
+      leaseCellCatalog: catalog.leaseCellCatalog,
+    }),
     identityMode: 'authority',
   }));
   const server = http.createServer(app);
@@ -120,6 +125,7 @@ test('MCP register attraversa HTTP e lease manager reali in authority mode', asy
   } finally {
     manager.close();
     await new Promise((resolve) => server.close(resolve));
+    catalog.cleanup();
     fs.rmSync(home, { recursive: true, force: true });
   }
 });

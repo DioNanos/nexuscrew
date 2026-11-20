@@ -460,6 +460,10 @@ test('main: gen>0 dell opt-in — nessun paste dopo il restart, spawn regolare',
 function customWorld(t, { engineExtra = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncreprompt-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'Dev');
   fs.mkdirSync(cwd, { recursive: true });
   const client = path.join(root, 'client');
@@ -556,7 +560,7 @@ async function upWith(t, opts = {}) {
   };
   const fleet = await createBuiltinFleet({
     cellLeaseEnabled: true,
-    home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+    home: w.home, filesRoot: path.join(w.root, 'files'), fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
     ensureTmuxProtection: async () => {}, launchBroker, platform: 'win32', env: {},
     launchReadyMs: 0, sendKeysReadyMs: 0, bootstrapReadyWaitMs: 0,
   });
@@ -609,6 +613,10 @@ test('runtime: custom restartReprompt:false — il runtime NON digita quando il 
 function apiWorld(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncreprompt-api-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   fs.mkdirSync(home, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
   fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
@@ -632,7 +640,7 @@ process.exit(0);
     home, defsPath,
     async fleet() {
       const f = await createBuiltinFleet({
-        home, fleetDefsPath: defsPath, tmuxBin,
+        home, filesRoot: path.join(root, 'files'), fleetDefsPath: defsPath, tmuxBin,
         ensureTmuxProtection: async () => {}, platform: 'linux', env: {},
         launchReadyMs: 0, now: () => 0,
       });

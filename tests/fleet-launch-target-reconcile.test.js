@@ -109,13 +109,21 @@ test('quarantena gia\' esistente con byte DIVERSI: blocco, mai sovrascritta, rec
   assert.deepStrictEqual(fs.readFileSync(w.quarantena), w.bytes);
 });
 
-test('directory di quarantena con permessi larghi o non nostra: blocco', (t) => {
+// S4b (B10): i bit di gruppo/altri su una cartella nostra con proprietario
+// completo NON bloccano piu' — si riparano per descriptor (vedi
+// tests/fleet-quarantine-diagnosis.test.js). Questo test conserva il caso che
+// resta BLOCCATO: proprietario incompleto, dove il fchmod dovrebbe AGGIUNGERE
+// bit e quindi non si fa. Il rifiuto ora porta la diagnosi esatta.
+test('directory di quarantena con proprietario incompleto: blocco diagnosticato, nessun bit aggiunto', (t) => {
   const w = mondo(t);
-  fs.mkdirSync(path.dirname(w.quarantena), { recursive: true, mode: 0o755 });
-  fs.chmodSync(path.dirname(w.quarantena), 0o755);
+  fs.mkdirSync(path.dirname(w.quarantena), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(w.quarantena), 0o500);
   const r = lt.riconciliaRecord(w.root, SESSIONE, w.atteso);
   assert.equal(r.ok, false);
   assert.equal(r.codice, 'dir-quarantena');
+  assert.equal(r.motivo && r.motivo.trovato, '0500');
+  assert.equal(r.motivo && r.motivo.uidNostro, true);
+  assert.equal(fs.lstatSync(path.dirname(w.quarantena)).mode & 0o7777, 0o500, 'modo invariato');
   assert.deepStrictEqual(fs.readFileSync(w.file), w.bytes);
 });
 

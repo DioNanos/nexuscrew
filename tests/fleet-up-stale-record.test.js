@@ -199,3 +199,226 @@ test('record v1 completo con server vecchio: l’up riconcilia e lancia', async 
   assert.notEqual(dopo.record.launchId, LID, 'il record presente e’ ancora quello del lancio vecchio');
   assert.equal(calls.issue, 1, 'un solo ticket di lancio emesso');
 });
+
+// ---------------------------------------------------------------------------
+// T4 — record v1 completo SENZA serverStarttime (campo assente per schema) e
+// serverPid VIVO, sessione assente. Senza nascita il pid non dimostra l'identità
+// del listener: la pratica NON si chiude, l'up resta 409 STOP_UNKNOWN e nessun
+// lancio parte. La chiusura automatica ambigua sparisce, con un errore preciso.
+// ---------------------------------------------------------------------------
+test('record v1 senza serverStarttime con serverPid VIVO: nessuna chiusura, 409 STOP_UNKNOWN', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t); // server VIVO, nessuna nascita: identità non dimostrabile
+  await morto(sup.pid);
+  const scritto = launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  assert.equal(scritto, true, 'record v1 non scritto');
+  const { runtime, calls } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN', 'una lettura non conclusa non è un duplicato provato');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket: la pratica non è chiusa');
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+});
+
+// ---------------------------------------------------------------------------
+// T5 — stesso record v1 con la sessione omonima VIVA: la presenza è letta su un
+// listener NON correlato al server del record, quindi non è un duplicato
+// qualificato. Il 409 è STOP_UNKNOWN, mai SESSION_DUPLICATE.
+// ---------------------------------------------------------------------------
+test('record v1 senza serverStarttime con sessione omonima viva: 409 STOP_UNKNOWN, presenza non qualificata', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { omonima: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime, calls } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN', 'senza identità del server non c\'è duplicato qualificato');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket per una pratica non chiudibile');
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+});
+
+// ---------------------------------------------------------------------------
+// T6 — record bloccato SENZA prova di duplicato (v1, socket diverso →
+// SERVER_UNKNOWN/replaced-unknown): il 409 dice STOP_UNKNOWN, non
+// SESSION_DUPLICATE, e porta le prove con se'.
+// ---------------------------------------------------------------------------
+test('record bloccato senza prova di duplicato: 409 STOP_UNKNOWN con le prove', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: '/tmp/altro-socket',
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime, calls } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN', 'nessun duplicato provato: non e\' SESSION_DUPLICATE');
+    assert.equal(e.data.prove.proofs.server, 'replaced-unknown');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket per una pratica non chiudibile');
+});
+
+// ---------------------------------------------------------------------------
+// T7 — R1, il controesempio: record SENZA serverPid (nessuna
+// identità di server), supervisore registrato MORTO (pane respawnato) e
+// sessione RINOMINATA ma VIVA. La query per nome dice «assente»: senza la
+// ricerca degli id ORIGINALI il record verrebbe archiviato e un secondo up
+// ammesso con la vecchia sessione ancora operativa. S2b: l'oggetto trovato per
+// id su un listener NON correlato non è un duplicato PROVATO (gli id si
+// rinumerano da zero), quindi il 409 è STOP_UNKNOWN con il blocco conservativo
+// SERVER_UNKNOWN e l'id originale in evidenza: mai archivio, mai rilancio.
+// ---------------------------------------------------------------------------
+test('record senza serverPid con sessione rinominata viva e pane respawnato: 409 conservativo per id originale', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { rinominata: true, idVivi: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: null, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime, calls } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN', 'senza identità del server l\'id non è un duplicato qualificato');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    assert.equal(e.data.prove.proofs.sessionIdOriginale, 'session', 'la prova dice comunque quale oggetto originale vive');
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket: la vecchia sessione è ancora viva');
+  assert.ok(!W.chiamateTmux(d).some((c) => c.join(' ').includes('new-session')), 'nessun secondo lancio');
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+});
+
+// ---------------------------------------------------------------------------
+// T8 — R1, la seconda gamba: sessione $5 morta ma pane %9 vivo in un'ALTRA
+// sessione (spostato prima della chiusura). Il nome non c'è, l'id di sessione
+// nemmeno: è l'id di PANE a mostrare che un oggetto con quell'id esiste. Record
+// senza serverPid: l'oggetto è su un listener non correlato, quindi blocco
+// conservativo (SERVER_UNKNOWN) e mai archivio.
+// ---------------------------------------------------------------------------
+test('record senza serverPid con sessione morta ma pane originale vivo altrove: 409 conservativo per id di pane', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { paneAltrove: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: null, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime, calls } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    assert.equal(e.data.prove.proofs.sessionIdOriginale, 'pane', 'la prova è l\'id di PANE originale');
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket');
+});
+
+// ---------------------------------------------------------------------------
+// T9 — R1, la classe nuova: record MATERIALIZZATO senza
+// identita' del server (serverPid assente), sostituto senza nome ne' id,
+// supervisore registrato morto e lease none. Le assenze lette sul listener
+// corrente non provano niente sul server ORIGINARIO: l'up non riconcilia
+// (409 STOP_UNKNOWN), il record resta byte-identico, nessun ticket.
+// ---------------------------------------------------------------------------
+test('record v2 attested senza serverPid: le assenze sul sostituto non chiudono l\'up', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  await morto(sup.pid);
+  scrivi(d, 'attested', {
+    owner: OWNER_INSTANCE_ID,
+    created: { serverPid: null, serverStarttime: null },
+    attested: { panePid: sup.pid, paneStarttime: nascitaSup },
+  });
+  const { runtime, calls } = W.apriRuntime(d, { owner: true, cfg: { identitaNodoKernel: nodoOra() } });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN', 'il server originario non e\' verificabile: nessuna chiusura automatica');
+    assert.equal(e.data.prove.prova, 'ternary', 'la morte del supervisore resta provata');
+    assert.equal(e.data.prove.proofs.session, 'absent', 'l\'assenza resta la lettura osservata');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    return true;
+  });
+  assert.equal(calls.issue, 0, 'nessun ticket');
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+  assert.equal(fs.existsSync(launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, LID)), false, 'niente quarantena');
+});
+
+// ---------------------------------------------------------------------------
+// T10 — stessa classe con un oggetto che porta l'ID ORIGINALE sul listener
+// corrente: non e' un duplicato provato (gli id si rinumerano da zero), ma
+// resta un veto conservativo. L'evidenza dice QUALE id e' stato visto.
+// ---------------------------------------------------------------------------
+test('record v2 attested senza serverPid con un ID originale sul corrente: veto conservativo', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { idVivi: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  await morto(sup.pid);
+  scrivi(d, 'attested', {
+    owner: OWNER_INSTANCE_ID,
+    created: { serverPid: null, serverStarttime: null },
+    attested: { panePid: sup.pid, paneStarttime: nascitaSup },
+  });
+  const { runtime } = W.apriRuntime(d, { owner: true, cfg: { identitaNodoKernel: nodoOra() } });
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+
+  await assert.rejects(() => runtime.up(d.cella), (e) => {
+    assert.equal(e.status, 409);
+    assert.equal(e.fleetCode, 'STOP_UNKNOWN');
+    assert.ok(e.data.prove.blocchi.includes('SERVER_UNKNOWN'));
+    assert.ok(!e.data.prove.blocchi.includes('SESSION_PRESENT'), 'un id non correlato non e\' un duplicato provato');
+    assert.equal(e.data.prove.proofs.sessionIdOriginale, 'session', 'l\'oggetto visto resta in evidenza');
+    return true;
+  });
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
+});

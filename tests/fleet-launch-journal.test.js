@@ -463,27 +463,39 @@ for (const c of CONFINI) {
       const ok = await runtime.up(d.cella);
       assert.equal(ok.ok, true, 'senza record non c\'e\' niente da conservare');
     } else if (c.fase === 'attested') {
-      await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'SESSION_DUPLICATE');
+      // Il crash lascia un attested senza nascita del pane: materialization-unknown,
+      // NESSUN duplicato provato. Il rifiuto dice STOP_UNKNOWN, non SESSION_DUPLICATE.
+      await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
       assert.equal(leggiRecord(d).phase, 'attested');
+    } else if (c.fase === 'prepared') {
+      // S3: un prepared qualificato prova che questo lancio non ha emesso
+      // new-session. La pratica vecchia si chiude nel percorso condiviso e il
+      // nuovo lancio parte: il vecchio record resta in quarantena
+      // BYTE-IDENTICO, l'ID vecchio e il nuovo sono distinti, zero kill.
+      const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+      const vecchioId = leggiPrima(prima).launchId;
+      const esito = await runtime.up(d.cella);
+      assert.equal(esito.ok, true, 'prepared provato: la pratica vecchia si chiude e il nuovo lancio parte');
+      const quarantena = launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, vecchioId);
+      assert.equal(fs.readFileSync(quarantena, 'utf8'), prima, 'vecchio record in quarantena byte-identico');
+      const dopo = launchTarget.leggi(d.filesRoot, d.sessione);
+      assert.equal(dopo.stato, 'presente');
+      assert.notEqual(dopo.record.launchId, vecchioId, 'l\'ID vecchio e il nuovo sono distinti');
+      // La claim della VECCHIA pratica e' stata rilasciata esattamente: nessuna
+      // lease superstite porta ancora il suo launchId (una nuova puo' esistere
+      // per il lancio nuovo).
+      const claimDopo = W.lease(d).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).launchId);
+      assert.equal(claimDopo.includes(vecchioId), false, 'claim della vecchia pratica rilasciata');
+      assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')), 'zero kill');
     } else {
+      // creating/created: il record non prova ancora la morte del supervisore.
       await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
       assert.equal(leggiRecord(d).phase, c.fase, 'il record non e\' stato toccato');
       const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
-      if (c.fase === 'prepared') {
-        // prepared qualificato: questo lancio non ha emesso new-session. Il down lo
-        // riconcilia (P1-b): record in quarantena, nessun kill, e l'up riparte.
-        const r = await runtime.down(d.cella);
-        assert.equal(r.outcome, 'resolved-unlaunched');
-        assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
-        assert.equal(fs.readFileSync(launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, leggiPrima(prima).launchId), 'utf8'), prima);
-        assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
-        assert.equal((await runtime.up(d.cella)).ok, true);
-      } else {
-        // Il down senza prova non agisce: nessun kill e record intatto.
-        await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'IDENTITY_UNVERIFIED');
-        assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
-        assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
-      }
+      // Il down senza prova non agisce: nessun kill e record intatto.
+      await assert.rejects(() => runtime.down(d.cella), (e) => e.fleetCode === 'IDENTITY_UNVERIFIED');
+      assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
+      assert.ok(!W.chiamateTmux(d).some((a) => a.join(' ').includes('kill-session')));
     }
   });
 }
@@ -498,13 +510,21 @@ test('crash al broker (vl): record prepared e claim insieme, il blocco si conser
   assert.deepStrictEqual(nuoveSessioni(d), []);
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
-  // P1-b: prepared qualificato = nessuna new-session emessa. Root ancora assente e
-  // lease none: il down riconcilia (host -> claim -> record) e libera il lancio.
-  const esitoDown = await runtime.down(d.cella);
-  assert.equal(esitoDown.outcome, 'resolved-unlaunched');
-  assert.deepStrictEqual(W.lease(d), [], 'claim rilasciata');
-  assert.equal(launchTarget.leggi(d.filesRoot, d.sessione).stato, 'assente');
+  // S3: prepared vl provato mai materializzato = la pratica vecchia si chiude
+  // (i suoi effetti) e solo dopo parte il nuovo tentativo. Prima le prove della
+  // chiusura: vecchia claim rilasciata esattamente e record in quarantena
+  // BYTE-IDENTICO. Poi il nuovo lancio: il suo eventuale errore e' specifico.
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  const vecchioId = leggiPrima(prima).launchId;
+  const esito = await runtime.up(d.cella).then((r) => ({ ok: r.ok === true }), (e) => ({ ok: false, code: e.fleetCode }));
+  const quarantena = launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, vecchioId);
+  assert.equal(fs.readFileSync(quarantena, 'utf8'), prima, 'vecchio record in quarantena byte-identico');
+  const claimDopo = W.lease(d).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).launchId);
+  assert.equal(claimDopo.includes(vecchioId), false, 'claim della vecchia pratica rilasciata');
+  const dopo = launchTarget.leggi(d.filesRoot, d.sessione);
+  assert.equal(dopo.stato, 'presente');
+  assert.notEqual(dopo.record.launchId, vecchioId, 'ID vecchio e nuovo separati');
+  if (!esito.ok) assert.notEqual(esito.code, 'STOP_UNKNOWN', `errore specifico del nuovo lancio: ${esito.code}`);
 });
 
 test('crash dopo l\'abort terminale (vl): il disco dice «abortito» e la claim c\'e\' ancora', async (t) => {
@@ -518,7 +538,18 @@ test('crash dopo l\'abort terminale (vl): il disco dice «abortito» e la claim 
   assert.equal(W.lease(d).length, 1);
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
-  await assert.rejects(() => runtime.up(d.cella), (e) => e.fleetCode === 'STOP_UNKNOWN');
+  // S3: l'aborted e la barriera passiva qualificano la chiusura della VECCHIA
+  // pratica (claim propria rilasciata, record archiviato) PRIMA del nuovo
+  // tentativo. Il rifiuto che arriva dopo e' il duplicato ESTRANEO che occupa
+  // il nome (premessa del mondo: newSession duplicata), non una scorciatoia.
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  const vecchioId = rec.launchId;
+  await assert.rejects(() => runtime.up(d.cella), (e) => e.status === 409
+    && e.fleetCode === 'SESSION_DUPLICATE');
+  const quarantena = launchTarget.percorsoQuarantena(d.filesRoot, d.sessione, vecchioId);
+  assert.equal(fs.readFileSync(quarantena, 'utf8'), prima, 'record aborted archiviato byte-identico');
+  const claimDopo = W.lease(d).map((f) => JSON.parse(fs.readFileSync(f, 'utf8')).launchId);
+  assert.equal(claimDopo.includes(vecchioId), false, 'claim della pratica aborted rilasciata');
 });
 
 // --- Riserva fallita o incerta (vl) ----------------------------------------
@@ -653,7 +684,8 @@ test('abort con root comparsa e host VIVO: claim e record restano, host intatto'
     ensureProtection: async () => {
       n += 1;
       if (n === 2) {
-        fs.mkdirSync(rootVl(d), { recursive: true });
+        fs.mkdirSync(rootVl(d), { recursive: true, mode: 0o700 });
+        fs.chmodSync(rootVl(d), 0o700);
         host = spawnaHostFinto();
         host.ref();
         fs.writeFileSync(path.join(d.root, 'hostpid'), String(host.pid));

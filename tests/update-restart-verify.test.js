@@ -24,7 +24,7 @@ function seams(dir, { commands: extraCommands = {}, ...over } = {}) {
       portAvailable: async () => true,
       ...extraCommands,
     },
-    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => liveMeta, isAlive: () => true },
+    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => liveMeta, inspectPidfile: () => ({ state: 'alive', meta: liveMeta }) },
     waitForRuntimeImpl: async () => true,
     runtimeVersionImpl: async () => '0.9.51',
     ...over,

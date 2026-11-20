@@ -44,6 +44,8 @@ const ESEMPI = Object.freeze({
   'ask-reply-access': 'off',
   'files-read-access': 'on',
   'peer-operator-access': 'off',
+  prefix: '/data/data/com.termux/files/usr/bin',
+  by: 'operator',
 });
 
 function nodeHome() {

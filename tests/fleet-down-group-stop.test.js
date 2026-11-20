@@ -164,29 +164,33 @@ test('fase escalation: impegno prima del KILL, nessun frame dopo', async () => {
   assert.equal(ordine.slice(iKill + 1).some((x) => x !== 'kill:SIGKILL' && !x.startsWith('kill:')), false);
 });
 
-test('setsid contato fuori gruppo: niente KILL e niente pid', async () => {
+test('setsid contato fuori gruppo: nessun pid adottato e nessun pronto senza la sua uscita', async () => {
   const uccisioni = [];
+  const spediti = [];
   const host = { vivo: true };
   const idLancio = hexId();
+  let clessidra = 0;
   const coord = gruppo.creaCoordinatore({
     token: 't', launchId: idLancio,
-    monoNow: () => 0,
-    sleep: async () => {},
+    monoNow: () => clessidra,
+    sleep: async (ms) => { clessidra += ms; },
     killGruppo: (sig) => { uccisioni.push(sig); },
     osserva: () => ({ inGruppo: 0, fuoriGruppo: 1, qualita: 'noti' }),
-    invia: () => true,
+    invia: (frame) => { spediti.push(frame); return true; },
     svuota: async () => true,
     cancellaDelivery: async () => null,
     scriviLog: () => {},
     dichiaraStopping: () => {},
     disarmaLegacy: () => {},
     installaIgnoraTerm: () => {},
+    // Il figlio noto NON e' uscito: la fase non puo' dichiarare pronto.
+    fermaFiglioNoto: async () => ({ uscito: false, motivo: 'scaduta' }),
   });
   coord.onFrame({ op: 'stop', requestId: hexId(), launchId: idLancio, epoch: 1, payload: { deadlineMs: 200 } });
   const esito = await coord.attiva();
-  assert.equal(esito.outcome, 'ready-to-exit');
-  assert.equal(esito.conti.fuoriGruppo, 1);
-  assert.deepEqual(uccisioni, ['SIGTERM']);
+  assert.notEqual(esito.outcome, 'ready-to-exit', JSON.stringify(esito));
+  assert.equal(spediti.some((f) => f.op === 'ready-to-exit'), false, 'pronto senza prova di uscita');
+  assert.deepEqual(uccisioni, ['SIGTERM'], 'segnali oltre il gruppo del supervisore');
   assert.equal(host.vivo, true);
 });
 
@@ -529,7 +533,7 @@ process.exit(0);
     cells: [{ id: 'CellaGS', tmuxSession: 'nc-gs-prova', cwd, engine: 'eg', boot: false }],
   });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 400 },
+    cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, groupStopBudgetMs: 2000 },
     home, defsPath, tmuxBin, readonly: () => false,
     launchBroker: {
       issue: async () => ({ socketPath: path.join(root, 'broker.sock'), nonce: 'n'.repeat(64) }),
@@ -562,12 +566,15 @@ function leaseFinto(modo) {
     status() { return { state: 'none' }; },
     setLaunchSubject() { return true; },
     attendiUscita() {
-      if (modo === 'pulito' || modo === 'residui') return Promise.resolve({ provato: true });
+      if (modo === 'pulito' || modo === 'residui' || modo === 'zombie') return Promise.resolve({ provato: true });
       return Promise.reject(new Error('exit unproven'));
     },
     osservaGruppo() {
       if (modo === 'residui') return { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' };
       if (modo === 'pulito') return { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' };
+      // Un figlio uscito e non raccolto: zero eseguibili, un Z. E' il caso
+      // dell'incidente (remain-on-exit + pane morto).
+      if (modo === 'zombie') return { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 1 };
       return null;
     },
     ascoltaControl(fn) { ascoltatori.push(fn); return () => {}; },
@@ -579,18 +586,25 @@ function leaseFinto(modo) {
           requestId: hexId(), launchId: frame.launchId, epoch: 1,
           payload: { tokenHash: 'cd'.repeat(32), stopRequestId: frame.requestId },
         };
-        if (modo === 'pulito') {
+        if (modo === 'pulito' || modo === 'zombie') {
           for (const fn of ascoltatori) fn(cellId, {
             ...base, op: 'ready-to-exit',
-            payload: { ...base.payload, conti: { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' } },
+            payload: {
+              ...base.payload,
+              conti: modo === 'zombie'
+                ? { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 1 }
+                : { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' },
+            },
           });
-          if (chiusura) chiusura();
+          // Il contratto reale: l'host risponde PRIMA, poi chiude il canale.
+          setTimeout(() => { if (chiusura) chiusura(); }, 25);
         } else if (modo === 'residui') {
           for (const fn of ascoltatori) fn(cellId, {
             ...base, op: 'escalate-commit',
             payload: { ...base.payload, conti: { inGruppo: 2, fuoriGruppo: 0, qualita: 'noti' } },
           });
-          if (chiusura) chiusura();
+          // Stesso contratto: la risposta viaggia prima della chiusura.
+          setTimeout(() => { if (chiusura) chiusura(); }, 25);
         } else if (modo === 'senza-eof') {
           for (const fn of ascoltatori) fn(cellId, {
             ...base, op: 'ready-to-exit',
@@ -617,6 +631,22 @@ test('down: gruppo pulito con uscita e osservazione residui zero, esito killed-c
   assert.equal(w.sessioni().length, 0);
   assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
   assert.ok(w.log().some((r) => r.startsWith('kill-session:')));
+});
+
+// Voce 13: zero eseguibili e un figlio uscito non raccolto. Il down NON resta
+// appeso in `stop-unknown`: chiude, dichiara `killed-zombie-held` (non
+// `killed-clean`: il kernel non ha confermato il PGID) e il teardown ordinario
+// chiude il pane, che e' cio' che rilascia lo zombie.
+test('down: zero eseguibili + uno zombie nel gruppo => killed-zombie-held, pane chiuso', async (t) => {
+  const lease = leaseFinto('zombie');
+  const w = mondo(t, lease);
+  await w.runtime.up('CellaGS');
+  const esito = await w.runtime.down('CellaGS');
+  assert.equal(esito.killed, true);
+  assert.equal(esito.outcome, 'killed-zombie-held', JSON.stringify(esito));
+  assert.equal(w.sessioni().length, 0, 'il pane e\' stato chiuso dal teardown');
+  assert.equal(lease.inviati.filter((f) => f.op === 'stop').length, 1);
+  assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 1, 'un solo kill-session');
 });
 
 test('down: proc incompleto con processi residui rifiuta teardown', async (t) => {

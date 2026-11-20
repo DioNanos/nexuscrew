@@ -208,8 +208,14 @@ the exact previous version on failure. tmux sessions remain outside the
 service process group.
 
 Termux process handling verifies process identity before sending a signal.
-Android PID reuse under another app UID is treated as a stale pidfile, never as
-permission to signal the foreign process.
+`EPERM` or unknown ownership alone is not proof that the recorded service has
+exited; without independent exit evidence, the pidfile is indeterminate and
+authorizes neither a signal nor stale-file removal. Positive evidence that marks
+it stale is possession of the same v1 service-guard lock identified by the
+record (with matching device and inode, checked before PID ownership), `ESRCH`,
+a different readable birth time of the same kind, a `Z`/`X` `/proc/<pid>/stat`
+entry matching that attested birth time, or a different kernel boot ID; a foreign
+PID is never signaled.
 
 ## Report a security issue
 

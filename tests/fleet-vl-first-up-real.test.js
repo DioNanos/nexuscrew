@@ -17,6 +17,7 @@ const { vlCellBaseDir } = require('../lib/fleet/managed.js');
 const { radiceServer } = require('../lib/fleet/vl-roots.js');
 const { sharedTmuxSocketPath } = require('../lib/runtime/env.js');
 const { OWNER_INSTANCE_ID } = require('./helpers/vl-attestato.js');
+const vlHostStop = require('../lib/fleet/vl-host-stop.js');
 const { verificaUscitaServer } = require(path.join(__dirname, 'tmux-server-exit-guard.js'));
 
 // Il binario pinnato e' il client TUI: la build headless esce subito e non
@@ -143,7 +144,27 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   process.env.LC_CTYPE = 'C.UTF-8';
   delete process.env.TMUX;
 
-  const capPrima = new Set(fs.readdirSync('/tmp').filter((n) => n.startsWith('nc-vl-cap-')));
+  // La sonda di capacita' (nc-vl-cap-*) la crea e la rimuove il PRODOTTO,
+  // sincronamente, nella preflight dell'up (runtime.js): quando up ritorna ok
+  // la sonda e' gia' rimossa; se la rimozione fallisce, up rifiuta. Il vecchio
+  // assert scandiva /tmp GLOBALMENTE: con corse concorrenti (soak a concorrenza
+  // 2) la sonda DI UN ALTRO processo, ancora viva nella sua preflight, risultava
+  // "rimasta" pur non essendo di questo test (residui 2s/5s vuoti nelle corse
+  // 039/291). Qui si tracciano SOLO le basi create da QUESTO processo con un
+  // wrap trasparente di preparaSondaRadice che delega all'originale: la verifica
+  // della pulizia e' deterministica e indipendente da chi altro gira in /tmp.
+  const sondeCreate = [];
+  const preparaOriginale = vlHostStop.preparaSondaRadice;
+  vlHostStop.preparaSondaRadice = (...args) => {
+    const prep = preparaOriginale(...args);
+    if (prep && typeof prep.base === 'string') sondeCreate.push(prep.base);
+    return prep;
+  };
+  // The restore is registered HERE, right after the patch: an assertion that
+  // fails a few lines below must not leave the module-wide hook wrapped for
+  // every later test in this file. Cleanup belongs to the moment the change
+  // happens, not to a teardown written a page later.
+  t.after(() => { vlHostStop.preparaSondaRadice = preparaOriginale; });
   assert.equal(fs.existsSync(hostRoot), false, 'host-v1 non c\'e\' prima dell\'up');
   assert.ok(!sharedTmuxSocketPath().startsWith('/tmp/tmux-'), 'il socket non e\' quello della flotta');
 
@@ -397,7 +418,10 @@ exec ${TMUX} -f ${JSON.stringify(path.join(root, 'tmux-osserva.conf'))} "$@"
   assert.equal(tickets.length, 2, 'un prompt anche al secondo up, nessuno in piu\'');
   assert.equal(sha256(marker), markerHash, 'la cella di controllo e\' intatta');
   assert.equal(fs.existsSync(path.join(baseB, 'state', 'vl', 'host-v1')), false);
-  const rimaste = fs.readdirSync('/tmp').filter((n) => n.startsWith('nc-vl-cap-') && !capPrima.has(n));
+  // Il primo up di una cella mai lanciata passa dalla sonda su root usa e getta:
+  // senza almeno una base tracciata la verifica di pulizia sarebbe vuota.
+  assert.ok(sondeCreate.length >= 1, 'la preflight del primo up non ha creato la sonda di capacita\'');
+  const rimaste = sondeCreate.filter((b) => fs.existsSync(b));
   assert.deepEqual(rimaste, [], `sonda temporanea rimasta: ${rimaste.join(',')}`);
   assert.equal(vivo(LIVE), livePrima, 'il tmux della flotta non e\' stato toccato');
 });

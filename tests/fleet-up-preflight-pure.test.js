@@ -173,7 +173,7 @@ function foto(dir) {
 }
 
 async function crea(t, { riservaRootClaim = null } = {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-r0-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-preflight-pure-'));
   const home = path.join(root, 'home');
   const cwd = path.join(home, 'Cella');
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 });

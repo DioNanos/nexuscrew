@@ -28,9 +28,30 @@ Clean installations include these base adapters:
 - Grok on Linux and macOS
 - VL
 - Pi
+- Qwen on Linux and macOS
 - Agy on Linux and macOS
 - Kimi Code CLI
 - Shell
+
+Qwen Code (`qwen.native`) runs the official Qwen Code CLI with its own
+account login (done by the operator). NexusCrew never reads or copies the
+OAuth store. Only the stable 0.x line is supported, from 0.27.2 up: the
+binary is qualified by isolated `--version` and `--help` probes (stdout
+only, required flags verified in their own help block), and any 1.x release
+— preview or stable — is refused with a family reason. Every launch pins an
+explicit policy: `--approval-mode` `default`/`yolo` (never the separate
+`--yolo` flag, which the CLI rejects in combination). The cell identity
+travels on `--append-system-prompt` and the first turn on
+`--prompt-interactive` (headless `-p`/positional are never used); QWEN.md
+files stay with the user, and no configuration root is composed by
+NexusCrew: the native 0.x store of the operator's login is used as is. The
+experimental 1.0 selector fields `qwenBinary` and `qwenConfigDir` are
+retired: any definition that still carries them — even empty — is refused
+by the backend with a reason naming the field; remove them and qualify the
+node's own 0.x `qwen` instead. MCP servers stay in the user or project Qwen
+configuration: there is no per-cell managed MCP selection and no generated
+`--mcp-config`. On Android/Termux, use the Shell adapter with a per-cell
+`qwen` command.
 
 Agy delegates authentication to its local login and supports standard or
 unsafe permission policies. On Android/Termux, use the Shell adapter with a

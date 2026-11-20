@@ -203,8 +203,10 @@ test('two processes on the same root serialize under the real lock', async () =>
       tick();
     });
     // A contender arrives while the release holds the lock: it must be
-    // refused, not interleaved.
-    const contendente = await radici.riserva({ ...base, launchId: '33'.repeat(8), budgetMs: 500 });
+    // refused, not interleaved. The budget must outlive runtime pinning
+    // (up to ~0.6 s with large Node binaries) so the refusal is
+    // deterministically the lock timeout, not a preamble budget refusal.
+    const contendente = await radici.riserva({ ...base, launchId: '33'.repeat(8), budgetMs: 4000 });
     assert.equal(contendente.outcome, 'refused');
     assert.equal(contendente.code, 'LOCK_TIMEOUT');
     fs.writeFileSync(path.join(hold, `go-${fs.readdirSync(hold).find((f) => f.startsWith('entered-')).slice('entered-'.length)}`), '1');

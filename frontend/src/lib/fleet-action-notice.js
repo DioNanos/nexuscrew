@@ -12,6 +12,12 @@ import { t } from './i18n.js';
 import { fleetDown, fleetUp } from './api.js';
 
 const ACTION_CODES = ['KIMI_AUTH_ACTION_REQUIRED', 'CLIENT_INTERACTION_REQUIRED'];
+// Closed enum of the blocks that do NOT prove a duplicate (lib/fleet/launch-reconcile.js).
+const BLOCCHI_IGNOTI = [
+  'SERVER_UNKNOWN', 'SESSION_UNKNOWN', 'LEGACY_UNPROVABLE', 'MATERIALIZATION_UNKNOWN',
+  'RECORD_UNREADABLE', 'RECORD_NOT_QUALIFIED', 'SUPERVISOR_UNREADABLE',
+  'LEASE_BLOCKS', 'LEASE_UNREADABLE', 'BUDGET', 'BUSY',
+];
 const RECOVERY_SLUGS = [
   'kimi-code-consent-yes',
   'kimi-code-config-custom-api-key',
@@ -93,6 +99,9 @@ export function upActionNotice(result) {
 //   chi indaga deve poter dire se l'attesa è scaduta qui o là.
 // - 409 SESSION_DUPLICATE su 'up' (preflight del runtime: la sessione esiste
 //   già). La cella è viva, non serve rilanciare.
+// - 409 with proofs that do NOT prove a duplicate (STOP_UNKNOWN / unknown
+//   blocks): the matter is not closed, a reconciliation is needed. Never
+//   "already running".
 // In nessuno di questi casi si ripete il POST: l'azione può essere già passata,
 // e un secondo invio non è una riprova ma una seconda azione.
 export function fleetActionErrorNotice(error, action) {
@@ -113,10 +122,25 @@ export function fleetActionErrorNotice(error, action) {
       text: t(action === 'down' ? 'fleet-down-slow' : 'fleet-up-slow'),
     };
   }
-  if (error.status === 409
-    && action === 'up'
-    && error.data && error.data.code === 'SESSION_DUPLICATE') {
-    return { code: 'FLEET_SESSION_DUPLICATE', recovery: null, text: t('fleet-up-duplicate') };
+  if (error.status === 409 && action === 'up' && error.data) {
+    // A refusal whose proofs do NOT prove a duplicate (SERVER_UNKNOWN,
+    // SESSION_UNKNOWN, LEGACY_UNPROVABLE, ...) is not "already running": the
+    // matter is not closed and a reconciliation is needed. The blocks are a
+    // closed enum of the evaluator: only the known ones are reported, never
+    // remote text. A real 409 SESSION_DUPLICATE (SESSION_PRESENT/
+    // SUPERVISOR_ALIVE) stays the benign notice it has always been.
+    const blocchi = error.data.prove && Array.isArray(error.data.prove.blocchi) ? error.data.prove.blocchi : [];
+    const ignoti = blocchi.filter((b) => BLOCCHI_IGNOTI.includes(b));
+    if (error.data.code === 'STOP_UNKNOWN' || ignoti.length) {
+      return {
+        code: 'FLEET_LAUNCH_NOT_CLOSED',
+        recovery: null,
+        text: ignoti.length ? `${t('fleet-up-not-closed')} (${ignoti.join(', ')})` : t('fleet-up-not-closed'),
+      };
+    }
+    if (error.data.code === 'SESSION_DUPLICATE') {
+      return { code: 'FLEET_SESSION_DUPLICATE', recovery: null, text: t('fleet-up-duplicate') };
+    }
   }
   return null;
 }
@@ -140,12 +164,28 @@ export async function runFleetPowerAction({ token, powerCell, payload, onNotice,
         ...(payload.permissionPolicy ? { permissionPolicy: payload.permissionPolicy } : {}),
       }, route);
       const notice = upActionNotice(res);
-      if (notice) onNotice(notice.text);
+      // Even a normal success has a visible outcome: without it, "started"
+      // and "nothing happened" are indistinguishable (the sheet closes in
+      // both cases). The specific notice, when there is one, wins: just one.
+      onNotice(notice ? notice.text : t('fleet-up-started'));
     } else {
       await api.fleetDown(token, { cell, boot: !!payload.boot }, route);
+      onNotice(t('fleet-down-stopped'));
     }
     return undefined;
   } catch (e) {
+    // Un aggiornamento di sistema puo' cambiare la flock rispetto al catalogo
+    // della release. Il ripiego sul pin locale NON e' automatico: l'hint arriva
+    // qui, nel percorso comune, con il testo e il comando LOCALI (i18n). Del
+    // payload — che puo' arrivare da un nodo remoto — si legge il solo
+    // identificatore chiuso. L'errore viene RILANCIATO: status, data e causa
+    // restano intatti, l'up resta fallito e il foglio non si chiude come
+    // benigno (la mappa degli esiti benigni qui sotto non c'entra).
+    const pinRecovery = e && e.data && typeof e.data === 'object' ? e.data.pinRecovery : null;
+    if (pinRecovery === 'provision-again') {
+      onNotice(t('fleet-vl-pin-recovery'));
+      throw e;
+    }
     const benign = fleetActionErrorNotice(e, payload.action);
     if (benign) { onNotice(benign.text); return { benign: benign.code }; }
     throw e;

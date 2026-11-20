@@ -114,6 +114,27 @@ const comune = {
   peer_identity_support: 'supported',
 };
 if (argv[0] === '--version') { process.stdout.write('vl 0.4.0\\n'); process.exit(0); }
+// "vl status" / "vl models --json": il gate della capacita' e l'inventario dei
+// profili. Il finto dichiara due profili nel config ('work', 'other'), cosi'
+// un modello di cella 'work' e' un SELETTORE e viaggia in VL_MODEL.
+if (argv[0] === 'status') {
+  process.stdout.write(JSON.stringify({ version: 'vl 0.4.0', capabilities: { model_selector: 'profile' } }) + '\\n');
+  process.exit(0);
+}
+if (argv[0] === 'models' && argv[1] === '--json') {
+  process.stdout.write(JSON.stringify({
+    schema_version: 1, inventory: 'config',
+    active: { profile: 'work', source: 'config_default' }, active_error: null,
+    preset_names_resolvable: true, excluded: { not_assembled: 0, invalid_identifier: 0 },
+    profiles: [
+      { id: 'work', provider: 'openai-compat', model: 'm-work', context_window: 1000,
+        max_output_tokens: 100, supported_efforts: [], source: 'config', key: 'not_needed', auth_surface: null },
+      { id: 'other', provider: 'openai-compat', model: 'm-other', context_window: 1000,
+        max_output_tokens: 100, supported_efforts: [], source: 'config', key: 'not_needed', auth_surface: null },
+    ],
+  }) + '\\n');
+  process.exit(0);
+}
 if (argv[0] === 'host' && argv[1] === 'status') {
   nota('status ' + argv.join(' '));
   const iRoot = argv.lastIndexOf('--server-root');
@@ -123,7 +144,22 @@ if (argv[0] === 'host' && argv[1] === 'status') {
   if (p > 0 && esiste(p)) {
     const id = identitaKernel(p);
     const m = modo();
-    const peer = m === 'null' ? null : (id ? { schema_version: 1, state: m, ...id } : null);
+    // Modalita' del finto:
+    //  - 'null'            -> nessun peer_identity;
+    //  - 'label:<etichetta>' -> verified SOLO se la sonda presenta --profile
+    //                          <etichetta> (il probe con l'etichetta del lancio);
+    //  - altro             -> lo stato scritto nel file ('verified', 'unverified', ...).
+    let peer = null;
+    if (m !== 'null' && id) {
+      if (m.startsWith('label:')) {
+        const atteso = m.slice('label:'.length);
+        const iProf = argv.lastIndexOf('--profile');
+        const visto = iProf >= 0 ? String(argv[iProf + 1] || '') : '';
+        peer = { schema_version: 1, state: visto === atteso ? 'verified' : 'unverified', ...id };
+      } else {
+        peer = { schema_version: 1, state: m, ...id };
+      }
+    }
     process.stdout.write(JSON.stringify({ ...base, state: 'live', declared_pid: p,
       pid_number_in_use: true, since: { source: 'declared', unix: 1 }, peer_identity: peer }) + '\\n');
   } else {
@@ -157,9 +193,13 @@ if ((argv[0] === 'internal' && argv[1] === 'host-stop') || argv[0] === 'shutdown
 `;
 }
 
-function mondo(t) {
+function mondo(t, opts = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-unattested-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -178,7 +218,18 @@ function mondo(t) {
   fs.mkdirSync(path.join(home, 'NexusFiles'), { recursive: true });
   const catalogoVl = path.join(home, '.config', 'vl');
   fs.mkdirSync(catalogoVl, { recursive: true });
-  fs.writeFileSync(path.join(catalogoVl, 'config.toml'), '[profiles.work]\nmodel = "m-work"\n');
+  fs.writeFileSync(path.join(catalogoVl, 'config.toml'),
+    '[profiles.work]\nmodel = "m-work"\n\n[profiles.other]\nmodel = "m-other"\n');
+  // La preferenza LOCALE della cella: se il probe non porta l'etichetta del
+  // lancio, VL risolve da qui (precedenza: VL_MODEL > --profile > selected >
+  // default_profile) e l'host nato con VL_MODEL non corrisponde.
+  if (opts.selected) {
+    fs.writeFileSync(path.join(catalogoVl, 'selected.toml'), `profile = ${JSON.stringify(opts.selected)}\n`);
+  }
+  const engineManaged = {
+    client: 'vl', provider: 'native', model: opts.engineModel || '', permissionPolicy: 'standard',
+    ...(opts.vlProfile ? { vlProfile: opts.vlProfile } : {}),
+  };
 
   const statoPath = path.join(root, 'sessions.txt');
   fs.writeFileSync(statoPath, '');
@@ -282,7 +333,7 @@ process.exit(0);
     schemaVersion: 1,
     engines: [{
       id: 'vl.native', label: 'VL', rc: false,
-      managed: { client: 'vl', provider: 'native', model: '', permissionPolicy: 'standard' },
+      managed: engineManaged,
     }],
     cells: [{ id: 'CellaProva', tmuxSession: SESSIONE, cwd, engine: 'vl.native', boot: false, prompt: PROMPT }],
   });
@@ -328,7 +379,7 @@ process.exit(0);
     fs.rmSync(root, { recursive: true, force: true });
   });
   return {
-    root, home, tickets, revokes, cfgBase, base, modo, sessioniVive, pidHost, recordLease,
+    root, home, tickets, revokes, cfgBase, base, modo, sessioniVive, pidHost, recordLease, vllog,
     async fleet() {
       const f = await createBuiltinFleet(cfgBase);
       t.after(() => f.close().catch(() => {}));
@@ -366,7 +417,10 @@ test('runtime reale: host vivo con peer UNVERIFIED — up rifiutato VL_PEER_UNAT
   assert.equal(lease.cellId, 'CellaProva');
   const err2 = await fleet.up('CellaProva').then(() => null, (e) => e);
   assert.ok(err2, 'secondo up nudo rifiutato');
-  assert.equal(err2.fleetCode, 'SESSION_DUPLICATE', 'lancio non chiuso: la barriera regge');
+  assert.equal(err2.status, 409);
+  // R1: sul secondo up nudo nessun duplicato e' provato, il rifiuto resta
+  // STOP_UNKNOWN con la lease fra le prove (non SESSION_DUPLICATE).
+  assert.equal(err2.fleetCode, 'STOP_UNKNOWN', 'lancio non chiuso: la barriera regge');
   // Il ticket del broker del lancio fallito è revocato.
   assert.equal(w.revokes.length, 1, 'revoca del ticket di controllo');
 });
@@ -409,4 +463,71 @@ test('runtime reale: blocco senza continuità e senza nuova sessione — la barr
   const ctx = host.leggiContesto(w.base());
   assert.ok(ctx && !ctx.errore);
   assert.equal(ctx.hostIdentity.state, 'pending', 'nessuna tuple senza un up riuscito');
+});
+
+// --- S1: il probe di readiness usa l'etichetta del LANCIO ------------------
+//
+// VL risolve il profilo con `VL_MODEL` > `--profile` > `selected.toml` >
+// `default_profile` e dichiara `verified` solo a etichetta IDENTICA. Il probe
+// di registrazione non riceveva l'etichetta del lancio: la risolveva dal
+// config della cella (selected.toml) e la confrontava con un host nato con
+// VL_MODEL — mismatch, `unverified`, 500. Qui il finto `host status` accetta
+// SOLO la sonda che presenta l'etichetta attesa (`label:<etichetta>`).
+
+function sondeProbe(vllog) {
+  try {
+    return fs.readFileSync(vllog, 'utf8').split('\n').filter((l) => l.startsWith('status '));
+  } catch (_) { return []; }
+}
+
+test('up vl.native con modello di cella: il probe porta --profile del lancio anche se selected.toml dice altro', async (t) => {
+  const w = mondo(t, { engineModel: 'work', selected: 'other' });
+  w.modo('label:work');
+  const fleet = await w.fleet();
+  const res = await fleet.up('CellaProva');
+  assert.equal(res.ok, true, 'la readiness passa con l\'etichetta del lancio');
+  const sonde = sondeProbe(w.vllog);
+  assert.ok(sonde.length >= 1, 'almeno una sonda di registrazione');
+  assert.ok(sonde.some((l) => l.includes('--profile work')),
+    `la sonda presenta l'etichetta del lancio: ${sonde.join(' | ')}`);
+  const ctx = host.leggiContesto(w.base());
+  assert.ok(ctx && !ctx.errore, 'contesto del lancio presente');
+  assert.equal(ctx.hostIdentity.state, 'live', 'identita registrata');
+});
+
+test('up vl.native con bridgeProfile: il probe riceve l\'etichetta del lancio (invariato)', async (t) => {
+  const w = mondo(t, { vlProfile: 'work', selected: 'other' });
+  w.modo('label:work');
+  const fleet = await w.fleet();
+  const res = await fleet.up('CellaProva');
+  assert.equal(res.ok, true);
+  assert.ok(sondeProbe(w.vllog).some((l) => l.includes('--profile work')));
+});
+
+test('VL_PEER_UNATTESTED porta nel corpo profile, profile_source e lo stato del peer', async (t) => {
+  const w = mondo(t, { engineModel: 'work', selected: 'other' });
+  w.modo('unverified');
+  const fleet = await w.fleet();
+  const err = await fleet.up('CellaProva').then(() => null, (e) => e);
+  assert.ok(err, 'up rifiutato');
+  assert.equal(err.fleetCode, 'VL_PEER_UNATTESTED');
+  assert.equal(err.data && err.data.motivo, 'identita');
+  assert.equal(err.data.profile, 'work', 'l\'etichetta usata dal probe e\' quella del lancio');
+  assert.equal(err.data.profileSource, 'explicit', 'l\'etichetta e\' stata portata come --profile');
+  assert.ok(err.data.peer && typeof err.data.peer === 'object', 'stato del peer nel corpo');
+  assert.equal(err.data.peer.state, 'unverified');
+  // bounded: schema e stato, mai la tuple
+  assert.deepEqual(Object.keys(err.data.peer).sort(), ['schemaVersion', 'state']);
+});
+
+test('up vl.native senza modello e senza -p: argv del probe invariato, nessun --profile', async (t) => {
+  const w = mondo(t);
+  w.modo('verified');
+  const fleet = await w.fleet();
+  const res = await fleet.up('CellaProva');
+  assert.equal(res.ok, true);
+  const sonde = sondeProbe(w.vllog);
+  assert.ok(sonde.length >= 1);
+  assert.ok(sonde.every((l) => !l.includes('--profile')),
+    `nessuna etichetta inventata senza un lancio che la dichiari: ${sonde.join(' | ')}`);
 });

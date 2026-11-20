@@ -18,6 +18,10 @@ const SESSIONE = 'cloud-CellaCtx';
 function mondo(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-ctx-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaCtx');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -163,8 +167,18 @@ test('contesto corrotto: il down rifiuta prima di qualunque effetto', async (t) 
   const record = JSON.parse(fs.readFileSync(w.recordLancio(), 'utf8'));
   assert.equal(record.incerto, true, 'record del lancio conservato e marcato incerto');
   assert.equal(record.family, 'vl', 'la famiglia del lancio resta quella registrata');
-  await assert.rejects(() => w.runtime.up('CellaCtx'), (e) => e.fleetCode === 'STOP_UNKNOWN',
-    'un nuovo avvio non riparte su stato indeterminato');
+  // S3: canale posseduto e sessione viva provata => duplicato vivo; senza
+  // presenza provata sarebbe STOP_UNKNOWN con la causa del contesto. In ogni
+  // caso: nessun nuovo lancio e invarianti conservate.
+  const prima = fs.readFileSync(w.recordLancio(), 'utf8');
+  await assert.rejects(() => w.runtime.up('CellaCtx'), (e) => e.status === 409
+    && (e.fleetCode === 'SESSION_DUPLICATE' || e.fleetCode === 'STOP_UNKNOWN'),
+    'un nuovo avvio non riparte su stato irrisolto');
+  assert.equal(fs.readFileSync(w.recordLancio(), 'utf8'), prima, 'record intatto');
+  assert.equal(fs.readFileSync(fileContesto, 'utf8'), '{nope', 'il contesto corrotto non viene sostituito');
+  const tmuxDopo = fs.readFileSync(w.tmuxLog, 'utf8');
+  assert.equal(tmuxDopo.includes('kill-session'), false, 'nessun kill-session dopo l up');
+  assert.equal(fs.readFileSync(w.vlLog, 'utf8').includes('shutdown'), false, 'nessuno shutdown dopo l up');
 });
 
 test('contesto di un altro lancio: stessa barriera, stesso rifiuto', async (t) => {

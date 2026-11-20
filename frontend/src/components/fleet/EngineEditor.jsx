@@ -358,6 +358,10 @@ export default function EngineEditor({ state, setState, busy, onSave, catalog, f
         <div className="nc-fleet-pair"><input value={f.vlProfile || ''} placeholder={t('fleet-vl-profile')} onChange={(e) => set({ vlProfile: e.target.value })} /><input value={f.effort || ''} placeholder={t('fleet-vl-effort')} onChange={(e) => set({ effort: e.target.value })} /></div>
         <small>{t('fleet-vl-fields-help')}</small>
       </>}
+      {/* qwen: nessun campo dedicato (0.9.83 = solo Qwen 0.x). I selettori della
+          generazione 1.0 (qwenBinary/qwenConfigDir) sono ritirati: il client
+          qualifica il `qwen` 0.x stabile del PATH e il backend rifiuta i due
+          campi in qualunque payload li porti ancora. */}
       <small>{t(f.client === 'shell' ? 'fleet-shell-engine-help' : 'fleet-managed-help')}</small>
     </> : <>
       <input value={f.command} placeholder={t('command-path')} onChange={(e) => set({ command: e.target.value })} />

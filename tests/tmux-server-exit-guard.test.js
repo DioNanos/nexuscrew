@@ -54,7 +54,7 @@ test('negativo vivo: un processo reale ancora visibile fallisce la verifica', as
   try {
     assert.throws(
       () => verificaUscitaServer(spawnSync, figlio.pid),
-      (e) => e.message.includes('ancora visibile') && e.message.includes(String(figlio.pid)),
+      (e) => e.message.includes('ancora vivo') && e.message.includes(String(figlio.pid)),
     );
   } finally {
     await fermaProcesso(figlio);
@@ -70,6 +70,27 @@ test('positivo: cleanup reale di un processo terminato passa la verifica', async
   } finally {
     await fermaProcesso(figlio);
   }
+});
+
+test('uno zombie SIGKILLato ha un tetto breve per la raccolta e poi passa se sparisce', () => {
+  const esiti = [
+    { status: 0, stdout: '424242 Z\n' },
+    { status: 1, stdout: '' },
+  ];
+  const spawnFinto = (cmd, args) => {
+    assert.equal(cmd, 'ps');
+    assert.deepEqual(args, ['-p', '424242', '-o', 'pid=,state=']);
+    return esiti.shift();
+  };
+  assert.equal(verificaUscitaServer(spawnFinto, 424242, { raccoltaTimeoutMs: 20, pollMs: 1 }), true);
+});
+
+test('uno zombie non raccolto entro il tetto resta un fallimento distinto', () => {
+  const spawnFinto = () => ({ status: 0, stdout: '424242 Zs\n' });
+  assert.throws(
+    () => verificaUscitaServer(spawnFinto, 424242, { raccoltaTimeoutMs: 5, pollMs: 1 }),
+    (e) => e.message.includes('ancora uno zombie') && e.message.includes('5 ms'),
+  );
 });
 
 test('ps senza verdetto (errore o timeout) non vale come assenza', () => {

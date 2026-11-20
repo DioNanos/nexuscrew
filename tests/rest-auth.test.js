@@ -45,4 +45,16 @@ test('createServer: /api/* gated, static libero', async (t) => {
   assert.equal(typeof cfg.port, 'number');
   assert.ok(typeof cfg.version === 'string' && cfg.version.length > 0);
   assert.ok(cfg.uiVersion === null || typeof cfg.uiVersion === 'string');
+
+  // GET /api/version deve rispondere JSON {name, version} dietro lo
+  // stesso auth delle altre /api — prima della rotta cadeva nel catch-all SPA
+  // rispondendo la pagina PWA.
+  assert.equal((await fetch(`${base}/api/version`)).status, 401);
+  const ver = await fetch(`${base}/api/version`, { headers: { authorization: `Bearer ${token}` } });
+  assert.equal(ver.status, 200);
+  assert.match(ver.headers.get('content-type') || '', /application\/json/);
+  const vj = await ver.json();
+  assert.deepEqual(Object.keys(vj).sort(), ['name', 'version']);
+  assert.equal(vj.name, require('../package.json').name);
+  assert.equal(vj.version, require('../package.json').version);
 });

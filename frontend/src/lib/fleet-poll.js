@@ -83,7 +83,12 @@ function startTrain(token, route) {
       // Esito superato (cleanup, giro nuovo partito): non si consegna.
       if (!guard.isCurrent(turno)) return;
       state.snapshot = { at: Date.now(), sessionsJson, sessionsError, fs, fleetError };
-      for (const consumer of state.consumers) consumer(state.snapshot);
+      // The errors of ONE consumer belong to that consumer: the train still
+      // delivers to the others. A consumer that throws does not stop the
+      // delivery of the shared read.
+      for (const consumer of state.consumers) {
+        try { consumer(state.snapshot); } catch { /* isolato: errore del consumer */ }
+      }
     } finally {
       guard.end(turno);
     }

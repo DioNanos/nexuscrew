@@ -23,7 +23,9 @@ function fixture(t, { version = '0.160.0', flag = true, platform = 'android', cl
   fs.writeFileSync(path.join(home, '.codex/config.toml'), '[mcp_servers.nexuscrew]\ncommand="node"\nargs=["nexuscrew", "mcp"]\nenv_vars=["EXISTING"]\n');
   const cell = { id: 'Reviewer', tmuxSession: 'demo-Reviewer' };
   const engine = { id: `${client}.native`, managed: { client, provider: 'native', model: '', permissionPolicy: 'standard' } };
-  const cfg = { home, platform, env: {}, nodeExecPath: process.execPath };
+  const filesRoot = path.join(home, 'NexusFiles');
+  fs.mkdirSync(filesRoot, { recursive: true });
+  const cfg = { home, platform, env: {}, nodeExecPath: process.execPath, filesRoot };
   return { home, binary, cell, cfg, resolve: () => resolveManagedEngine(engine, cell, cfg) };
 }
 test('a supported Termux Codex launch disables shared daemon reuse and passes dynamic MCP variable names', t => {

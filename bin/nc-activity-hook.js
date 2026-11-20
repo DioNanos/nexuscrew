@@ -2,7 +2,7 @@
 'use strict';
 // Hook OSSERVATIVO di attivita' per le celle Claude lanciate da NexusCrew.
 //
-// Contratto con il client, misurato nel Gate A su Claude Code 2.1.280:
+// Contratto con il client, misurato su Claude Code 2.1.280:
 //  - il payload dell'evento arriva su STDIN come JSON; da li' si leggono SOLO
 //    `session_id` e `notification_type`. Il resto — testo del prompt, percorsi
 //    della sessione — non viene letto e non finisce da nessuna parte.

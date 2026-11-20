@@ -219,7 +219,9 @@ test('delivery: UNKNOWN persistente -> skipped-unknown, MAI ready a timeout', as
     nowImpl: () => clock, sleepImpl: async (ms) => { clock += ms; },
   });
   assert.equal(r.state, 'skipped-unknown');
-  assert.equal(r.notReady, '');
+  // S6: alla scadenza il kind c'e' sempre; una superficie mai riconosciuta e'
+  // 'unknown', non l'assenza del campo.
+  assert.equal(r.notReady, 'unknown');
   assert.equal(calls.filter((c) => c.startsWith('paste-buffer')).length, 0);
   assert.ok(clock >= 1000, 'attesa bounded rispettata');
 });
@@ -536,6 +538,9 @@ switch (cmd) {
 function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, readyWaitMs = 30, mcp = undefined, cfgExtra = {}, generation = 0 }) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncpd-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
+  // I record di lancio del mondo restano dentro la root temporanea: mai nella
+  // home dell'operatore, nemmeno in una run manuale fuori dal gate.
+  const filesRoot = path.join(root, 'files');
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
   const binDir = path.join(home, '.local', 'bin'); fs.mkdirSync(binDir, { recursive: true });
   const binName = client === 'kimi' ? 'kimi' : 'claude';
@@ -570,7 +575,7 @@ function makeManagedWorld({ client, provider, delivery, env = {}, canon = null, 
   };
   const leaseManager = attestaProprietario({ track: async () => null }, () => ticket, { mcp, generation });
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env, ...cfgExtra },
+    cfg: { filesRoot, launchReadyMs: 40, bootstrapReadyWaitMs: readyWaitMs, sendKeysReadyMs: 10, env, ...cfgExtra },
     home, defsPath, tmuxBin, readonly: () => false, launchBroker, leaseManager,
     boot: loadDefinitions(defsPath),
   });
@@ -1177,7 +1182,11 @@ test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun ha
     command: '/bin/fake', args: [], env: {},
     promptOutcome: fxPromptOutcome(),
     supervise: {
-      enabled: true, initialReadyMs: 50, restartDelayMs: 50,
+      // La premessa del caso è «figlio uscito prima della ready gate»: con un
+      // gate da 50 ms un event loop saturo può ritardare la cattura dell'exit
+      // oltre la soglia e la gen0 viene classificata «vissuta» (rapid restart
+      // fino al tetto: launches 9+). Gate ampio = premessa sempre vera.
+      enabled: true, initialReadyMs: 10000, restartDelayMs: 50,
       maxRestartDelayMs: 100, resetAfterMs: 1000, rapidWindowMs: 1000, maxRapidRestarts: 8,
     },
     restartPrompt: {
@@ -1193,12 +1202,8 @@ test('cell-exec R8: child early-exit prima di readyMs -> main termina, nessun ha
         launches += 1;
         const child = new EventEmitter(); child.kill = () => {};
         // Early exit prima della ready gate: consegna l'exit al microtask
-        // successivo, non a un timer. La soglia da battere e' runtimeMs <
-        // initialReadyMs (50ms), misurata col cronometro dentro il supervisor
-        // (cell-exec.js:401): un setTimeout(10) contro 50ms e' una corsa di
-        // scheduling che un event loop saturo perdeva nel gate. Il microtask
-        // parte DOPO la registrazione sincrona dei listener di waitChild e
-        // PRIMA di qualunque timer: runtimeMs ~ 0 per costruzione, ogni load.
+        // successivo, non a un timer. Il gate ampio sopra mantiene vera la
+        // premessa anche quando la cattura dell'exit viene ritardata dal load.
         queueMicrotask(() => child.emit('exit', 1, null));
         return child;
       },
@@ -1879,7 +1884,9 @@ test('canale terminale: enum chiuso, round-trip per ogni ragione, id lancio osti
   fs.mkdirSync(dir, { recursive: true });
   try {
     assert.deepEqual([...activityFiles.RAGIONI_TERMINALI],
-      ['restart-budget-exhausted', 'uncertain-delivery', 'lease-lost', 'spawn-error', 'operator-stop'],
+      ['restart-budget-exhausted', 'uncertain-delivery', 'lease-lost', 'spawn-error', 'operator-stop',
+        // S2 (NC 0.9.83): stop correlato del rollback della readiness VL.
+        'readiness-rollback'],
       'enum chiuso, nessuna aggiunta libera');
     for (const reason of activityFiles.RAGIONI_TERMINALI) {
       const id = reason.slice(0, 16).padEnd(16, 'x');

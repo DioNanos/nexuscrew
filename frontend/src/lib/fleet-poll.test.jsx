@@ -172,3 +172,24 @@ describe('cadenza adattiva: la finestra in secondo piano non genera traffico', (
     setVis('visible');
   });
 });
+
+// R2: l'errore di UN consumer non ferma la consegna dello
+// snapshot condiviso agli altri.
+describe('un consumer che lancia non ferma la consegna agli altri', () => {
+  it('gli ALTRI consumer ricevono lo snapshot dello stesso giro', async () => {
+    const buoni = [];
+    let lanci = 0;
+    const offCattivo = subscribeFleetRoute('t', [], () => { lanci += 1; throw new Error('consumer rotto'); });
+    const offBuono = subscribeFleetRoute('t', [], (s) => buoni.push(s));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lanci).toBeGreaterThanOrEqual(1);
+    expect(buoni.length).toBeGreaterThanOrEqual(1);
+    expect(buoni[buoni.length - 1].fs).toBeTruthy();
+    // Il giro successivo (kick esplicito) consegna ancora a tutti.
+    refreshFleetRoute([], 't');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lanci).toBeGreaterThanOrEqual(2);
+    expect(buoni.length).toBeGreaterThanOrEqual(2);
+    offCattivo(); offBuono();
+  });
+});

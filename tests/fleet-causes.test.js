@@ -380,6 +380,9 @@ switch (cmd) {
 function makeWorld(over = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nccauses-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
+  // I record di lancio del mondo restano dentro la root temporanea: mai nella
+  // home dell'operatore, nemmeno in una run manuale fuori dal gate.
+  const filesRoot = path.join(root, 'files');
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
   fs.mkdirSync(path.join(home, 'bin'), { recursive: true });
   const command = path.join(home, 'bin', 'client');
@@ -394,7 +397,7 @@ function makeWorld(over = {}) {
   const boot = loadDefinitions(defsPath);
   const launchBroker = over.broker || { issue: async () => ({ socketPath: '/x', nonce: 'n'.repeat(64) }), close: async () => {} };
   const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: over.launchReadyMs != null ? over.launchReadyMs : 40 },
+    cfg: { filesRoot, launchReadyMs: over.launchReadyMs != null ? over.launchReadyMs : 40 },
     home, defsPath, tmuxBin, readonly: () => false, launchBroker, boot,
   });
   return { runtime, root, home, cwd, command, defsPath, tmuxBin, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };

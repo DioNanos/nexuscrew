@@ -170,7 +170,7 @@ if (cmd(args) === 'kill-session') {
 if (cmd(args) === 'has-session') {
   const bersaglio = args[args.length - 1];
   nota('has-session:' + bersaglio);
-  if (leggi().some((x) => x.id === bersaglio)) process.exit(0);
+  if (leggi().some((x) => x.id === bersaglio || x.nome === bersaglio)) process.exit(0);
   process.stderr.write('can\\'t find session: ' + bersaglio + '\\n');
   process.exit(1);
 }
@@ -303,7 +303,10 @@ test('stop con /proc affollato e nessuna prova di uscita: stop-unknown, record i
   const record = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(record.stato, 'presente');
   assert.equal(record.record.incerto, true);
-  await assert.rejects(() => w.runtime.up(CELLA), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+  const errUp = await w.runtime.up(CELLA).then(() => null, (e) => e);
+  assert.ok(errUp, 'un censimento incompleto non apre un nuovo lancio');
+  assert.equal(errUp.fleetCode, 'STOP_UNKNOWN');
+  assert.ok(errUp.data && errUp.data.prove, 'il rifiuto porta le prove del blocco reale');
   assert.equal(w.log().filter((r) => r.startsWith('kill-session:')).length, 0,
     'nessun comando di teardown senza esito dichiarabile');
 });

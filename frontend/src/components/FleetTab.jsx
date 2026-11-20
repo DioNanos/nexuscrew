@@ -356,7 +356,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         : <>{locationPicker}<div className="nc-set-info">{err ? t('fleet-editor-load-error') : t('fleet-editor-unavailable')}{!err && status.reason ? ` ${status.reason}` : ''}</div></>}
       {err && <div className="nc-err">{err}</div>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
-      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { refresh(); } }} onClose={() => setPowerCell(null)} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />}
     </div>
   );
   return (
@@ -454,7 +454,7 @@ export default function FleetTab({ token, readonly, targets = [], startNewCell =
         </div>
       </FleetModal>}
       {importEdit && <FleetModal onClose={() => setImportEdit(null)} label={t('import-as-cell')} error={err}><ImportEditor token={token} route={importEdit.route || route} state={importEdit} setState={setImportEdit} busy={busy} onSave={doImport} /></FleetModal>}
-      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={async (p) => { try { await onFleetConfirm(p); } finally { refresh(); } }} onClose={() => setPowerCell(null)} />}
+      {powerCell && <PowerSheet cell={powerCell} token={token} route={Array.isArray(powerCell.route) ? powerCell.route : route} onConfirm={onFleetConfirm} onClose={() => setPowerCell(null)} />}
     </div>
   );
 }

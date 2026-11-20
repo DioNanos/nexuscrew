@@ -85,11 +85,13 @@ beforeEach(() => {
 });
 
 describe('power sheet outcomes', () => {
-  it('ok: il foglio si chiude e resta chiuso, senza notice', async () => {
+  it('ok: il foglio si chiude e resta chiuso, con la notice di successo', async () => {
     const { user, submit } = await apriFoglioOffCell();
     await user.click(submit);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'save and start' })).toBeNull());
-    expect(document.querySelector('.nc-notice')).toBeNull();
+    // A normal success has a visible outcome: "started" is no longer
+    // indistinguishable from "nothing happened".
+    expect(document.querySelector('.nc-notice').textContent).toBe('cell started');
     expect(fleetUp).toHaveBeenCalledWith('test-token', expect.objectContaining({ cell: 'Off Cell' }), []);
   });
 

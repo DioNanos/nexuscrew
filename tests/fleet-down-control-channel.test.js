@@ -161,7 +161,21 @@ test('canale morto prima del down: 409 onesto, zero kill, record trattenuto', as
   const runtime = w.runtimeDi();
   await runtime.up('CellaCC');
   fs.writeFileSync(w.muori, '1');
-  await dormi(120); // il server di prova sparisce: EOF sul canale
+  // Il server di prova sparisce al SUO tick (setInterval 25 ms): la premessa
+  // «EOF PRIMA del down» non si affida a un tempo fisso ma a un segnale già
+  // esposto dal runtime. launchState riporta la classificazione del lancio, e
+  // il valutatore la dice «live» finché il canale di controllo posseduto è
+  // vivo: quando la classificazione cambia, il runtime ha GIÀ visto la
+  // perdita del canale e il down parte davvero dopo l'EOF.
+  const fineAttesa = Date.now() + 5000;
+  for (;;) {
+    const stato = await runtime.launchState('CellaCC');
+    if (stato.classification !== 'live') break;
+    if (Date.now() > fineAttesa) {
+      throw new Error('il runtime non ha osservato la perdita del canale entro 5 s');
+    }
+    await dormi(15);
+  }
   await assert.rejects(() => runtime.down('CellaCC'),
     (e) => e.status === 409 && e.fleetCode === 'IDENTITY_UNVERIFIED',
     'nessuna continuita\' dimostrabile: il down non agisce');

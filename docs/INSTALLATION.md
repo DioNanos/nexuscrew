@@ -45,10 +45,13 @@ NexusCrew installs a per-user LaunchAgent. It does not require a system daemon.
 
 ```bash
 pkg update
-pkg install nodejs-lts tmux openssh
+pkg install nodejs-lts tmux openssh util-linux
 npm install -g @mmmbuto/nexuscrew
 nexuscrew
 ```
+
+`util-linux` provides the `flock` binary alongside `node` required by the Termux
+service guard.
 
 Optional boot persistence uses the Termux:Boot app. Install and open that app
 once before enabling boot from NexusCrew.

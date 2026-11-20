@@ -11,6 +11,7 @@ const { createServer } = require('../lib/server.js');
 const nodesStore = require('../lib/nodes/store.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { createIdentityAuthority } = require('../lib/fleet/identity-authority.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 
 test('server reale: lease introspect live espone il nodeId del node store', async (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-lease-server-node-'));
@@ -45,6 +46,7 @@ test('server reale: lease introspect live espone il nodeId del node store', asyn
     launchGrant: grant.grant, challenge: challenge.challenge,
   });
 
+  const catalog = catalogFixture([{ id: 'Dev' }]);
   const { server, token, watcher } = createServer({ protectSharedTmuxServer: false,
     home,
     configPath: path.join(configDir, 'config.json'),
@@ -59,6 +61,7 @@ test('server reale: lease introspect live espone il nodeId del node store', asyn
       provider: 'seam',
       lease: manager,
       identityAuthority: authority,
+      leaseCellCatalog: catalog.leaseCellCatalog,
       isCellSession: (session) => session === 'cloud-Dev',
       capabilities: () => [],
       status: async () => ({ available: true, cells: [] }),
@@ -69,6 +72,7 @@ test('server reale: lease introspect live espone il nodeId del node store', asyn
     await new Promise((resolve) => server.close(resolve));
     if (watcher) watcher.close();
     try { manager.close(); } catch (_) {}
+    catalog.cleanup();
     fs.rmSync(home, { recursive: true, force: true });
   });
 

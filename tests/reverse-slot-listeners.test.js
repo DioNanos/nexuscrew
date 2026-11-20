@@ -2,6 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const net = require('node:net');
+const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -194,4 +195,167 @@ test('reverse slot: il router reale del server porta un upgrade federato a 101',
   const rejected = await rawUpgrade(slot.localPort, '/federation/route/_/ws', { authorization: 'Bearer non-un-peer' });
   assert.ok(!/^HTTP\/1\.1 (101|200) /.test(rejected), 'credenziale ignota: niente 101 e niente 200');
   assert.ok(!/<html/i.test(rejected), 'nessuna SPA su credenziale ignota');
+});
+
+test('reverse slot listeners: closeAll awaits in-flight closePort and propagates close errors', async () => {
+  const app = express();
+  let releaseClose = null;
+  let injectedCloseErr = null;
+  let forcedCalls = 0;
+  const slots = createReverseSlotListeners({
+    app,
+    attachUpgrade: noopUpgrade,
+    createServerImpl: (reqApp) => {
+      const srv = http.createServer(reqApp);
+      const origClose = srv.close.bind(srv);
+      srv.close = (cb) => {
+        if (releaseClose === 'pending') {
+          releaseClose = () => origClose((err) => cb && cb(injectedCloseErr || err));
+          return srv;
+        }
+        return origClose((err) => cb && cb(injectedCloseErr || err));
+      };
+      const origForce = srv.closeAllConnections.bind(srv);
+      srv.closeAllConnections = () => {
+        forcedCalls += 1;
+        return origForce();
+      };
+      return srv;
+    },
+  });
+
+  releaseClose = 'pending';
+  injectedCloseErr = new Error('slot close failed');
+  const slot = await slots.open({
+    nodeName: 'hub', generation: 1, instanceId: 'e'.repeat(32), secret: 's', remotePort: 44501,
+  });
+
+  const inFlightP = slots.closePort(slot.localPort);
+  let closeAllResolved = false;
+  const closeAllP = slots.closeAll().then((res) => {
+    closeAllResolved = true;
+    return res;
+  });
+
+  await new Promise((r) => setTimeout(r, 25));
+  assert.equal(closeAllResolved, false, 'closeAll must wait for in-flight closePort');
+  assert.equal(slots.forceCloseAllConnections(), 1);
+  assert.equal(forcedCalls, 1);
+
+  releaseClose();
+  assert.equal(await inFlightP, true);
+  const summary = await closeAllP;
+  assert.equal(summary.hadError, true);
+  assert.equal(summary.errorCount, 1);
+
+  // Subsequent closeAll still reports persistent close errors even after map drains
+  const repeatSummary = await slots.closeAll();
+  assert.equal(repeatSummary.hadError, true);
+  assert.ok(repeatSummary.errorCount >= 1);
+});
+
+test('closeAll waits for in-flight open calls and closes newly registered listeners', async () => {
+  // Case 1: in-flight open completes cleanly after closeAll starts
+  {
+    const { EventEmitter } = require('node:events');
+    let releaseListen = null;
+    let fakeClosed = false;
+    const slots = createReverseSlotListeners({
+      app: (_req, res) => res.end('ok'),
+      attachUpgrade: noopUpgrade,
+      createServerImpl: () => {
+        const em = new EventEmitter();
+        let addr = null;
+        em.listen = () => {
+          new Promise((resolve) => { releaseListen = resolve; }).then(() => {
+            addr = { host: '127.0.0.1', port: 45123 };
+            em.emit('listening');
+          });
+        };
+        em.address = () => addr;
+        em.closeIdleConnections = () => {};
+        em.closeAllConnections = () => {};
+        em.close = (cb) => {
+          fakeClosed = true;
+          if (cb) setImmediate(() => cb(null));
+        };
+        return em;
+      },
+    });
+
+    const openP = slots.open({
+      nodeName: 'peer-inflight',
+      remotePort: 44711,
+      generation: 1,
+      instanceId: 'e'.repeat(32),
+      secret: 'secret',
+    });
+    assert.equal(slots.size(), 0);
+    assert.equal(slots.getAckState().inFlightOpens, 1);
+
+    let closeAllDone = false;
+    const closeAllP = slots.closeAll().then((res) => {
+      closeAllDone = true;
+      return res;
+    });
+
+    await new Promise((r) => setImmediate(r));
+    assert.equal(closeAllDone, false, 'closeAll must not settle while open is in flight');
+    assert.ok(typeof releaseListen === 'function');
+
+    releaseListen();
+    const opened = await openP;
+    assert.equal(opened.localPort, 45123);
+    const summary = await closeAllP;
+    assert.equal(fakeClosed, true);
+    assert.equal(summary.hadError, false);
+    assert.equal(summary.errorCount, 0);
+    assert.equal(slots.size(), 0);
+    assert.equal(slots.getAckState().inFlightOpens, 0);
+    assert.equal(slots.getAckState().openListeners, 0);
+  }
+
+  // Case 2: listener from in-flight open fails during closeAll and preserves persistent error
+  {
+    const { EventEmitter } = require('node:events');
+    let releaseListen = null;
+    const slots = createReverseSlotListeners({
+      app: (_req, res) => res.end('ok'),
+      attachUpgrade: noopUpgrade,
+      createServerImpl: () => {
+        const em = new EventEmitter();
+        let addr = null;
+        em.listen = () => {
+          new Promise((resolve) => { releaseListen = resolve; }).then(() => {
+            addr = { host: '127.0.0.1', port: 45124 };
+            em.emit('listening');
+          });
+        };
+        em.address = () => addr;
+        em.closeIdleConnections = () => {};
+        em.closeAllConnections = () => {};
+        em.close = (cb) => {
+          if (cb) setImmediate(() => cb(new Error('late reverse close error')));
+        };
+        return em;
+      },
+    });
+
+    const openP = slots.open({
+      nodeName: 'peer-err',
+      remotePort: 44712,
+      generation: 1,
+      instanceId: 'f'.repeat(32),
+      secret: 'secret',
+    });
+    const closeAllP = slots.closeAll();
+    await new Promise((r) => setImmediate(r));
+    releaseListen();
+    await openP;
+    const summary = await closeAllP;
+    assert.equal(summary.hadError, true);
+    assert.equal(summary.errorCount, 1);
+    assert.equal(slots.getAckState().hadError, true);
+    assert.equal(slots.size(), 0);
+  }
 });

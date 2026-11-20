@@ -1503,7 +1503,6 @@ export default function App() {
         : (payload.boot ? false : !!powerCell.boot);
       setBootSettlement({ id: ++bootSettlementSeq.current, cell, route, enabled });
     }
-    refreshFleetRoute(route, token);
   };
   const onBootSettlementApplied = useCallback((id) => {
     setBootSettlement((current) => (current?.id === id ? null : current));

@@ -311,7 +311,7 @@ test('npm update runner: il riavvio PORTATILE ferma i tunnel, come quello manual
       portAvailable: async () => true,
     },
     stopTunnelsImpl: (o) => { fermati.push(o); },
-    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+    pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null, inspectPidfile: () => ({ state: 'absent' }) },
     waitForRuntimeImpl: async () => true,
   });
 
@@ -342,7 +342,7 @@ test('npm update runner: se fermare i tunnel fallisce, l\'aggiornamento prosegue
         portAvailable: async () => true,
       },
       stopTunnelsImpl: () => { throw new Error('ssh non raggiungibile'); },
-      pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null },
+      pidfile: { defaultPidfilePath: () => path.join(dir, 'x.pid'), readPidfile: () => null, inspectPidfile: () => ({ state: 'absent' }) },
       waitForRuntimeImpl: async () => true,
     });
   } finally {
@@ -512,7 +512,7 @@ test('npm update runner: un pidfile senza attestazione DOPO la migrazione fa fal
     },
     stopTunnelsImpl: () => {},
     waitForRuntimeImpl: async () => true,
-  }), /restart portatile fallito/, 'dopo la migrazione, un pidfile senza attestazione torna a bloccare l\'update — sospetto, non più pre-migrazione');
+  }), /portable restart failed/, 'dopo la migrazione, un pidfile senza attestazione torna a bloccare l\'update — sospetto, non più pre-migrazione');
   assert.equal(pidf.pidOwnership(child.pid), 'owned', 'il processo legittimo non è stato toccato: il rifiuto non tocca il pidfile né il pid');
 });
 

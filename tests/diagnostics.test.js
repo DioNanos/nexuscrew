@@ -127,3 +127,45 @@ test('fleet diagnostics emits sanitized CELL_SPAWN_FAILED without raw error', as
   assert.equal(JSON.stringify(records).includes('SECRET'), false);
   assert.equal(JSON.stringify(records).includes('/home/alice'), false);
 });
+
+test('diagnostics: meta allowlist dell\'arresto ordinato accetta solo booleani/interi non negativi e scarta stringhe/negativi', () => {
+  const diagnostics = createDiagnostics();
+  diagnostics.setVerbose(true, 300);
+  diagnostics.record('info', 'server', 'SERVER_SHUTDOWN_ORDERED', 'Ordered server shutdown', {
+    skipped: false,
+    residues: 2,
+    elapsedMs: 42,
+    budgetMs: 1500,
+    timedOut: true,
+    activeOps: 1,
+    activeClaims: 3,
+    quiescent: false,
+    reason: 'sigterm',
+  });
+  diagnostics.record('warn', 'server', 'SERVER_SHUTDOWN_ORDERED', 'Invalid meta rejected', {
+    skipped: '/tmp/secret-path',
+    residues: -1,
+    elapsedMs: 12.5,
+    budgetMs: Number.NaN,
+    timedOut: 'yes',
+    activeOps: -3,
+    activeClaims: { leaked: true },
+    quiescent: 1,
+    secret: 'must-drop',
+    path: '/home/user/secret',
+  });
+  const records = diagnostics.logs().records.filter((r) => r.code === 'SERVER_SHUTDOWN_ORDERED');
+  assert.equal(records.length, 2);
+  assert.deepEqual(records[0].meta, {
+    skipped: false,
+    residues: 2,
+    elapsedMs: 42,
+    budgetMs: 1500,
+    timedOut: true,
+    activeOps: 1,
+    activeClaims: 3,
+    quiescent: false,
+    reason: 'sigterm',
+  });
+  assert.deepEqual(records[1].meta, {});
+});

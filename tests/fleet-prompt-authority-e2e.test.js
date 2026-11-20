@@ -247,6 +247,12 @@ async function finche(fn, { timeoutMs = 8000, passoMs = 10 } = {}) {
   }
 }
 
+async function chiediProc(proc, eventi, cmd, ev, timeoutMs = 8000) {
+  const n = eventi.length;
+  proc.stdin.write(`${cmd}\n`);
+  return finche(() => eventi.slice(n).find((e) => e.ev === ev), { timeoutMs });
+}
+
 async function avviaSupervisore(w, leaseHome) {
   const clock = { t: 10_000 };
   let mgr = createLeaseManager({ home: leaseHome, log: () => {} }, { now: () => Date.now() });
@@ -269,12 +275,13 @@ async function avviaSupervisore(w, leaseHome) {
   const stato = {
     logB: [], mgr, info, proc, eventi, launchId, logPath, clock,
     comando: (c) => proc.stdin.write(`${c}\n`),
+    chiedi: (cmd, ev, timeoutMs = 8000) => chiediProc(proc, eventi, cmd, ev, timeoutMs),
     consegne: () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length,
     riavviaDaemon: async () => {
+      // Trattiene il reconnect del supervisore PRIMA di chiudere A: la lettura
+      // iniziale su mgrB ('none'/'unknown') non gareggia piu' con RECONNECT_RETRY_MS.
+      assert.ok(await chiediProc(proc, eventi, 'hold-reconnect', 'reconnect-held'), 'reconnect trattenuto');
       mgr.close();
-      // Il demone B nasce DOPO che il supervisore ha visto la chiusura e ha
-      // fatto il suo primo tentativo a vuoto: il reconnect arriva alla cadenza
-      // del client, come in un restart vero (il client riprova ogni 20 s).
       await new Promise((r) => setTimeout(r, 400));
       mgr = createLeaseManager({ home: leaseHome, log: (m) => stato.logB.push(`${Date.now() % 100000} ${String(m).slice(0, 80)}`) }, { now: () => Date.now() });
       stato.mgr = mgr;
@@ -346,7 +353,8 @@ test('E2E restart del demone: prima della nuova fotografia unknown, dopo il recu
     assert.deepEqual(prima, { state: 'unknown', launchId: sup.launchId }, 'senza prova: unknown, niente terminale vecchio');
     // il storico resta leggibile come storia
     assert.equal(leggiRecordPrompt(w.dirSessione, sup.launchId).state, 'submitted');
-    // il supervisore si riconnette con le prove gia' previste
+    // il supervisore si riconnette con le prove gia' previste quando il test rilascia il cancello
+    assert.ok(await sup.chiedi('release-reconnect', 'reconnect-released'), 'reconnect rilasciato');
     const trans = []; const t0 = Date.now();
     assert.ok(await finche(() => { const st = mgrB.status(CELLA).state; if (trans[trans.length - 1] !== st) trans.push(`${Date.now() - t0}:${st}`); return st === 'live'; }, { timeoutMs: 45000, passoMs: 50 }), `reconnect vero: ${JSON.stringify(sup.logB.slice(0, 6))} ${JSON.stringify(trans)}`);
     const dopo = (await rtB.status({})).cells[0].promptDelivery;
@@ -366,11 +374,7 @@ function processoFiglio(script, arg) {
   const eventi = leggiEventi(proc);
   return {
     proc, eventi,
-    chiedi: async (cmd, ev, timeoutMs = 8000) => {
-      const n = eventi.length;
-      proc.stdin.write(`${cmd}\n`);
-      return finche(() => eventi.slice(n).find((e) => e.ev === ev), { timeoutMs });
-    },
+    chiedi: (cmd, ev, timeoutMs = 8000) => chiediProc(proc, eventi, cmd, ev, timeoutMs),
     chiudi: () => { try { proc.stdin.write('quit\n'); } catch (_) {} try { proc.kill('SIGKILL'); } catch (_) {} },
   };
 }
@@ -393,15 +397,19 @@ test('E2E demone B in un processo NUOVO: unknown, poi la stessa tupla dal superv
       port: ascolto.port, cellId: CELLA, stablePath: ascolto.stablePath, launchEpoch: ascolto.launchEpoch,
       dir: w.dirSessione, launchId, logPath,
     })], { stdio: ['pipe', 'pipe', 'inherit'] });
-    leggiEventi(sup);
+    const supEventi = leggiEventi(sup);
     assert.ok(await finche(() => leggiRecordPrompt(w.dirSessione, launchId)
       && leggiRecordPrompt(w.dirSessione, launchId).state === 'submitted'), 'terminale gen0 su disco');
     const stA = await finche(async () => { const s = await A.chiedi('status', 'status'); return s && s.lease === 'live' && s.promptDelivery ? s : null; });
     assert.equal(stA.promptDelivery.state, 'submitted');
     assert.equal(stA.promptDelivery.generation, 0);
+    // Trattiene la riconnessione PRIMA del kill di A: l'ordine «B legge none/unknown,
+    // poi il supervisore si riconnette» non dipende dal ritardo di boot di B.
+    assert.ok(await chiediProc(sup, supEventi, 'hold-reconnect', 'reconnect-held'), 'reconnect trattenuto');
     // il demone A muore (SIGKILL): supervisore e file restano
+    const aUscito = new Promise((resolve) => A.proc.once('exit', resolve));
     A.proc.kill('SIGKILL');
-    await new Promise((r) => setTimeout(r, 400));
+    await aUscito;
     B = processoFiglio(DAEMON, { ...baseArg, role: 'B' });
     assert.ok(await finche(() => B.eventi.find((e) => e.ev === 'booted')), 'demone B avviato su un processo nuovo');
     const prima = await B.chiedi('status', 'status');
@@ -409,6 +417,7 @@ test('E2E demone B in un processo NUOVO: unknown, poi la stessa tupla dal superv
     assert.deepEqual(prima.promptDelivery, { state: 'unknown', launchId }, 'senza prova: unknown, mai il terminale vecchio');
     assert.equal(leggiRecordPrompt(w.dirSessione, launchId).state, 'submitted', 'la storia resta leggibile');
     // il supervisore si riconnette a B con le prove gia' previste
+    assert.ok(await chiediProc(sup, supEventi, 'release-reconnect', 'reconnect-released'), 'reconnect rilasciato');
     const dopo = await finche(async () => {
       const s = await B.chiedi('status', 'status');
       return s && s.lease === 'live' && s.promptDelivery && s.promptDelivery.state === 'submitted' ? s : null;

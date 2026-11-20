@@ -1842,3 +1842,19 @@ test('nc_ask preserves additive fan-out alert outcomes and legacy askId and note
   const result = JSON.parse(out.lines[0].result.content[0].text);
   assert.equal(result.askId, 'abcdef01'); assert.match(result.note, /incollat/); assert.deepEqual(result.fanout, fanout);
 });
+
+test('nc_ask carries fanoutDiscovery only for the declared timeout value', async () => {
+  const { srv, out } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cell-b' }, responder: () => ({ status: 201, json: { id: 'abcdef01', fanoutDiscovery: 'timeout' } }) });
+  await srv.handleLine(rpc(171, 'tools/call', { name: 'nc_ask', arguments: { question: 'continue?' } }));
+  const result = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(result.askId, 'abcdef01');
+  assert.equal(result.fanoutDiscovery, 'timeout', 'a discovery over the cap is visible to the MCP caller too');
+  assert.equal(result.fanout, undefined);
+});
+
+test('nc_ask: an unknown discovery value never enters the result', async () => {
+  const { srv, out } = makeSrv({ env: { NEXUSCREW_MCP_SESSION: 'cell-b' }, responder: () => ({ status: 201, json: { id: 'abcdef01', fanoutDiscovery: 'expired' } }) });
+  await srv.handleLine(rpc(172, 'tools/call', { name: 'nc_ask', arguments: { question: 'continue?' } }));
+  const result = JSON.parse(out.lines[0].result.content[0].text);
+  assert.equal(result.fanoutDiscovery, undefined);
+});

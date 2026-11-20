@@ -48,6 +48,16 @@ const frameErr = (n, testo) => scrivi('%begin 1 ' + n + ' 1\\n' + testo + '\\n%e
 // si aspetta: cosi' un ordine sbagliato si vede subito.
 if (cfg.modo === 'muto') { setTimeout(() => {}, 60000); }
 else if (cfg.modo === 'eof') { frameOk(0, String(cfg.pid)); process.exit(0); }
+else if (cfg.modo === 'troncato') {
+  frameOk(0, String(cfg.pid));
+  frameOk(1, '');
+  // Frame oltre il cap (righe brevi, totale oltre CAP_FRAME): incompleto, poi
+  // il client esce.
+  let corpo = '%begin 1 2 1\\n';
+  for (let k = 0; k < 2000; k += 1) corpo += 'y'.repeat(50) + '\\n';
+  scrivi(corpo + '%end 1 2 1\\n');
+  setTimeout(() => process.exit(0), 100);
+}
 else {
   frameOk(0, String(cfg.pid));
   let n = 1;
@@ -392,4 +402,81 @@ test('id non valido o assente: nessun client', async (t) => {
     assert.equal(r.attestato, false, `id ${String(sessionId)}`);
   }
   assert.deepEqual(finto.invocazioni(), []);
+});
+
+// --- voce 17: incarnazione viva all'apertura, morta all'EOF ----------------
+// Il client esce prima di completare i frame: al posto di un `eof` la prova che
+// serve e' la MORTE dell'incarnazione, ripetuta UNA volta dopo l'EOF con la
+// stessa regola gia' usata in apertura. Pid sparito = quel server non esiste
+// piu', quindi la sua sessione nemmeno.
+test('voce 17: incarnazione morta dopo l\'EOF del client: attesta la morte, non un eof', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'eof' });
+  const socket = await socketInAscolto(t);
+  let letture = 0;
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin,
+    leggiIdentitaProc: () => {
+      letture += 1;
+      return letture === 1
+        ? { esito: 'presente', nascita: NASCITA }
+        : { esito: 'assente', nascita: null };
+    },
+  }));
+  assert.equal(r.attestato, true, JSON.stringify(r));
+  assert.equal(r.motivo, 'incarnazione-morta');
+  assert.ok(letture >= 2, 'la prova e\' stata ripetuta dopo l\'EOF');
+});
+
+test('voce 17: incarnazione ancora viva dopo l\'EOF: resta un eof, nessuna attestazione', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'eof' });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin,
+    leggiIdentitaProc: () => ({ esito: 'presente', nascita: NASCITA }),
+  }));
+  assert.equal(r.attestato, false, JSON.stringify(r));
+  assert.equal(r.motivo, 'eof');
+});
+
+// Il client di attestazione scrive i tre frame e termina subito. Il listener
+// su 'exit' dichiara EOF appena il processo esce, e i byte gia' scritti ma non
+// ancora consegnati al lettore si perdono: l'esito diventa `eof` con la
+// risposta completa gia' nel tubo. Con 'close' le stdio sono chiuse PRIMA
+// della dichiarazione, quindi l'ordine e' garantito. Questo test misura quale
+// dei due accade: se resta verde anche con 'exit', il cambio non serve.
+test('voce 17: frame completi e uscita immediata del client — il verdetto non si perde', async (t) => {
+  const elenco = Array.from({ length: 4000 }, (_, i) => ['$', 1000 + i].join(''));
+  const finto = tmuxFinto(t, { modo: 'errore', elenco });
+  const socket = await socketInAscolto(t);
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, { bin: finto.bin }));
+  assert.equal(r.attestato, true, `esito non attestato: ${JSON.stringify(r)}`);
+  assert.equal(r.motivo, 'enumerazione');
+});
+
+// R3: la rilettura dell'incarnazione segue SOLO l'evento che chiude
+// l'operazione. Un exit tardivo non aggiunge letture.
+test('R3: frame troncato e poi exit — una sola rilettura', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'troncato' });
+  const socket = await socketInAscolto(t);
+  let letture = 0;
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin, deadlineAt: Date.now() + 4000,
+    leggiIdentitaProc: () => { letture += 1; return { esito: 'presente', nascita: NASCITA }; },
+  }));
+  assert.equal(r.motivo, 'troncato', JSON.stringify(r));
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(letture, 2, 'apertura + UNA rilettura; l exit tardivo non rilegge');
+});
+
+test('R3: timeout e poi exit — zero riletture', async (t) => {
+  const finto = tmuxFinto(t, { modo: 'muto' });
+  const socket = await socketInAscolto(t);
+  let letture = 0;
+  const r = await tmuxControl.attestaAssenzaNuovaConnessione(base(socket, {
+    bin: finto.bin, deadlineAt: Date.now() + 400,
+    leggiIdentitaProc: () => { letture += 1; return { esito: 'presente', nascita: NASCITA }; },
+  }));
+  assert.equal(r.motivo, 'timeout', JSON.stringify(r));
+  await new Promise((res) => setTimeout(res, 250));
+  assert.equal(letture, 1, 'solo la lettura di apertura');
 });

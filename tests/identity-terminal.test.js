@@ -20,6 +20,7 @@ const { requireToken } = require('../lib/auth/middleware.js');
 const { liveHostRoutes } = require('../lib/live-host/routes.js');
 const { createLiveHostStore } = require('../lib/live-host/store.js');
 const { createLiveBridge } = require('../lib/live-host/bridge.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 
 const SKIP_TERMINAL = 'richiede TUI/daemon/app-server (coperti fuori da questa suite)';
 
@@ -78,6 +79,8 @@ async function makeMcpHub(t) {
   t.after(() => mgr.close());
   await mgr.track(CELL);
   const notifies = [];
+  const catalog = catalogFixture([{ id: CELL }]);
+  t.after(() => catalog.cleanup());
   const fleetP = Promise.resolve({
     available: true,
     lease: {
@@ -86,6 +89,7 @@ async function makeMcpHub(t) {
       childRecovery: (...a) => mgr.childRecovery(...a),
       childIntrospect: (...a) => mgr.childIntrospect(...a),
     },
+    leaseCellCatalog: catalog.leaseCellCatalog,
   });
   const app = express();
   app.use('/api', notifyRoutes({

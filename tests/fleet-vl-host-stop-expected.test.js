@@ -52,6 +52,10 @@ const attendiVivo = async (figlio) => {
 function mondo(t, extraCfg = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-host-stop-expected-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaExp');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -350,13 +354,23 @@ for (const [modo, codice] of RIFIUTI) {
     assert.ok(ctx && !ctx.errore && ctx.hostIdentity.state === 'live',
       'il contesto resta con la tuple registrata');
 
-    // Il lancio non si chiude su un rifiuto protetto: il up resta bloccato
-    // (STOP_UNKNOWN, come ogni down incompleto) e nessun comando nuovo parte.
-    await assert.rejects(() => fleet.up('CellaExp'), (e) => e.fleetCode === 'STOP_UNKNOWN',
+    // Il lancio non si chiude su un rifiuto protetto: il up resta bloccato e
+    // nessun comando nuovo parte. Con canale posseduto e presenza viva PROVATA
+    // il rifiuto è il duplicato vivo (SESSION_DUPLICATE); senza prova sarebbe
+    // STOP_UNKNOWN con le prove. Mai un up riuscito.
+    const recordPath = path.join(w.home, 'NexusFiles', 'launch-targets', `${SESSIONE}.json`);
+    const prima = fs.readFileSync(recordPath, 'utf8');
+    const quarantenaDir = path.join(w.home, 'NexusFiles', 'launch-targets', 'reconciled');
+    const recoPrima = fs.existsSync(quarantenaDir) ? fs.readdirSync(quarantenaDir).length : 0;
+    await assert.rejects(() => fleet.up('CellaExp'), (e) => e.status === 409
+      && (e.fleetCode === 'SESSION_DUPLICATE' || e.fleetCode === 'STOP_UNKNOWN'),
       'il lancio incerto non si riapre da solo');
     assert.equal(righeStop(w).length, 1, 'nessun altro comando di stop');
     assert.equal(stopLegacy(w), 0, 'ancora nessun ripiego sul vecchio stop');
     assert.equal(vivo(host.pid), true, 'l\'host e\' ancora vivo');
+    assert.equal(fs.readFileSync(recordPath, 'utf8'), prima, 'record intatto: stesso launchId, ancora incerto');
+    const recoDopo = fs.existsSync(quarantenaDir) ? fs.readdirSync(quarantenaDir).length : 0;
+    assert.equal(recoDopo, recoPrima, 'nessuna quarantena: la pratica non si e\' chiusa');
   });
 }
 

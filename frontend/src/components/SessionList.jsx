@@ -264,7 +264,6 @@ export default function SessionList({
       if (payload.action === 'up') setBootChoice(cell, route, !!payload.boot);
       else if (payload.boot) setBootChoice(cell, route, false);
     }
-    refresh();
   }
 
   // Stato fresco per il foglio di alimentazione: la copia presa all'apertura

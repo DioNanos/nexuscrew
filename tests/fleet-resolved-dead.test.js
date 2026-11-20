@@ -168,6 +168,13 @@ if (cmd(args) === 'has-session') {
   process.stderr.write('can\\'t find session: ' + nome + '\\n');
   process.exit(1);
 }
+if (cmd(args) === 'list-panes') {
+  const bersaglio = args[args.indexOf('-t') + 1];
+  nota('list-panes:' + bersaglio);
+  if (leggi().some((x) => x.p === bersaglio)) { process.stdout.write(bersaglio + '\\n'); process.exit(0); }
+  process.stderr.write('can\\'t find pane: ' + bersaglio + '\\n');
+  process.exit(1);
+}
 if (cmd(args) === 'list-sessions') {
   for (const s of leggi()) process.stdout.write(s.nome + '\\t1\\n');
   process.exit(0);

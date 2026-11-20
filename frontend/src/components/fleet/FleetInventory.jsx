@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { t } from '../../lib/i18n.js';
 import {
   fleetStatus, getRouteConfig, getRouteSessions, fleetRestart, fleetRemoveCell, killSession,
@@ -12,9 +12,19 @@ import {
 // possiede il lifecycle; sulle posizioni non gestibili (peer inbound senza
 // capability, READONLY) non si mostra alcun power fittizio.
 // Estratto invariato da FleetTab.jsx; la ownership delle chiamate API resta qui.
+// Identità dell'azione in volo: la coppia route/cella, non la cella da sola,
+// perché lo stesso nome può esistere su route diverse.
+const actionKey = (route, cell) => `${Array.isArray(route) ? route.join('/') : ''}::${cell}`;
+
 export default function FleetInventory({ token, targets = [], readonly = false, onPower, onImport }) {
   const [data, setData] = useState([]);
   const [bump, setBump] = useState(0);
+  // Latch anti doppio invio: il ref è sincrono e viene preso PRIMA della
+  // chiamata, quindi regge anche il secondo clic nello stesso tick, quando
+  // React non ha ancora ri-renderizzato il pulsante. `pending` serve solo a
+  // mostrare lo stato disabilitato.
+  const [pending, setPending] = useState({});
+  const inflight = useRef(new Set());
   useEffect(() => {
     let alive = true;
     async function poll() {
@@ -48,7 +58,18 @@ export default function FleetInventory({ token, targets = [], readonly = false, 
   // up/down passano dal launch editor condiviso (PowerSheet): niente fleetUp diretto.
   const cellUp = (c, route) => { if (onPower) onPower({ ...c, route }); };
   const cellDown = (c, route) => { if (onPower) onPower({ ...c, route }); };
-  const cellRestart = async (c, route) => { try { await fleetRestart(token, c.cell, route); } catch (_) {} after(); };
+  const cellRestart = async (c, route) => {
+    const key = actionKey(route, c.cell);
+    if (inflight.current.has(key)) return;
+    inflight.current.add(key);
+    setPending((p) => ({ ...p, [key]: true }));
+    try { await fleetRestart(token, c.cell, route); } catch (_) { /* uncertain outcome: reread, never resend */ }
+    finally {
+      inflight.current.delete(key);
+      setPending((p) => { const next = { ...p }; delete next[key]; return next; });
+      after();
+    }
+  };
   const cellRemove = async (c, route) => {
     if (!window.confirm(t('fleet-remove-cell').replace('{id}', c.cell))) return;
     try { await fleetRemoveCell(token, c.cell, true, route); } catch (_) {} after();
@@ -76,7 +97,7 @@ export default function FleetInventory({ token, targets = [], readonly = false, 
                 <span className="nc-fleet-cell-actions">
                   {c.active && can(pos, 'down') && <button className="nc-btn ghost" title={t('power-off')} onClick={() => cellDown(c, pos.route)}>{t('stop')}</button>}
                   {!c.active && can(pos, 'up') && <button className="nc-btn ghost" title={t('power-on')} onClick={() => cellUp(c, pos.route)}>{t('start')}</button>}
-                  {can(pos, 'restart') && c.active && <button className="nc-btn ghost" title={t('restart')} onClick={() => cellRestart(c, pos.route)}>{t('restart')}</button>}
+                  {can(pos, 'restart') && c.active && <button className="nc-btn ghost" title={t('restart')} disabled={!!pending[actionKey(pos.route, c.cell)]} onClick={() => cellRestart(c, pos.route)}>{t('restart')}</button>}
                   {can(pos, 'remove') && <button className="nc-btn danger" title={t('delete')} onClick={() => cellRemove(c, pos.route)}>×</button>}
                 </span>
               </div>

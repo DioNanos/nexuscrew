@@ -12,7 +12,7 @@ const { dispatch, serve, start, stop, status, parseFlags, HELP,
   smartUp, url, tokenRotate, logs, update, doctor, restart,
   findAvailablePort, openPwa, startPortable, stopManagedTunnels } = require('../lib/cli/commands.js');
 
-// Home "inizializzata" (config.json + token) per i test url/status/token/logs. [A2]
+// Home "inizializzata" (config.json + token) per i test url/status/token/logs.
 function initHome(port = 41822, token = 'SECRETTOKEN12345') {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-a2-'));
   const dir = path.join(home, '.nexuscrew');
@@ -153,7 +153,7 @@ test('smart-up ripara fleet.json mancante e riavvia un runtime gia vivo', async 
   const engineIds = JSON.parse(fs.readFileSync(fleetPath, 'utf8')).engines.map((engine) => engine.id);
   assert.equal(engineIds[0], 'claude.native');
   assert.equal(engineIds[engineIds.length - 1], 'shell.local');
-  assert.deepEqual([...engineIds].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local']);
+  assert.deepEqual([...engineIds].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'qwen.native', 'shell.local']);
   assert.ok(engineIds.indexOf('codex-vl.native') < engineIds.indexOf('codex.native'));
   fs.rmSync(home, { recursive: true, force: true });
 });
@@ -731,6 +731,8 @@ test('serve Termux ripara automaticamente entrambi gli script boot legacy prima 
     tmuxOk: true,
     chdirImpl: (target) => { chdir = target; },
     lifecycleWarn: () => {},
+    // This test is about the boot scripts; the pid file guard has its own suite.
+    claimServiceImpl: () => ({ runId: 'f'.repeat(32) }),
     serverStart: () => {
       started = true;
       assert.match(fs.readFileSync(main, 'utf8'), /^\s*cd -- "\$HOME"\s*$/m);
@@ -745,32 +747,63 @@ test('serve Termux ripara automaticamente entrambi gli script boot legacy prima 
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('serve --pidfile: scrive pidfile + cleanup (mock serverStart)', () => {
-  const tmpPid = path.join(os.tmpdir(), 'nc-serve-test-' + process.pid + '.pid');
+test('serve --pidfile: writes pidfile, bare exit preserves pidfile and quiescent shutdown removes own pidfile', async (t) => {
+  const tmpPid = path.join(os.tmpdir(), 'nc-serve-test-' + process.pid + '-' + Date.now() + '.pid');
+  const prevPidEnv = process.env.NEXUSCREW_PIDFILE;
   process.env.NEXUSCREW_PIDFILE = tmpPid;
   fs.rmSync(tmpPid, { force: true });
+  t.after(() => {
+    if (prevPidEnv === undefined) delete process.env.NEXUSCREW_PIDFILE;
+    else process.env.NEXUSCREW_PIDFILE = prevPidEnv;
+    fs.rmSync(tmpPid, { force: true });
+  });
+
+  // 1) Mock serverStart returning undefined: pidfile is preserved even on bare exit
   let started = false;
-  serve({ pidfile: true, fleetEnabled: false, serverStart: () => { started = true; } });
+  const mockCtl = serve({ pidfile: true, fleetEnabled: false, serverStart: () => { started = true; } });
   assert.equal(started, true);
-  assert.ok(fs.existsSync(tmpPid)); // pidfile scritto
-  // cleanup su exit
+  assert.ok(fs.existsSync(tmpPid));
   process.emit('exit');
-  assert.ok(!fs.existsSync(tmpPid)); // rimosso
-  delete process.env.NEXUSCREW_PIDFILE;
+  assert.ok(fs.existsSync(tmpPid)); // bare OS exit never removes the pidfile
+  const undefOutcome = await mockCtl.shutdown({ reason: 'programmatic' });
+  assert.equal(undefOutcome.quiescent, false);
+  assert.equal(undefOutcome.pidfileRemoved, false);
+  assert.ok(fs.existsSync(tmpPid));
+
+  // 2) Mock serverStart with quiescent closeOrdered: shutdown removes own pidfile
+  fs.rmSync(tmpPid, { force: true });
+  const fakeServer = {
+    closeOrdered: async ({ reason, deadlineMono } = {}) => ({
+      ok: true,
+      quiescent: true,
+      timedOut: false,
+      elapsedMs: 1,
+      counts: { activeOps: 0, activeClaims: 0, forcedConnections: 0, residues: [] },
+      codes: [],
+      fleet: null,
+      reason,
+      deadlineMono,
+    }),
+  };
+  const quietCtl = serve({ pidfile: true, fleetEnabled: false, serverStart: () => fakeServer });
+  assert.ok(fs.existsSync(tmpPid));
+  const quietOutcome = await quietCtl.shutdown({ reason: 'programmatic' });
+  assert.equal(quietOutcome.quiescent, true);
+  assert.equal(quietOutcome.pidfileRemoved, true);
+  assert.ok(!fs.existsSync(tmpPid));
 });
 
-test('serve --pidfile: already-running -> throw (no double start)', () => {
+test('serve --pidfile: already-running -> throw (no double start)', (t) => {
   const tmpPid = path.join(os.tmpdir(), 'nc-serve-running-' + process.pid + '.pid');
+  t.after(() => { fs.rmSync(tmpPid, { force: true }); delete process.env.NEXUSCREW_PIDFILE; });
   process.env.NEXUSCREW_PIDFILE = tmpPid;
   fs.rmSync(tmpPid, { force: true });
-  // pre-crea pidfile con pid vivo (self)
-  fs.writeFileSync(tmpPid, JSON.stringify({ pid: process.pid, cmd: 'node', startTs: Date.now() }) + '\n');
+  // pre-crea pidfile con pid vivo (self) e nascita attestata dal writer reale
+  pidf.writePidfile(tmpPid, process.pid, 'node');
   assert.throws(
     () => serve({ pidfile: true, fleetEnabled: false, serverStart: () => {} }),
     /already running/i,
   );
-  fs.rmSync(tmpPid, { force: true });
-  delete process.env.NEXUSCREW_PIDFILE;
 });
 
 // --- start/stop/status per-platform (mock execImpl) ---
@@ -975,12 +1008,209 @@ test('restart portable usa lo stesso owner; un conflitto viene ricondotto al man
   await childExit(second.child);
 });
 
-test('dispatch serve: chiama serve + keepAlive (no exit, server resta vivo)', () => {
+test('dispatch serve: chiama serve + keepAlive (no exit, server resta vivo)', (t) => {
   let called = false;
   const r = dispatch(['serve'], { fleetEnabled: false, serverStart: () => { called = true; }, log: () => {} });
+  t.after(() => {
+    if (r && typeof r.disposeSignals === 'function') r.disposeSignals();
+  });
   assert.equal(r.code, 0);
   assert.equal(r.keepAlive, true); // serve non deve exit (server.listen tiene il processo)
   assert.equal(called, true);
+  assert.equal(typeof r.disposeSignals, 'function');
+  assert.ok(r.controller);
+});
+
+test('dispatch serve --pidfile: bare exit preserves pidfile and an attested owned shutdown removes it', async (t) => {
+  // The owned positive must cross the production server: a dedicated child
+  // process runs the real dispatch (which mints the process owner) with the
+  // production serverStart, so the binding, the hook and the validated
+  // cleanup travel the product. The two proven properties stay separate:
+  // the bare 'exit' event alone never removes the pidfile, and only an
+  // attested owned shutdown does.
+  const homePos = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dispatch-owned-pos-'));
+  const pidPos = path.join(homePos, 'owned-pos.pid');
+  const commandsPath = require.resolve('../lib/cli/commands.js');
+  const posScript = path.join(homePos, 'owned-positive-cli.js');
+  fs.writeFileSync(posScript, `'use strict';
+const fs = require('node:fs');
+const { dispatch } = require(${JSON.stringify(commandsPath)});
+const r = dispatch(['serve', '--pidfile'], {
+  home: ${JSON.stringify(homePos)},
+  port: 0,
+  panelPort: 0,
+  fleetEnabled: false,
+  protectSharedTmuxServer: false,
+  liveBridgeEnabled: false,
+  autoUpdate: false,
+  log: () => {},
+});
+(async () => {
+  await new Promise((res) => { if (r.server.listening) res(); else r.server.once('listening', res); });
+  const existsAtStart = fs.existsSync(${JSON.stringify(pidPos)});
+  process.emit('exit');
+  const existsAfterBareExit = fs.existsSync(${JSON.stringify(pidPos)});
+  const outcome = await r.controller.shutdown({ reason: 'programmatic' });
+  const so = r.server.shutdownController.state().outcome;
+  process.stdout.write('POS|' + JSON.stringify({
+    existsAtStart,
+    existsAfterBareExit,
+    quiescent: outcome.quiescent,
+    pidfileRemoved: outcome.pidfileRemoved,
+    existsAfterShutdown: fs.existsSync(${JSON.stringify(pidPos)}),
+    cleanupOutcome: so.cleanup && so.cleanup.outcome,
+    serverOk: so.ok,
+  }) + '\\n');
+  process.exit(0);
+})().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
+`);
+  t.after(() => { try { fs.rmSync(homePos, { recursive: true, force: true }); } catch (_) {} });
+  const posChild = spawn(process.execPath, [posScript], {
+    cwd: path.dirname(commandsPath),
+    env: { ...process.env, HOME: homePos, NEXUSCREW_PIDFILE: pidPos },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let posOut = '';
+  let posErr = '';
+  posChild.stdout.on('data', (d) => { posOut += d.toString('utf8'); });
+  posChild.stderr.on('data', (d) => { posErr += d.toString('utf8'); });
+  t.after(() => {
+    if (posChild.exitCode === null && posChild.signalCode === null) {
+      try { posChild.kill('SIGKILL'); } catch (_) {}
+    }
+  });
+  const posExit = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`positive child timeout: ${posErr}`)), 15000);
+    posChild.once('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+  });
+  assert.equal(posExit.code, 0, `positive child stderr=${posErr} stdout=${posOut}`);
+  const posLine = posOut.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('POS|')).pop();
+  assert.ok(posLine, `missing POS line: stdout=${posOut}`);
+  const pos = JSON.parse(posLine.slice('POS|'.length));
+  assert.equal(pos.existsAtStart, true, JSON.stringify(pos));
+  assert.equal(pos.existsAfterBareExit, true, 'the bare exit event alone must preserve the pidfile');
+  assert.equal(pos.cleanupOutcome, 'done', 'the owned shutdown must be attested by a validated cleanup');
+  assert.equal(pos.serverOk, true);
+  assert.equal(pos.quiescent, true);
+  assert.equal(pos.pidfileRemoved, true);
+  assert.equal(pos.existsAfterShutdown, false, 'an attested owned shutdown removes its own pidfile');
+
+  // The historic closeOrdered-only double is now an explicit conservative
+  // negative: with the process owner minted by the dispatch, a green result
+  // without the owned cleanup attestation can never be quiescent.
+  const homeNeg = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-dispatch-owned-neg-'));
+  const pidNeg = path.join(homeNeg, 'owned-neg.pid');
+  const negScript = path.join(homeNeg, 'owned-negative-cli.js');
+  fs.writeFileSync(negScript, `'use strict';
+const fs = require('node:fs');
+const { dispatch } = require(${JSON.stringify(commandsPath)});
+const fakeServer = {
+  closeOrdered: async () => ({
+    ok: true,
+    quiescent: true,
+    timedOut: false,
+    elapsedMs: 1,
+    counts: { activeOps: 0, activeClaims: 0, forcedConnections: 0, residues: 0 },
+    codes: [],
+    fleet: null,
+  }),
+};
+const r = dispatch(['serve', '--pidfile'], {
+  home: ${JSON.stringify(homeNeg)},
+  fleetEnabled: false,
+  log: () => {},
+  serverStart: () => fakeServer,
+});
+(async () => {
+  const outcome = await r.controller.shutdown({ reason: 'programmatic' });
+  process.stdout.write('NEG|' + JSON.stringify({
+    quiescent: outcome.quiescent,
+    codes: outcome.codes,
+    pidfileRemoved: outcome.pidfileRemoved,
+    pidfileStatus: outcome.pidfileStatus,
+    existsAfter: fs.existsSync(${JSON.stringify(pidNeg)}),
+  }) + '\\n');
+  process.exit(0);
+})().catch((e) => { console.error(String((e && e.message) || e)); process.exit(1); });
+`);
+  t.after(() => { try { fs.rmSync(homeNeg, { recursive: true, force: true }); } catch (_) {} });
+  const negChild = spawn(process.execPath, [negScript], {
+    cwd: path.dirname(commandsPath),
+    env: { ...process.env, HOME: homeNeg, NEXUSCREW_PIDFILE: pidNeg },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let negOut = '';
+  let negErr = '';
+  negChild.stdout.on('data', (d) => { negOut += d.toString('utf8'); });
+  negChild.stderr.on('data', (d) => { negErr += d.toString('utf8'); });
+  t.after(() => {
+    if (negChild.exitCode === null && negChild.signalCode === null) {
+      try { negChild.kill('SIGKILL'); } catch (_) {}
+    }
+  });
+  const negExit = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`negative child timeout: ${negErr}`)), 15000);
+    negChild.once('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });
+  });
+  assert.equal(negExit.code, 0, `negative child stderr=${negErr}`);
+  const negLine = negOut.split('\n').map((l) => l.trim()).filter((l) => l.startsWith('NEG|')).pop();
+  assert.ok(negLine, `missing NEG line: stdout=${negOut}`);
+  const neg = JSON.parse(negLine.slice('NEG|'.length));
+  assert.equal(neg.quiescent, false, JSON.stringify(neg));
+  assert.ok(neg.codes.includes('CLEANUP_REFUSED'), `codes must carry CLEANUP_REFUSED: ${negLine}`);
+  assert.equal(neg.pidfileRemoved, false);
+  assert.equal(neg.pidfileStatus, 'skipped');
+  assert.equal(neg.existsAfter, true, 'the pidfile must stay conserved');
+});
+
+test('dispatch serve --pidfile with an injected ownerless coordinator keeps the legacy closeOrdered-only contract', async (t) => {
+  // Explicit legacy case, distinct from the owned positives above: a
+  // coordinator injected WITHOUT the process owner keeps accepting the
+  // closeOrdered-only contract — that compatibility belongs to the
+  // ownerless coordinator alone.
+  const { createServeShutdownCoordinator } = require('../lib/cli/shutdown-coordinator.js');
+  const tmpPid = path.join(os.tmpdir(), 'nc-dispatch-serve-legacy-' + process.pid + '-' + Date.now() + '.pid');
+  const prevPidEnv = process.env.NEXUSCREW_PIDFILE;
+  process.env.NEXUSCREW_PIDFILE = tmpPid;
+  fs.rmSync(tmpPid, { force: true });
+  let r = null;
+  t.after(() => {
+    if (r && typeof r.disposeSignals === 'function') r.disposeSignals();
+    if (prevPidEnv === undefined) delete process.env.NEXUSCREW_PIDFILE;
+    else process.env.NEXUSCREW_PIDFILE = prevPidEnv;
+    fs.rmSync(tmpPid, { force: true });
+  });
+  const fakeServer = {
+    closeOrdered: async () => ({
+      ok: true,
+      quiescent: true,
+      timedOut: false,
+      elapsedMs: 1,
+      counts: { activeOps: 0, activeClaims: 0, forcedConnections: 0, residues: 0 },
+      codes: [],
+      fleet: null,
+    }),
+  };
+  const legacyWarns = [];
+  const coordinator = createServeShutdownCoordinator({
+    writeLine: (line) => legacyWarns.push(line),
+  });
+  r = dispatch(['serve', '--pidfile'], {
+    fleetEnabled: false,
+    serverStart: () => fakeServer,
+    log: () => {},
+    shutdownCoordinator: coordinator,
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.keepAlive, true);
+  assert.ok(fs.existsSync(tmpPid));
+  process.emit('exit');
+  assert.ok(fs.existsSync(tmpPid));
+  const outcome = await r.controller.shutdown({ reason: 'programmatic' });
+  assert.equal(outcome.quiescent, true);
+  assert.equal(outcome.pidfileRemoved, true);
+  assert.ok(!fs.existsSync(tmpPid));
+  assert.deepEqual(legacyWarns, [], 'the quiescent legacy shutdown emits no warning');
 });
 
 // ---------------------------------------------------------------------------
@@ -1811,8 +2041,8 @@ test('checkService: linux systemctl assente (ENOENT) -> installato, stato NON VE
     const r = checkService('linux', home, () => { const e = new Error('spawn systemctl ENOENT'); e.code = 'ENOENT'; throw e; }, 1000, target);
     assert.equal(r.ok, true, 'verdetto ok invariato (installato)');
     assert.equal(r.warn, true, 'warn invariato (active resta false)');
-    assert.match(r.detail, /non verificabile/i, 'il messaggio dice "non verificabile"');
-    assert.doesNotMatch(r.detail, /installato ma non attivo/i, 'non deve dire "non attivo" quando non ha potuto guardare');
+    assert.match(r.detail, /unverifiable/i, 'il messaggio dice "non verificabile"');
+    assert.doesNotMatch(r.detail, /installed but not active/i, 'non deve dire "non attivo" quando non ha potuto guardare');
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -1825,8 +2055,8 @@ test('checkService: linux systemctl risponde "inactive" -> "installato ma non at
     const r = checkService('linux', home, () => { throw new Error('inactive'); }, 1000, target);
     assert.equal(r.ok, true);
     assert.equal(r.warn, true);
-    assert.match(r.detail, /installato ma non attivo/i, 'systemctl ha girato e ha risposto: legittimo "non attivo"');
-    assert.doesNotMatch(r.detail, /non verificabile/i);
+    assert.match(r.detail, /installed but not active/i, 'systemctl ha girato e ha risposto: legittimo "non attivo"');
+    assert.doesNotMatch(r.detail, /unverifiable/i);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 

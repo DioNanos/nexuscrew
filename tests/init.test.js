@@ -52,13 +52,15 @@ test('runInit: crea config + token + NexusFiles (linux, tmux ok)', () => {
   assert.ok(fs.existsSync(path.join(home, '.nexuscrew', 'decks.json')));
   assert.ok(fs.existsSync(path.join(home, 'NexusFiles')));
   const fleet = JSON.parse(fs.readFileSync(path.join(home, '.nexuscrew', 'fleet.json'), 'utf8'));
-  // Fetta A: il seed cambia ordine (non insieme) vs 0.8.55: codex-vl ora prima
-  // di codex. Intent assertions: claude primo, shell ultimo, insieme invariato.
+  // Fetta A + qwen (0.9.83): il seed cambia ordine (non insieme) vs 0.8.55:
+  // codex-vl ora prima di codex, qwen.native dopo pi. Intent assertions:
+  // claude primo, shell ultimo, insieme invariato a SEI default esatti.
   const engineIds = fleet.engines.map((e) => e.id);
   assert.equal(engineIds[0], 'claude.native');
   assert.equal(engineIds[engineIds.length - 1], 'shell.local');
-  assert.deepEqual([...engineIds].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'shell.local']);
+  assert.deepEqual([...engineIds].sort(), ['claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'qwen.native', 'shell.local']);
   assert.ok(engineIds.indexOf('codex-vl.native') < engineIds.indexOf('codex.native'));
+  assert.ok(engineIds.indexOf('qwen.native') > engineIds.indexOf('pi.native'), 'qwen dopo pi');
   assert.deepEqual(fleet.cells, []);
   assert.ok(fs.existsSync(installTarget)); // service installato
   assert.equal(r.port, 41820);

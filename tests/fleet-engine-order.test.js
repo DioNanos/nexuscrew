@@ -1,7 +1,8 @@
 'use strict';
 // Ordine degli engine, flag `standard`, etichette in minuscolo, tetto del
 // restore. Tutto in SOLA LETTURA sul fleet.json: un file vecchio non viene
-// mai migrato, e' il payload che si ordina in uscita.
+// mai riordinato né migrato, e' il payload che si ordina in uscita; il
+// backfill può solo APPENDERE i default mancanti (es. qwen), in coda.
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -26,8 +27,8 @@ function mondo(t) {
 }
 
 // Engine managed minimi per ogni client noto, piu' un derivato per claude e
-// codex-vl e un custom fuori lista. Il seed/backfill non gira: il file e'
-// gia' completo.
+// codex-vl e un custom fuori lista. Il seed/backfill non riordina MAI: al
+// piu' appende in coda i default mancanti.
 function engineDi(id, client, label) {
   if (client === null) return { id, label, rc: false, command: '/bin/sh', args: [], env: {}, promptMode: 'send-keys' };
   const provider = client === 'shell' ? 'local' : 'native';
@@ -94,15 +95,21 @@ test('fleet.definitions(): payload ordinato partendo da un fleet.json scritto al
     engineDi('claude.native', 'claude', 'Claude Code'),
   ];
   const defsPath = scriviFleet(w, alContrario);
-  const prima = fs.readFileSync(defsPath, 'utf8');
   const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: defsPath, tmuxBin: w.tmuxBin });
   const vista = fleet.definitions();
   assert.deepEqual(vista.engines.map((e) => e.id), [
-    'claude.native', 'codex-vl.native', 'codex.native', 'pi.native',
+    'claude.native', 'codex-vl.native', 'codex.native', 'pi.native', 'qwen.native',
     'agy.native', 'grok.native', 'shell.local',
     'zz.custom', 'vl.native', 'kimi.native',
   ], 'payload ordinato senza migrazione');
-  assert.equal(fs.readFileSync(defsPath, 'utf8'), prima, 'il file resta byte-identico: ordine solo in lettura');
+  // Il file non viene RIORDINATO: gli engine scritti restano nel loro ordine
+  // e il backfill del default nuovo (qwen) appende SOLO quello, in coda.
+  const dopo = JSON.parse(fs.readFileSync(defsPath, 'utf8'));
+  assert.deepEqual(dopo.engines.map((e) => e.id), [
+    'zz.custom', 'vl.native', 'kimi.native', 'shell.local', 'grok.native',
+    'agy.native', 'pi.native', 'codex.native', 'codex-vl.native', 'claude.native',
+    'qwen.native',
+  ], 'file mai riordinato: il default nuovo aggiunto in coda dal backfill');
 });
 
 test('fleet.definitions(): i derivati restano attaccati al loro client', async (t) => {
@@ -120,14 +127,14 @@ test('fleet.definitions(): i derivati restano attaccati al loro client', async (
   const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: defsPath, tmuxBin: w.tmuxBin });
   const ids = fleet.definitions().engines.map((e) => e.id);
   // Il bootstrap aggiunge in backfill i client mancanti, nel nuovo ordine
-  // (agy, grok, shell, poi i fuori lista kimi e vl): il custom scritto nel
-  // file resta prima dei backfillati, perche' era gia' nell'array.
+  // (qwen, agy, grok, shell, poi i fuori lista kimi e vl): il custom scritto
+  // nel file resta prima dei backfillati, perche' era gia' nell'array.
   assert.deepEqual(ids, [
     'claude.native', 'claude.hosted',
     'codex-vl.native', 'codex-vl.ollama-cloud',
     'codex.native',
     'pi.native', 'pi.edge',
-    'agy.native', 'grok.native', 'shell.local',
+    'qwen.native', 'agy.native', 'grok.native', 'shell.local',
     'zz.custom', 'kimi.native', 'vl.native',
   ], 'derivati dentro il gruppo del loro client, custom in coda');
 });

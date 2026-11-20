@@ -76,3 +76,14 @@
 @media (max-width: 600px) {
   .nc-power-sheet { max-width: 380px; }
 }
+
+/* Pratica di lancio: azione secondaria e pannello locale del foglio. */
+.nc-attest-open { align-self: flex-start; }
+.nc-attest-panel {
+  display: flex; flex-direction: column; gap: 8px; align-items: stretch;
+  padding-top: 8px; border-top: 1px solid #1d2b22; min-width: 0;
+}
+.nc-attest-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nc-attest-head b { font-size: 13px; }
+.nc-attest-facts b, .nc-attest-evidence b { word-break: break-all; }
+.nc-attest-evidence small { display: block; }

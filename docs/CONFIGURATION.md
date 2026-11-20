@@ -115,6 +115,16 @@ Fleet cells and engines are managed in **Settings → Fleet**. A cell records:
 Provider key values are not stored in cell or engine definitions. The PWA
 reports whether a required variable is configured, but never returns its value.
 
+A managed `qwen.native` engine has no dedicated fields: the stable 0.x CLI
+(from 0.27.2) found on the executing node's `PATH` is qualified and used.
+The experimental 1.0 fields `qwenBinary` and `qwenConfigDir` are retired and
+refused: a definition that still carries either one — with a value, empty or
+null, on any client — is rejected by the backend before launch, with a
+reason naming the field. To fix an experimental definition, remove both
+fields and let the engine qualify the node's own 0.x `qwen`; a fleet.json
+containing them stays strict-invalid (the file is never rewritten or
+migrated automatically).
+
 ## Browser-local settings
 
 The following are local to the browser origin:

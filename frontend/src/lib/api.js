@@ -150,6 +150,23 @@ export const FLEET_ACTION_TIMEOUT_MS = 60000;
 
 export const fleetUp = (t, b, route) => jsonFetch(fleetPath(route, 'up'), t, { method: 'POST', body: b, timeoutMs: FLEET_ACTION_TIMEOUT_MS });
 export const fleetDown = (t, b, route) => jsonFetch(fleetPath(route, 'down'), t, { method: 'POST', body: b, timeoutMs: FLEET_ACTION_TIMEOUT_MS });
+
+// Pratica di lancio: GET dello stato (il launchId corrente, enum chiusi) e
+// anteprima/conferma sul reconcile. Due livelli distinti, come jsonFetch: un
+// errore HTTP lancia (con status e body), un esito del server e' un `outcome`
+// nel JSON. Il timeout copre anche il BODY: una lettura che non arriva entro il
+// tetto e' una lettura fallita, non una risposta vuota.
+export const FLEET_LAUNCH_STATE_TIMEOUT_MS = 20000;
+export const FLEET_RECONCILE_TIMEOUT_MS = 30000;
+
+export const fleetLaunchState = (t, cell, route) => jsonFetch(
+  `${fleetPath(route, 'launch-state')}?cell=${encodeURIComponent(cell)}`, t,
+  { timeoutMs: FLEET_LAUNCH_STATE_TIMEOUT_MS },
+);
+export const fleetReconcile = (t, b, route) => jsonFetch(
+  fleetPath(route, 'reconcile'), t,
+  { method: 'POST', body: b, timeoutMs: FLEET_RECONCILE_TIMEOUT_MS },
+);
 export const fleetEngine = (t, b, route) => jsonFetch(fleetPath(route, 'engine'), t, { method: 'POST', body: b });
 export const fleetBoot = (t, b, route) => jsonFetch(fleetPath(route, 'boot'), t, { method: 'POST', body: b });
 export const fleetRestart = (t, cell, route) => jsonFetch(fleetPath(route, 'restart'), t, { method: 'POST', body: { cell } });

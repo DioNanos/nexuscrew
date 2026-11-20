@@ -11,6 +11,7 @@ const { notifyRoutes } = require('../lib/notify/routes.js');
 const { filesRoutes } = require('../lib/files/routes.js');
 const { audioRoutes } = require('../lib/audio/routes.js');
 const { leaseRoutes } = require('../lib/fleet/lease-routes.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 const { cellsRoutes } = require('../lib/cells/routes.js');
 const { liveHostRoutes } = require('../lib/live-host/routes.js');
 const { createAsksStore } = require('../lib/notify/asks.js');
@@ -57,6 +58,8 @@ function bindingHeader(reg, overrides = {}) {
 
 async function makeWorld(t, { identityMode = 'authority' } = {}) {
   const home = tmpdir('nc-binding-routes-');
+  const catalog = catalogFixture([{ id: CELL }, { id: TARGET_CELL }]);
+  t.after(() => catalog.cleanup());
   const mgr = createLeaseManager({ home, log: () => {} });
   await mgr.track(CELL);
   const reg = mgr.childRegister(CELL, { authority: true });
@@ -90,6 +93,7 @@ async function makeWorld(t, { identityMode = 'authority' } = {}) {
   const fleetP = Promise.resolve({
     available: true,
     lease: leaseFacade,
+    leaseCellCatalog: catalog.leaseCellCatalog,
     status: async () => ({
       available: true,
       cells: [

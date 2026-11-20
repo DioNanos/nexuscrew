@@ -148,36 +148,49 @@ test('anti-falso-verde: tornando al vecchio target nominale puntato il setup fal
 });
 
 test('nuovo ordine staged con nome v2 safe + child rapido: exit reale preservato', async () => {
-  const server = await avviaTmuxTest();
-  const tmux = (args, opts) => server.runSync(args, opts);
   const safe = tmuxSessionForCell('agy.native');
-  try {
-    // 1) new-session con placeholder inerte (cell-hold), -P -F 3 ID
-    const create = tmux([
-      'new-session', '-d', '-s', safe, '-c', server.socketDir,
-      '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}',
-      process.execPath, CELL_HOLD,
-    ]);
-    assert.equal(create.code, 0, `new-session ok: ${create.stderr}`);
-    const [sid, wid, pid] = create.stdout.trim().split('\t');
-    assert.ok(sid.startsWith('$') && wid.startsWith('@') && pid.startsWith('%'), '3 ID restituiti');
-    server.uccidiSessioneBoot();
-    // 2) remain-on-exit window-local sul @N mentre il placeholder tiene viva la window
-    const arm = tmux(['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
-    assert.equal(arm.code, 0, `set-option ok: ${arm.stderr}`);
-    // 3) respawn-pane -k verso un child rapido non-zero (false) sul %N
-    const respawn = tmux(['respawn-pane', '-k', '-c', server.socketDir, '-t', pid, '/usr/bin/false']);
-    assert.equal(respawn.code, 0, `respawn ok: ${respawn.stderr}`);
-    // remain-on-exit e' ARMATO: il %N resta (dead) con il suo exit reale (1),
-    // la sessione NON sparisce, nessun NEW_SESSION_FAILED.
-    const dead = await waitForDeadPane(tmux, pid);
-    assert.equal(dead.dead, '1', 'pane morto (false exit)');
-    assert.equal(dead.status, '1', 'exit reale 1 preservato (non mascherato)');
-    // cleanup con $N
-    const kill = tmux(['kill-session', '-t', sid]);
-    assert.equal(kill.code, 0);
-    assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'nessuna sessione orfana');
-  } finally { await server.chiudi(); }
+  // Under concurrent load, tmux 3.4 can close the pane pty (pane_dead=1) while
+  // failing to reap the exited child, leaving it as a zombie without setting
+  // PANE_STATUSREADY so pane_dead_status/signal stay empty forever (pending).
+  // Retry once on a fresh isolated tmux server ONLY for that pending-status
+  // stall; any wrong exit status or non-dead pane fails immediately without retry.
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const server = await avviaTmuxTest();
+    const tmux = (args, opts) => server.runSync(args, opts);
+    try {
+      // 1) new-session con placeholder inerte (cell-hold), -P -F 3 ID
+      const create = tmux([
+        'new-session', '-d', '-s', safe, '-c', server.socketDir,
+        '-P', '-F', '#{session_id}\t#{window_id}\t#{pane_id}',
+        process.execPath, CELL_HOLD,
+      ]);
+      assert.equal(create.code, 0, `new-session ok: ${create.stderr}`);
+      const [sid, wid, pid] = create.stdout.trim().split('\t');
+      assert.ok(sid.startsWith('$') && wid.startsWith('@') && pid.startsWith('%'), '3 ID restituiti');
+      server.uccidiSessioneBoot();
+      // 2) remain-on-exit window-local sul @N mentre il placeholder tiene viva la window
+      const arm = tmux(['set-option', '-w', '-t', wid, 'remain-on-exit', 'on']);
+      assert.equal(arm.code, 0, `set-option ok: ${arm.stderr}`);
+      // 3) respawn-pane -k verso un child rapido non-zero (false) sul %N
+      const respawn = tmux(['respawn-pane', '-k', '-c', server.socketDir, '-t', pid, '/usr/bin/false']);
+      assert.equal(respawn.code, 0, `respawn ok: ${respawn.stderr}`);
+      // remain-on-exit e' ARMATO: il %N resta (dead) con il suo exit reale (1),
+      // la sessione NON sparisce, nessun NEW_SESSION_FAILED.
+      const dead = await waitForDeadPane(tmux, pid);
+      assert.equal(dead.dead, '1', 'pane morto (false exit)');
+      assert.equal(dead.status, '1', 'exit reale 1 preservato (non mascherato)');
+      // cleanup con $N
+      const kill = tmux(['kill-session', '-t', sid]);
+      assert.equal(kill.code, 0);
+      assert.equal(tmux(['list-sessions', '-F', '#{session_name}']).stdout.trim(), '', 'nessuna sessione orfana');
+      return;
+    } catch (err) {
+      const isTmuxZombiePending = attempt < maxAttempts
+        && err && /exit status\/segnale ancora non disponibili \(pending\)/.test(String(err.message));
+      if (!isTmuxZombiePending) throw err;
+    } finally { await server.chiudi(); }
+  }
 });
 
 test('nuovo ordine: child longevo (sleep) resta vivo; pane ID preservato da respawn-pane', async () => {

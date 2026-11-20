@@ -63,6 +63,10 @@ function redactEnv(env) {
 function mondo(t, { version = 'vl 0.5.0', engine = null, engineId = null, extraModels = null, clockStart = 0, cells = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncvlmx-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaProva');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });

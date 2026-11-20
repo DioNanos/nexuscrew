@@ -240,8 +240,23 @@ test('real owner queued closure preserves generation after its peer returns',asy
  const listing=await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`,{headers:headers(origin.token)}).then(r=>r.json());const ask=listing.asks.find(a=>a.id===id);assert.ok(ask);
  remote.server.closeAllConnections();await new Promise(resolve=>remote.server.close(resolve));
  const closed=await fetch(`http://127.0.0.1:${origin.port}/api/asks/${id}`,{method:'DELETE',headers:headers(origin.token),body:'{}'});assert.equal(closed.status,200);
- await new Promise(resolve=>remote.server.listen(remote.port,'127.0.0.1',resolve));
- const frames=await sse(t,remote);
+ // A closed server stays disarmed: the peer that comes back is a NEW process,
+ // not the same instance listening again.
+ const rHome=path.dirname(path.dirname(remote.nodesPath));const rCfg=path.join(rHome,'.nexuscrew');
+ const revived=createServer({protectSharedTmuxServer:false,home:rHome,configDir:rCfg,nodesPath:remote.nodesPath,
+   configPath:path.join(rCfg,'config.json'),tokenPath:path.join(rCfg,'token'),filesRoot:path.join(rHome,'files'),
+   port:remote.port,fleetEnabled:false,sessionExistsSeam:()=>true,pasteSeam:()=>true,
+   askSubmit:async()=>({outcome:'submitted',submitted:true}),
+   settingsSeams:{platform:'linux',uid:1000,execImpl:()=>{throw new Error('disabled');},serviceInstallPath:path.join(rHome,'service'),
+     keygen:()=>'ssh-ed25519 AAAAFIXTURE demo',spawnImpl:()=>({pid:4100000,unref(){}}),sshVersion:()=>({major:9,minor:6})}});
+ await new Promise(resolve=>revived.server.listen(remote.port,'127.0.0.1',resolve));
+ revived.server.prependListener('request',(req,res)=>{if(req.method!=='POST'||!req.url.includes('/federation/route/')||!req.url.endsWith('/asks'))return;
+   const entry={url:`http://127.0.0.1:${revived.server.address().port}${req.url}`};const end=res.end;
+   res.end=function(chunk,...args){entry.status=res.statusCode;if(typeof chunk==='string'||Buffer.isBuffer(chunk)){try{entry.reply=JSON.parse(String(chunk));}catch(_){}}return end.call(this,chunk,...args);};
+   const chunks=[];req.on('data',c=>chunks.push(c));req.on('end',()=>{entry.body=JSON.parse(Buffer.concat(chunks).toString());observed.push(entry);});});
+ t.after(async()=>{revived.server.closeAllConnections();await new Promise(r=>revived.server.close(r));try{revived.watcher.close();}catch(_){}});
+ const rev={...revived,port:remote.port};
+ const frames=await sse(t,rev);
  await fetch(`http://127.0.0.1:${origin.port}/api/asks?open=1`,{headers:headers(origin.token)});
  await until(()=>frames.some(f=>f.type==='ask-dismissed'&&f.ownerAskId===id),'queued closure reaches returned peer');
  assert.equal(frames.find(f=>f.type==='ask-dismissed'&&f.ownerAskId===id).ownerAskTs,ask.ts,'server retry wiring retains original generation');

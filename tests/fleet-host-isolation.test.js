@@ -144,6 +144,10 @@ test('prepare del coordinatore non invia segnali', async () => {
 function mondoLive(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-iso-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaIso');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -273,5 +277,15 @@ test('host sostituito dopo l\'up: attestazione persa — niente segnali, claim c
   assert.ok(lease.length >= 1);
   const record = path.join(w.filesRoot, launchTarget.DIR, 'cloud-CellaIso.json');
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).incerto, true);
-  await assert.rejects(() => w.runtime.up('CellaIso'), (e) => e.fleetCode === 'STOP_UNKNOWN');
+  // S3: canale posseduto e presenza viva provata dal canale => duplicato vivo
+  // (nessun nuovo lancio); host, claim e record restano, zero comandi
+  // distruttivi (già asseriti sopra: niente host-stop, niente kill).
+  const prima = fs.readFileSync(record, 'utf8');
+  const leasePrima = lease.length;
+  await assert.rejects(() => w.runtime.up('CellaIso'), (e) => e.status === 409
+    && e.fleetCode === 'SESSION_DUPLICATE');
+  assert.equal(fs.readFileSync(record, 'utf8'), prima, 'record intatto: stesso launchId, ancora incerto');
+  const leaseDopo = fs.readdirSync(path.join(w.home, '.nexuscrew', 'vl-root-claims')).filter((n) => n.endsWith('.lease'));
+  assert.equal(leaseDopo.length, leasePrima, 'claim conservata');
+  assert.equal(fs.readFileSync(w.killPath, 'utf8'), '', 'nessun kill');
 });

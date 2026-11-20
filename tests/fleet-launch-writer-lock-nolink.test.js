@@ -198,6 +198,7 @@ test('T4 EEXIST vero: link reale, secondo acquirente vivo rifiutato, takeover di
 // nel punto esatto del guasto (T6).
 const openSyncVero = fs.openSync;
 const writeFileSyncVero = fs.writeFileSync;
+const writeSyncVero = fs.writeSync;
 const fsyncSyncVero = fs.fsyncSync;
 
 function guastoDopoOpen(t, root, nomeDest, stadio, primaDelGuasto) {
@@ -221,6 +222,20 @@ function guastoDopoOpen(t, root, nomeDest, stadio, primaDelGuasto) {
     }
     return writeFileSyncVero.call(fs, fd, dato, ...a);
   };
+  // La scrittura del ripiego passa dal primitivo condiviso, che scrive il
+  // finale con writeSync a posizione esplicita: stesso punto di guasto di
+  // prima (prefisso di 5 byte, poi EIO), stesse asserzioni dei test.
+  fs.writeSync = function (fd, buf, off, len, pos) {
+    if (armato === 'write' && fdAPercorso.get(fd) === dest) {
+      armato = null;
+      if (primaDelGuasto) primaDelGuasto();
+      writeSyncVero.call(fs, fd, buf, off, Math.min(5, len), pos);
+      const e = new Error(`seam: EIO su write del ripiego (${stadio})`);
+      e.code = 'EIO';
+      throw e;
+    }
+    return writeSyncVero.call(fs, fd, buf, off, len, pos);
+  };
   fs.fsyncSync = function (fd) {
     const atteso = armato === 'dir-fsync' ? dir : dest;
     if ((armato === 'file-fsync' || armato === 'dir-fsync') && fdAPercorso.get(fd) === atteso) {
@@ -235,6 +250,7 @@ function guastoDopoOpen(t, root, nomeDest, stadio, primaDelGuasto) {
   t.after(() => {
     fs.openSync = openSyncVero;
     fs.writeFileSync = writeFileSyncVero;
+    fs.writeSync = writeSyncVero;
     fs.fsyncSync = fsyncSyncVero;
   });
 }

@@ -45,6 +45,11 @@ nota(args);
 const S = sc();
 const idSessione = String(S.ids || '$5 @7 %9').split(' ')[0];
 const idPane = String(S.ids || '$5 @7 %9').split(' ')[2];
+// L'oggetto sessione registrato ($5) vive anche SENZA new-session (idVivi: il
+// record e' scritto a mano dal test) e sopravvive alla RINOMINA: il nome non
+// risolve piu', l'id si. omonima resta un'ALTRA sessione col nome occupato.
+const oggettoVivo = () => esiste('nato') || S.idVivi === true;
+const nomeVive = () => (esiste('nato') && S.rinominata !== true) || S.omonima === true;
 function eseguiComando(riga, n) {
   const testo = riga.trim();
   nota(['C:' + testo]);
@@ -189,17 +194,55 @@ if (args[0] === 'list-sessions') {
   process.exit(0);
 }
 if (args[0] === 'display-message' && args.includes(';')) {
-  // Osservazione su UNA connessione: pid del server, poi has-session sullo stesso server.
+  // Osservazione su UNA connessione: pid del server, poi il comando che segue
+  // il ';' (has-session per nome, oppure un id originale di sessione o pane).
   if (S.nessunServer) { process.stderr.write('no server running on /tmp/fake\\n'); process.exit(1); }
-  process.stdout.write(String(S.serverOsservato != null ? S.serverOsservato : S.server) + '\\n');
-  if (esiste('nato') || S.omonima) process.exit(0);
-  process.stderr.write("can't find session: " + NOME + '\\n');
+  const semi = args.indexOf(';');
+  const coda = args.slice(semi + 1);
+  const i = coda.lastIndexOf('-t');
+  const bersaglio = i >= 0 ? String(coda[i + 1]) : '';
+  const perId = bersaglio.startsWith('$') || bersaglio.startsWith('%');
+  // serverOsservatoPerId: alle query per id originale risponde un ALTRO
+  // listener (server sostituito fra due connessioni): il pid stampato e' il
+  // suo, e lì l'oggetto registrato non c'e'.
+  const sostituto = perId && S.serverOsservatoPerId != null;
+  const pid = sostituto
+    ? S.serverOsservatoPerId
+    : (S.serverOsservato != null ? S.serverOsservato : S.server);
+  process.stdout.write(String(pid) + '\\n');
+  if (coda[0] === 'list-panes') {
+    if (sostituto ? S.idVivoAltrove === true : (oggettoVivo() || S.paneAltrove === true)) {
+      process.stdout.write(idPane + '\\n');
+      process.exit(0);
+    }
+    process.stderr.write("can't find pane: " + bersaglio + '\\n');
+    process.exit(1);
+  }
+  const vive = sostituto ? S.idVivoAltrove === true : (perId ? oggettoVivo() : nomeVive());
+  if (vive) process.exit(0);
+  process.stderr.write("can't find session: " + (bersaglio || NOME) + '\\n');
   process.exit(1);
 }
 if (args[0] === 'has-session') {
   if (S.nessunServer) { process.stderr.write('no server running on /tmp/fake\\n'); process.exit(1); }
-  if (esiste('nato') || S.omonima) process.exit(0);
+  const bersaglio = args.indexOf('-t') >= 0 ? String(args[args.indexOf('-t') + 1]) : '';
+  if (bersaglio.startsWith('$')) {
+    // Ricerca per ID ORIGINALE di sessione: risolve anche da rinominata.
+    if (oggettoVivo()) process.exit(0);
+    process.stderr.write("can't find session: " + bersaglio + '\\n');
+    process.exit(1);
+  }
+  if (nomeVive()) process.exit(0);
   process.stderr.write("can't find session: " + NOME + '\\n');
+  process.exit(1);
+}
+if (args[0] === 'list-panes') {
+  if (S.nessunServer) { process.stderr.write('no server running on /tmp/fake\\n'); process.exit(1); }
+  const bersaglio = args.indexOf('-t') >= 0 ? String(args[args.indexOf('-t') + 1]) : '';
+  // paneAltrove: la sessione $5 è morta ma il pane %9 vive in un'altra
+  // sessione (spostato con join-pane prima della chiusura).
+  if (oggettoVivo() || S.paneAltrove === true) { process.stdout.write(idPane + '\\n'); process.exit(0); }
+  process.stderr.write("can't find pane: " + bersaglio + '\\n');
   process.exit(1);
 }
 if (args[0] === 'display-message') { process.stdout.write('0\\t\\t' + idPane + '\\n'); process.exit(0); }
@@ -211,6 +254,12 @@ process.exit(0);
 function scriviMondo({ famiglia = 'other', scenario = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-giornale-'));
   const home = path.join(root, 'home');
+  // La home nasce con mode esplicito: creandola col solo umask di processo
+  // una shell con umask 002 la farebbe 0775 (scrivibile dal gruppo) e la
+  // qualifica della radice la rifiuterebbe. Il chmod esplicito serve perche
+  // l'umask filtra comunque il mode passato al mkdir.
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, CELLA);
   fs.mkdirSync(cwd, { recursive: true });
   const filesRoot = path.join(home, 'NexusFiles');
@@ -279,10 +328,12 @@ function apriRuntime(d, opzioni = {}) {
     },
     ...(d.famiglia === 'vl' || opzioni.owner ? { identityOwnerInstanceId: OWNER_INSTANCE_ID } : {}),
     ...(opzioni.identitaProc ? { leggiIdentitaProc: opzioni.identitaProc } : {}),
+    ...(opzioni.sondaSocket ? { sondaSocket: opzioni.sondaSocket } : {}),
     ...(opzioni.leaseManager ? { leaseManager: opzioni.leaseManager } : {}),
     home: d.home, defsPath: d.defsPath, tmuxBin: d.tmuxBin, readonly: () => false,
     launchBroker,
     ...(opzioni.ensureProtection ? { ensureProtection: opzioni.ensureProtection } : {}),
+    ...(opzioni.riservaRootClaim ? { riservaRootClaim: opzioni.riservaRootClaim } : {}),
     boot: loadDefinitions(d.defsPath),
   });
   return { runtime, calls };

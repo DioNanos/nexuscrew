@@ -23,6 +23,9 @@ const { selectProvider } = require('../lib/fleet/provider.js');
 function makeWorld(over = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { mode: 0o700 }); fs.chmodSync(home, 0o700);
+  // I record di lancio del mondo restano dentro la root temporanea: mai nella
+  // home dell'operatore, nemmeno in una run manuale fuori dal gate.
+  const filesRoot = path.join(root, 'files');
   const cwd = path.join(home, 'Dev'); fs.mkdirSync(cwd);
   fs.mkdirSync(path.join(home, 'bin'));
   const command = path.join(home, 'bin', 'myclaude');
@@ -189,7 +192,7 @@ esac
   fs.writeFileSync(tmuxBin, script); fs.chmodSync(tmuxBin, 0o755);
 
   return {
-    root, home, cwd, command, defsPath, tmuxBin, log, cap, alive, pane, exitStatus, diagnostic, sessions, poison, alternateScreenFail,
+    root, home, filesRoot, cwd, command, defsPath, tmuxBin, log, cap, alive, pane, exitStatus, diagnostic, sessions, poison, alternateScreenFail,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -239,7 +242,7 @@ test('Shell backfill e command: login interattivo -lic, readiness e cella attiva
       close: async () => {},
     };
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
       env: { SHELL: shell }, launchBroker,
     });
     const result = await fleet.up('Dev');
@@ -278,7 +281,7 @@ test('Shell command: exit immediato non-zero non e falso successo e conserva cau
     fs.writeFileSync(w.exitStatus, '127');
     fs.writeFileSync(w.diagnostic, 'zsh: command not found: agy\n');
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
       env: { SHELL: shell }, launchReadyMs: 0,
     });
     await assert.rejects(() => fleet.up('Dev'), (error) => {
@@ -309,7 +312,7 @@ test('Shell command: exit immediato zero e completamento one-shot riuscito', asy
     fs.writeFileSync(w.alive, '0');
     fs.writeFileSync(w.exitStatus, '0');
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
       env: { SHELL: shell }, launchReadyMs: 0,
     });
     const result = await fleet.up('Dev');
@@ -414,7 +417,7 @@ test('up: alternate-screen setup e best-effort e non blocca l avvio della cella'
     fs.writeFileSync(w.alternateScreenFail, 'fail');
     const logs = [];
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
       log: (line) => logs.push(line),
     });
     const res = await fleet.up('Dev');
@@ -430,7 +433,7 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
   process.env.SENTINEL_SHOULD_NOT_LEAK_FINTO = '1';
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.equal(fleet.available, true);
     const res = await fleet.up('Dev');
     assert.equal(res.ok, true);
@@ -477,7 +480,7 @@ test('up flag-mode: tmux starts one-shot helper; no secret argv and no paste', a
 test('up send-keys (vivo): bracketed paste load-buffer + paste-buffer -p', async () => {
   const w = makeWorld({ promptMode: 'send-keys', cellPrompt: 'ciao cella' });
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 200 });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 200 });
     const res = await fleet.up('Dev');
     assert.equal(res.ok, true);
     assert.equal(res.prompt.injected, true, 'prompt iniettato');
@@ -500,7 +503,7 @@ test('up send-keys (command uscito): errore esplicito e nessun paste', async () 
   const w = makeWorld({ promptMode: 'send-keys', cellPrompt: 'p' });
   try {
     fs.writeFileSync(w.alive, '0'); // has-session sempre 1 -> simula command uscito
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40, sendKeysReadyMs: 40 });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40, sendKeysReadyMs: 40 });
     await assert.rejects(() => fleet.up('Dev'), (error) => error.status === 500 && /terminato subito/.test(error.message));
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('paste-buffer')), 'nessun paste-buffer');
@@ -543,7 +546,7 @@ esac
 `;
     fs.writeFileSync(w.tmuxBin, script); fs.chmodSync(w.tmuxBin, 0o755);
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 40,
     });
     await assert.rejects(() => fleet.up('Dev'), (error) => {
       assert.equal(error.status, 500);
@@ -579,7 +582,7 @@ test('up: command non trusted (relativo) -> 400, nessun new-session', async () =
       engines: [{ id: 'claude', command: 'claude', promptMode: 'flag', promptFlag: '--ps' }],
       cells: [{ id: 'Dev', cwd: w.cwd, engine: 'claude' }],
     });
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.up('Dev'), (e) => e.status === 400 && /trusted/.test(e.message));
     const { lines } = readLog(w);
     assert.ok(!lines.some((l) => l.startsWith('new-session\t')), 'non ha lanciato nulla');
@@ -598,7 +601,7 @@ test('up: cwd fuori home -> 400', async () => {
       engines: [{ id: 'claude', command: w.command, promptMode: 'flag', promptFlag: '--ps' }],
       cells: [{ id: 'Dev', cwd: outside, engine: 'claude' }],
     });
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.up('Dev'), (e) => e.status === 400 && /cwd/.test(e.message));
   } finally { w.cleanup(); fs.rmSync(outside, { recursive: true, force: true }); }
 });
@@ -606,7 +609,7 @@ test('up: cwd fuori home -> 400', async () => {
 test('up: cella/engine mancanti -> 400', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.up('Nope'), (e) => e.status === 400);
   } finally { w.cleanup(); }
 });
@@ -617,7 +620,7 @@ test('up: cella/engine mancanti -> 400', async () => {
 test('READONLY (cfg): up/mutazioni 403; status/schema/capabilities ok', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, readonlyDefault: true });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, readonlyDefault: true });
     await assert.rejects(() => fleet.up('Dev'), (e) => e.status === 403);
     await assert.rejects(() => fleet.down('Dev'), (e) => e.status === 403);
     await assert.rejects(() => fleet.restart('Dev'), (e) => e.status === 403);
@@ -642,7 +645,7 @@ test('READONLY (env NEXUSCREW_READONLY=1): up 403', async () => {
   const w = makeWorld();
   process.env.NEXUSCREW_READONLY = '1';
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.up('Dev'), (e) => e.status === 403);
   } finally { delete process.env.NEXUSCREW_READONLY; w.cleanup(); }
 });
@@ -653,7 +656,7 @@ test('READONLY (env NEXUSCREW_READONLY=1): up 403', async () => {
 test('define/edit/remove engine+cell: round-trip su fleet.json', async () => {
   const w = makeWorld({ cellPrompt: undefined });
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
 
     // define engine nuovo + cell nuova
     await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
@@ -694,7 +697,7 @@ test('define/edit/remove engine+cell: round-trip su fleet.json', async () => {
 test('engine()/boot(): persistono su fleet.json', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
     await fleet.engine('Dev', 'glm', { model: 'model-one' });
     await fleet.engine('Dev', 'claude');
@@ -724,7 +727,7 @@ test('managed codex-vl.native: launcher interno, login nativo, fake tmux', async
     });
     let launchPayload = null;
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
       launchBroker: {
         issue: async (payload) => { launchPayload = payload; return { socketPath: '/tmp/nexuscrew-test.sock', nonce: 'a'.repeat(64) }; },
         close: async () => {},
@@ -771,7 +774,7 @@ test('MCP_DEVICE is derived from the cell id and overrides engine env', async ()
     });
     let launchPayload = null;
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, sendKeysReadyMs: 0,
       launchBroker: {
         issue: async (payload) => { launchPayload = payload; return { socketPath: path.join(w.home, 'test.sock'), nonce: 'a'.repeat(64) }; },
         close: async () => {},
@@ -801,7 +804,7 @@ test('definitions: catalog credential status is target-local, value-free and rep
     });
     const secret = 'synthetic-catalog-token';
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
       env: { OPENROUTER_API_KEY: secret },
     });
     const view = fleet.definitions();
@@ -824,7 +827,7 @@ test('definitions: catalog credential status is target-local, value-free and rep
 test('editCell engine ripristina il proprio modello e non trascina quello precedente', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await fleet.defineEngine({ id: 'glm', command: w.command, model: { flag: '--model', value: 'default' }, promptMode: 'send-keys' });
     await fleet.engine('Dev', 'glm', { model: 'glm-last' });
     await fleet.editCell('Dev', { engine: 'claude' });
@@ -837,7 +840,7 @@ test('editCell engine ripristina il proprio modello e non trascina quello preced
 test('removeEngine elimina anche i modelli ricordati dalle celle', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
     await fleet.engine('Dev', 'glm', { model: 'remember-me' });
     await fleet.engine('Dev', 'claude');
@@ -851,7 +854,7 @@ test('removeEngine elimina anche i modelli ricordati dalle celle', async () => {
 test('definitions redatte + envChanges write-only', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const view = fleet.definitions();
     assert.deepEqual(view.engines[0].envKeys, ['ANTHROPIC_API_KEY']);
     assert.equal(view.engines[0].env, undefined);
@@ -866,7 +869,7 @@ test('removeCell attiva richiede stop esplicito', async () => {
   const w = makeWorld();
   try {
     fs.writeFileSync(w.sessions, 'work-build\n');
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.removeCell('Dev'), (e) => e.status === 409);
     // Sessione omonima NON posseduta da questo NC (nessun lancio, quindi
     // nessun record e nessuna connessione di controllo): anche con stop il
@@ -886,7 +889,7 @@ test('restoreCells: atomico, preserva tmuxSession e segnala needsRestart', async
   const w = makeWorld();
   try {
     fs.writeFileSync(w.sessions, 'work-build\n');
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const result = await fleet.restoreCells([
       { id: 'Dev', cwd: w.cwd, engine: 'claude', boot: false, prompt: 'restored' },
       { id: 'Trading', cwd: w.cwd, engine: 'claude', boot: false, prompt: 'new' },
@@ -903,7 +906,7 @@ test('restoreCells: atomico, preserva tmuxSession e segnala needsRestart', async
 test('restoreCells: missing engines strutturati e input invalido non scrive parzialmente', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.restoreCells([
       { id: 'X', cwd: w.cwd, engine: 'missing', boot: false },
     ]), (error) => error.status === 400 && error.data?.code === 'missing-engines'
@@ -923,7 +926,7 @@ test('restoreCells: missing engines strutturati e input invalido non scrive parz
 test('restoreEngines: imports env names without values and preserves target values on overwrite', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const created = await fleet.restoreEngines([{
       id: 'custom', label: 'Custom', rc: false, command: w.command, args: [],
       envKeys: ['API_TOKEN'], promptMode: 'send-keys',
@@ -947,7 +950,7 @@ test('restoreEngines: imports env names without values and preserves target valu
 test('restoreEngines: rejects secrets, malformed env names and conflicts atomically', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const before = fs.readFileSync(w.defsPath, 'utf8');
     await assert.rejects(() => fleet.restoreEngines([{
       id: 'claude', label: 'Collision', rc: false, command: w.command, args: [], envKeys: [], promptMode: 'send-keys',
@@ -976,7 +979,7 @@ test('restoreEngines: rejects secrets, malformed env names and conflicts atomica
 test('capabilities e schema: superficie estesa del built-in', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     assert.deepEqual(fleet.capabilities(),
       ['status', 'up', 'down', 'restart', 'engine', 'boot', 'define', 'edit', 'remove', 'import', 'restore', 'schema', 'definitions', 'credentials', 'model-test', 'model-discovery', 'edit-model']);
     const sch = fleet.schema();
@@ -998,7 +1001,7 @@ test('status: cells/engines da definitions; isCellSession; provider/reason', asy
   const w = makeWorld();
   try {
     fs.writeFileSync(w.sessions, 'work-build\n'); // cella attiva in tmux
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const st = await fleet.status();
     assert.equal(st.provider, 'builtin');
     assert.equal(st.bootOwner, 'builtin');
@@ -1028,11 +1031,11 @@ test('promptCharsOk: rifiuta ESC/null, ammette stampabili + newline', () => {
 test('fleet.json invalido/mancante -> unavailable (fail-closed)', async () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-'));
   try {
-    const missing = await createBuiltinFleet({ home, fleetDefsPath: path.join(home, 'nope.json') });
+    const missing = await createBuiltinFleet({ home, filesRoot: path.join(home, 'files'), fleetDefsPath: path.join(home, 'nope.json') });
     assert.equal(missing.available, false);
     const defsPath = path.join(home, 'fleet.json');
     fs.writeFileSync(defsPath, '{ not valid json'); // garbage
-    assert.equal((await createBuiltinFleet({ home, fleetDefsPath: defsPath })).available, false);
+    assert.equal((await createBuiltinFleet({ home, filesRoot: path.join(home, 'files'), fleetDefsPath: defsPath })).available, false);
   } finally { fs.rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -1086,7 +1089,7 @@ test('selectProvider: fleetEnabled=false -> disabled', async () => {
 test('restart (builtin): kill-session (down) prima di new-session (up)', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     // La cella nasce da UN lancio di questo NC: il down del restart agisce
     // solo sul record del lancio posseduto (id $1 del fake), non per nome.
     await fleet.up('Dev');
@@ -1105,7 +1108,7 @@ test('restart (builtin): kill-session (down) prima di new-session (up)', async (
 test('restart: cella sconosciuta -> 400 (come down/up)', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.restart('Nope'), (e) => e.status === 400);
   } finally { w.cleanup(); }
 });
@@ -1134,7 +1137,7 @@ test('redazione §9h: env value e prompt NON appaiono nell errore di up fallito 
   try {
     // avveleno new-session: stderr ecoa i segreti del comando lanciato (env value + prompt)
     fs.writeFileSync(w.poison, 'boom: ANTHROPIC_API_KEY=sk-x :: prompt=[TOPSECRET-PROMPT-9z]');
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await assert.rejects(() => fleet.up('Dev'), (e) => {
       assert.equal(e.status, 500, 'up fallito -> 500 (non duplicate)');
       assert.ok(!/sk-x/.test(e.message), 'valore env (sk-x) redatto');
@@ -1149,7 +1152,7 @@ test('redazione §9h: stderr NON avvelenato -> up ok, nessun marcatore', async (
   // sanity: senza veleno l'up riesce e il risultato non contiene redaction marker
   const w = makeWorld({ promptMode: 'flag' });
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const res = await fleet.up('Dev');
     assert.equal(res.ok, true);
   } finally { w.cleanup(); }
@@ -1160,7 +1163,7 @@ test('up non dichiara successo quando il client esce subito, anche senza prompt 
   try {
     fs.writeFileSync(w.alive, '0');
     const fleet = await createBuiltinFleet({
-      home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 0,
+      home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin, launchReadyMs: 0,
     });
     await assert.rejects(() => fleet.up('Dev'), (error) => {
       assert.equal(error.status, 500);
@@ -1207,13 +1210,13 @@ test('B4: createBuiltinFleet con fleet.json invalido non lascia endpoint lease v
   // P1-3: NESSUNA identity scritta a mano. Con fleet.json invalido
   // loadDefinitions ritorna null PRIMA di creare leaseManager/boot (P1-2) -> nessun
   // endpoint. La fixture non costruisce uno stato che in produzione non esisterebbe.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncbi-b4-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-builtin-unavail-'));
   const home = path.join(root, 'home'); fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const stablePath = path.join(home, '.nexuscrew', 'run', 'cell-Dev.sock');
   const defsPath = path.join(root, 'fleet.json');
   fs.writeFileSync(defsPath, 'GARBAGE NOT JSON {{{');
 
-  const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, cellLeaseEnabled: true });
+  const fleet = await createBuiltinFleet({ home, filesRoot: path.join(root, 'files'), fleetDefsPath: defsPath, cellLeaseEnabled: true });
   try {
     assert.equal(fleet.available, false, 'fleet.json invalido -> Fleet unavailable (off)');
     assert.equal(fs.existsSync(stablePath), false, 'endpoint lease cell-Dev.sock NON vivo con Fleet unavailable');
@@ -1262,7 +1265,7 @@ test('P1-2: gate availability post-validazione (migrazione tmux fallita) NON las
   const { loadOrCreateVerifier, signProof } = require('../lib/fleet/lease-verifier.js');
   const proof = signProof(loadOrCreateVerifier({ dir: runDir }), { kind: 'lease', cellId: 'Dev.Work', launchEpoch, leaseId: 'a'.repeat(16), generation: '0', jti: 'b'.repeat(16), issuedAt: Date.now() }, { now: () => Date.now() });
 
-  const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath, tmuxBin, cellLeaseEnabled: true });
+  const fleet = await createBuiltinFleet({ home, filesRoot: path.join(root, 'files'), fleetDefsPath: defsPath, tmuxBin, cellLeaseEnabled: true });
   try {
     assert.equal(fleet.available, false, 'migrazione fallita -> Fleet unavailable (blocked)');
     assert.equal(fs.existsSync(stablePath), false, 'P1-2: endpoint cell-Dev.Work.sock NON vivo con Fleet unavailable da gate post-validazione');
@@ -1289,7 +1292,7 @@ test('createBuiltinFleet: la modalità operativa arriva al runtime — lease non
   const leaseStateDir = path.join(w.root, 'lease-state');
   fs.mkdirSync(leaseStateDir, { mode: 0o700 });
   const fleet = await createBuiltinFleet({
-    home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
+    home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin,
     cellLeaseEnabled: true, leaseStateDir, log: () => {},
   });
   try {
@@ -1310,7 +1313,7 @@ test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same un
   fs.writeFileSync(defsPath, JSON.stringify({ schemaVersion: 1, engines: [], cells: [] }), { mode: 0o600 });
   fs.chmodSync(defsDir, 0o600); // directory senza execute: lstatSync(defsPath) -> EACCES
   try {
-    const fleet = await createBuiltinFleet({ home, fleetDefsPath: defsPath });
+    const fleet = await createBuiltinFleet({ home, filesRoot: path.join(root, 'files'), fleetDefsPath: defsPath });
     try {
       assert.equal(fleet.available, false, 'verdetto invariato: unavailable (fail-closed)');
       assert.ok(fleet.reason, 'la Fleet unavailable ora dice il perche\' (prima era muta)');
@@ -1329,7 +1332,7 @@ test('createBuiltinFleet: fleet.json presente ma illeggibile (EACCES) -> same un
 test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richiesta esplicita', async () => {
   const w = makeWorld();
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     const pubblica = await fleet.status();
     const cella = pubblica.cells.find((c) => c.cell === 'Dev');
     assert.ok(cella, 'la cella c\'e');
@@ -1349,7 +1352,7 @@ test('status: la cwd reale NON e\' nella vista pubblica, e c\'e\' solo su richie
 test('define-cell rifiuta il nome riservato Live in ogni scrittura', async () => {
   const w = makeWorld({ cellPrompt: undefined });
   try {
-    const fleet = await createBuiltinFleet({ home: w.home, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
+    const fleet = await createBuiltinFleet({ home: w.home, filesRoot: w.filesRoot, fleetDefsPath: w.defsPath, tmuxBin: w.tmuxBin });
     await fleet.defineEngine({ id: 'glm', command: w.command, promptMode: 'send-keys' });
     for (const id of ['Live', 'live', 'LIVE', 'lIvE']) {
       await assert.rejects(

@@ -12,9 +12,11 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const launchTarget = require('../lib/fleet/launch-target.js');
 const radici = require('../lib/fleet/vl-roots.js');
-const { leggiStarttimeProc } = require('../lib/fleet/definitions.js');
+const { leggiStarttimeProc, leggiIdentitaProc } = require('../lib/fleet/definitions.js');
 const { sharedTmuxSocketPath } = require('../lib/runtime/env.js');
 const W = require('./helpers/launch-world.js');
+const { valutaLancio, BLOCCHI } = require('../lib/fleet/launch-reconcile.js');
+const { esitoAssenzaSessione } = require('../lib/fleet/runtime.js');
 
 const { OWNER_INSTANCE_ID } = W;
 const { vlCellBaseDir } = require('../lib/fleet/managed.js');
@@ -316,7 +318,13 @@ async function conSupervisore(t, d, { opz = {}, vivo = false, serverPid = null, 
 test('attested: supervisore morto (ternaria), sessione assente, lease none -> resolved-dead', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
-  const { runtime } = await conSupervisore(t, d);
+  // Anche il server registrato e' provato morto (PID assente): la
+  // riconciliazione PROVATA resta esercitata senza appoggiarsi alle assenze
+  // lette su un listener non correlato, che da R1 non chiudono la pratica.
+  const srv = figlioVivo(t);
+  const nascitaSrv = leggiStarttimeProc(srv.pid);
+  await morto(srv.pid);
+  const { runtime } = await conSupervisore(t, d, { serverPid: srv.pid, serverStarttime: nascitaSrv });
   const r = await runtime.down(d.cella);
   assert.equal(r.outcome, 'resolved-dead');
   assert.ok(fs.existsSync(quarantena(d)));
@@ -403,6 +411,43 @@ test('server registrato VIVO e qualificato, interrogato lo STESSO: «same», ass
   assert.ok(chiamate(d).some((c) => c.startsWith('display-message -p #{pid} ; has-session')), 'una sola connessione per identita\' e assenza');
 });
 
+test('server registrato VIVO, qualificato e RINOMINATO: gli id originali si cercano anche sul server dimostrato', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { rinominata: true, idVivi: true } });
+  t.after(() => W.pulisci(d));
+  const srv = figlioVivo(t);
+  const nascita = leggiStarttimeProc(srv.pid);
+  W.impostaScenario(d, { serverOsservato: srv.pid });
+  const { runtime } = await conSupervisore(t, d, { serverPid: srv.pid, serverStarttime: nascita });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  // Il nome non risolve più, ma la sessione $5 vive sullo STESSO server
+  // dimostrato: senza la ricerca per id il record verrebbe archiviato con la
+  // sessione ancora viva, e un secondo up sarebbe ammesso.
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SESSION_PRESENT/.test(e.message));
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+  assert.equal(fs.existsSync(quarantena(d)), false);
+  assert.ok(chiamate(d).some((c) => c === 'display-message -p #{pid} ; has-session -t $5'),
+    'identità del server e id originale sulla STESSA connessione');
+});
+
+test('id originali letti su un server SOSTITUITO: nessuna conclusione, SERVER_UNKNOWN', async (t) => {
+  const d = W.scriviMondo({
+    famiglia: 'other',
+    scenario: { rinominata: true, idVivi: true },
+  });
+  t.after(() => W.pulisci(d));
+  const srv = figlioVivo(t);
+  const nascita = leggiStarttimeProc(srv.pid);
+  // Il nome risponde dal server del record, la query per id da un ALTRO
+  // listener: la risposta non è correlata al server giusto e non conclude
+  // niente (mai archivio, mai duplicato «trovato» altrove).
+  W.impostaScenario(d, { serverOsservato: srv.pid, serverOsservatoPerId: srv.pid + 1 });
+  const { runtime } = await conSupervisore(t, d, { serverPid: srv.pid, serverStarttime: nascita });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima);
+  assert.equal(fs.existsSync(quarantena(d)), false);
+});
+
 test('server registrato vivo ma la query arriva a un ALTRO server (cambio fra due letture): unknown', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
@@ -424,12 +469,119 @@ test('server registrato vivo ma non raggiungibile: unknown', async (t) => {
   await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
 });
 
-test('server registrato vivo senza nascita nel record, o pid illeggibile: unknown', async (t) => {
+test('server registrato vivo senza nascita nel record: identità non dimostrabile, SERVER_UNKNOWN', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
   const srv = figlioVivo(t);
   const { runtime } = await conSupervisore(t, d, { serverPid: srv.pid, serverStarttime: null });
+  // Senza serverStarttime il record NOMINA un server ma non ne dimostra
+  // l'identità: un pid nudo è riusabile. Il pid VIVO non chiude la pratica e
+  // nessuna query di sessione parte su un listener non correlato (l'assenza lì
+  // non direbbe niente della sessione registrata).
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
   await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+  assert.equal(fs.existsSync(quarantena(d)), false);
+  assert.ok(!chiamate(d).some((c) => c.includes('has-session') || c.includes('list-panes')),
+    'un server non correlato non viene interrogato: la sua risposta non è una prova');
+});
+
+test('identità del server illeggibile (nascita presente, lettura indeterminata): unknown', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const srv = figlioVivo(t);
+  const nascita = leggiStarttimeProc(srv.pid);
+  const { runtime } = await conSupervisore(t, d, {
+    serverPid: srv.pid, serverStarttime: nascita,
+    opz: { cfg: { identitaNodoKernel: nodoOra(), leggiIdentitaProc: (pid) => (pid === srv.pid ? { esito: 'indeterminata' } : leggiIdentitaProc(pid)) } },
+  });
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+});
+
+// --- v1 senza serverStarttime (campo assente per schema): il caso Asus ------
+
+test('v1 completo con serverPid positivamente ASSENTE e senza starttime: la morte del server chiude la pratica', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t);
+  await morto(sup.pid);
+  await morto(srv.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const r = await runtime.down(d.cella);
+  assert.equal(r.outcome, 'resolved-dead', 'l\'assenza positiva del pid è parte della prova di morte');
+  assert.ok(fs.existsSync(quarantena(d)));
+});
+
+test('v1 completo con serverPid vivo e senza starttime, sessione omonima viva: mai archivio, SERVER_UNKNOWN', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { omonima: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  // La presenza letta su un listener NON correlato al server del record non è
+  // un duplicato qualificato: il rifiuto è SERVER_UNKNOWN (STOP_UNKNOWN), non
+  // SESSION_DUPLICATE, e il record resta intatto.
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato');
+  assert.equal(fs.existsSync(quarantena(d)), false);
+});
+
+test('record SENZA serverPid con sessione RINOMINATA viva e pane respawnato: il blocco resta conservativo', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other', scenario: { rinominata: true, idVivi: true } });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  await morto(sup.pid); // pane respawnato dopo la rinomina: il supervisore registrato è morto
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
+    serverPid: null, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  const prima = fs.readFileSync(W.fileRecord(d), 'utf8');
+  // Il controesempio R1: per NOME la sessione è «assente» (rinominata), il
+  // supervisore registrato è morto e la lease è none. Senza la ricerca per id
+  // originale il record verrebbe archiviato con la sessione ancora viva.
+  // Con il ritocco di S2b l'oggetto trovato per id su un listener NON correlato
+  // non è un duplicato provato (gli id si rinumerano da zero): resta un blocco
+  // conservativo con esito server incerto, e il record non si tocca.
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+  assert.equal(fs.readFileSync(W.fileRecord(d), 'utf8'), prima, 'il record non va toccato: mai archivio con l\'oggetto originale vivo');
+  assert.equal(fs.existsSync(quarantena(d)), false, 'niente quarantena');
+  assert.ok(chiamate(d).some((c) => c === 'has-session -t $5'), 'la prova è la ricerca della sessione per id originale');
+});
+
+test('v1 con tmuxSocket diverso: resta SERVER_UNKNOWN (replaced-unknown), nessuna query di sessione', async (t) => {
+  const d = W.scriviMondo({ famiglia: 'other' });
+  t.after(() => W.pulisci(d));
+  const sup = figlioVivo(t);
+  const nascitaSup = leggiStarttimeProc(sup.pid);
+  const srv = figlioVivo(t);
+  await morto(sup.pid);
+  launchTarget.registra(d.filesRoot, d.sessione, {
+    launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: '/tmp/altro-socket',
+    serverPid: srv.pid, panePid: sup.pid, paneStarttime: nascitaSup, family: 'other',
+  });
+  const { runtime } = W.apriRuntime(d, {});
+  t.after(() => { try { runtime.shutdown(); } catch (_) {} });
+  await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
+  assert.ok(!chiamate(d).some((c) => c.includes('has-session')),
+    'replaced-unknown è informativo da solo: nessuna has-session sul server corrente');
 });
 
 test('socket del record diverso da quello corrente: replaced-unknown', async (t) => {
@@ -447,14 +599,23 @@ test('socket del record diverso da quello corrente: replaced-unknown', async (t)
   await assert.rejects(() => runtime.down(d.cella), (e) => BLOCCO(e) && /SERVER_UNKNOWN/.test(e.message));
 });
 
-test('nessun comando con id ($N/%N) e nessun kill durante la riconciliazione passiva', async (t) => {
+test('riconciliazione passiva: solo letture, mai mutazioni (gli id solo bersagli di lettura)', async (t) => {
   const d = W.scriviMondo({ famiglia: 'other' });
   t.after(() => W.pulisci(d));
-  const { runtime } = await conSupervisore(t, d);
+  // Server registrato e provato morto: il positivo della riconciliazione
+  // provata non si ottiene piu' dalle assenze su un listener non correlato.
+  const srv = figlioVivo(t);
+  const nascitaSrv = leggiStarttimeProc(srv.pid);
+  await morto(srv.pid);
+  const { runtime } = await conSupervisore(t, d, { serverPid: srv.pid, serverStarttime: nascitaSrv });
   await runtime.down(d.cella);
+  // R1: la riconciliazione senza
+  // identita' di server CERCA gli id originali del record, ma solo in LETTURA
+  // (has-session/list-panes). Vietate resta ogni mutazione: kill, respawn,
+  // creazione, opzioni, input.
   for (const c of chiamate(d)) {
-    assert.ok(/^(has-session|display-message)/.test(c), `comando inatteso: ${c}`);
-    assert.ok(!/[$%]\d/.test(c), `id nel comando: ${c}`);
+    assert.ok(/^(has-session|display-message|list-panes)/.test(c), `comando inatteso: ${c}`);
+    assert.ok(!/(kill-session|respawn-pane|new-session|set-option|send-keys)/.test(c), `comando non in sola lettura: ${c}`);
   }
 });
 
@@ -479,9 +640,13 @@ test('legacy v1 completo con supervisore morto: percorso ternario di sempre', as
   const f = figlioVivo(t);
   const nascita = leggiStarttimeProc(f.pid);
   await morto(f.pid);
+  // Il server nominato e' provato morto (PID assente): senza l'identita' del
+  // server le assenze sul listener corrente non chiudono (R1).
+  const srv = figlioVivo(t);
+  await morto(srv.pid);
   launchTarget.registra(d.filesRoot, d.sessione, {
     launchId: LID, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
-    panePid: f.pid, paneStarttime: nascita, family: 'other',
+    serverPid: srv.pid, panePid: f.pid, paneStarttime: nascita, family: 'other',
   });
   const { runtime } = W.apriRuntime(d, {});
   t.after(() => { try { runtime.shutdown(); } catch (_) {} });
@@ -789,6 +954,38 @@ function processoVivo(figlio) {
   try { process.kill(figlio.pid, 0); return true; } catch (_) { return false; }
 }
 
+// Bounded liveness barrier between spawn and kill: the SIGKILL must hit a
+// child that is really up, otherwise the oracle below is not exercised.
+// Polls kill(pid, 0) with a deadline; a spawn 'error' event (which may never
+// come with an 'exit') or an early self-exit fails the test right away with
+// a clear message instead of leaving it hanging on the exit wait.
+function waitChildAlive(child, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+    let timer = null;
+    const onSpawnError = (err) => {
+      clearInterval(timer);
+      reject(new Error(`fake host spawn failed before the SIGKILL: ${err.message}`));
+    };
+    child.once('error', onSpawnError);
+    timer = setInterval(() => {
+      const stop = () => { clearInterval(timer); child.removeListener('error', onSpawnError); };
+      if (child.exitCode !== null || child.signalCode !== null) {
+        stop();
+        reject(new Error(`fake host exited on its own before the SIGKILL (exitCode=${child.exitCode}, signalCode=${child.signalCode})`));
+        return;
+      }
+      let alive = false;
+      try { process.kill(child.pid, 0); alive = true; } catch (_) { alive = false; }
+      if (alive) { stop(); resolve(); return; }
+      if (Date.now() - start >= timeoutMs) {
+        stop();
+        reject(new Error(`fake host not alive within ${timeoutMs} ms of the spawn`));
+      }
+    }, 25);
+  });
+}
+
 // Sensibilità dell'oracolo stesso: un figlio ucciso per SIGKILL il cui exit
 // e' GIA' stato raccolto mantiene exitCode===null (signalCode='SIGKILL') e
 // uno zombie risponderebbe comunque a kill(0). L'oracolo deve vederlo morto,
@@ -796,8 +993,14 @@ function processoVivo(figlio) {
 test('oracolo host vivo: un figlio ucciso per SIGKILL e gia\' raccolto NON risulta vivo', async () => {
   const host = spawnaHostFinto();
   const uscita = new Promise((r) => host.once('exit', r));
+  // Bounded barrier: kill only a child that is really up (see waitChildAlive).
+  await waitChildAlive(host, 10000);
+  // From here on, a spawn/kill 'error' must fail the test instead of
+  // leaving the exit wait hanging (a failed kill may never emit 'exit').
+  const failure = new Promise((_, reject) => host.once('error',
+    (err) => reject(new Error(`fake host error after the liveness barrier: ${err.message}`))));
   process.kill(host.pid, 'SIGKILL');
-  await uscita;
+  await Promise.race([uscita, failure]);
   assert.equal(host.exitCode, null, 'morto per segnale: exitCode resta null');
   assert.equal(host.signalCode, 'SIGKILL', 'la morte per segnale si vede qui');
   assert.equal(processoVivo(host), false, 'l\'oracolo vede il morto: il solo exitCode===null non attesta la vita');
@@ -1180,9 +1383,14 @@ test('R3/R2-B: ternary vl, il record cambia durante lo stop dell\'host => la cla
   const f = figlioVivo(t);
   const nascita = leggiStarttimeProc(f.pid);
   await morto(f.pid);
+  // L'invariante sotto test e' il cambio del record durante la fase host: la
+  // si esercita con un server registrato PROVATO MORTO, perche' le assenze sul
+  // listener corrente da sole non chiudono piu' (R1).
+  const srv = figlioVivo(t);
+  await morto(srv.pid);
   assert.equal(launchTarget.registra(d.filesRoot, d.sessione, {
     launchId: lid, sessionId: '$5', paneId: '%9', tmuxSocket: sharedTmuxSocketPath(),
-    panePid: f.pid, paneStarttime: nascita, family: 'vl',
+    serverPid: srv.pid, panePid: f.pid, paneStarttime: nascita, family: 'vl',
   }), true);
   let toccato = false;
   const orig = fs.readFileSync;
@@ -1346,4 +1554,105 @@ test('R4/R3-01: radici (e quindi celle) diverse restano indipendenti', async (t)
     b1.libera(); b2.libera();
     await raccogli([p1, p2]);
   }
+});
+
+// ---------------------------------------------------------------------------
+// R1: un record GIA' MATERIALIZZATO senza identita' del
+// server non si chiude con le assenze lette sul listener corrente. Il pathname
+// del socket puo' essere servito da un server sostituto mentre l'originario
+// tiene ancora la sessione rinominata: assenza per nome e per id non provano
+// nulla su QUEL server. Le prove di never-materialized e di boot restano.
+// ---------------------------------------------------------------------------
+function tmuxTuttoAssente() {
+  const calls = [];
+  const exec = async (bin, args) => {
+    calls.push(args.join(' '));
+    const pane = args[0] === 'list-panes';
+    return {
+      code: 1, err: true, killed: false, signal: null, stdout: '',
+      stderr: pane ? "can't find pane: %9" : "can't find session: cell-a",
+    };
+  };
+  return { calls, exec };
+}
+
+function ctxValutatore(tmux, over = {}) {
+  return {
+    nomeSessione: 'cell-a',
+    tmuxBin: '/usr/bin/tmux',
+    tmuxExec: tmux.exec,
+    minimalEnv: () => ({}),
+    esitoAssenzaSessione,
+    socketCorrente: '/tmp/nc-rid-socket',
+    identitaProc: async () => ({ esito: 'assente' }),
+    sondaSocket: async () => ({ esito: 'enoent' }),
+    identitaNodo: nodoOra(),
+    ownerNodo: () => OWNER_INSTANCE_ID,
+    leaseStatus: () => ({ state: 'none' }),
+    canaleVivo: () => false,
+    lancioInCorso: () => false,
+    monoNow: () => 0,
+    scadenza: 5000,
+    ...over,
+  };
+}
+
+test('R1 riduzione: record materializzato senza serverPid — le assenze sul sostituto non chiudono', async () => {
+  const tmux = tmuxTuttoAssente();
+  const ctx = ctxValutatore(tmux);
+  // v1 completo, serverPid null (ammesso da launch-target): il supervisore
+  // registrato e' morto, la lease e' none, nome e id originali assenti sul
+  // listener corrente — che pero' e' un sostituto non correlato.
+  const record = {
+    version: 1, family: 'other', launchId: LID,
+    sessionId: '$5', paneId: '%9', tmuxSocket: ctx.socketCorrente,
+    serverPid: null, panePid: 4242, paneStarttime: 111, ts: 1,
+  };
+  const esito = await valutaLancio(ctx, { stato: 'presente', record });
+  assert.equal(esito.prova, 'ternary', JSON.stringify(esito));
+  assert.equal(esito.proofs.session, 'absent', 'la lettura resta quella osservata');
+  assert.ok(esito.blocchi.includes(BLOCCHI.SERVER_UNKNOWN), JSON.stringify(esito.blocchi));
+  assert.equal(esito.riconciliabile, false, 'il listener non correlato non autorizza quarantena ne rilancio');
+});
+
+test('R1 riduzione: un record MAI materializzato conserva la prova di assenza sul listener corrente', async () => {
+  const tmux = tmuxTuttoAssente();
+  const ctx = ctxValutatore(tmux);
+  // prepared: nessun new-session emesso, quindi nessuna sessione puo' esistere
+  // per questo lancio e l'assenza letta sul corrente resta la prova di sempre.
+  const record = {
+    version: 2, qualificato: true, phase: 'prepared', family: 'other', launchId: LID,
+    tmuxSocket: ctx.socketCorrente, serverPid: null, ts: 1,
+  };
+  const esito = await valutaLancio(ctx, { stato: 'presente', record });
+  assert.equal(esito.classificazione, 'never-materialized', JSON.stringify(esito));
+  assert.equal(esito.proofs.session, 'absent');
+  assert.deepEqual(esito.blocchi, []);
+  assert.equal(esito.riconciliabile, true);
+});
+
+test('R1 riduzione: record materializzato senza serverPid — un ID originale sul corrente è un veto conservativo', async () => {
+  const tmux = tmuxTuttoAssente();
+  const ctx = ctxValutatore(tmux, {
+    // Il listener corrente ha un oggetto con l'id $5 del record (rinominato o
+    // rinumerato dopo il riavvio: per l'id non si distingue).
+    tmuxExec: async (bin, args) => {
+      tmux.calls.push(args.join(' '));
+      if (args[0] === 'list-panes') return { code: 1, err: true, stdout: '', stderr: "can't find pane: %9" };
+      // Il NOME è assente (sessione rinominata); è l'id $5 a esistere.
+      if (args.includes('=cell-a')) return { code: 1, err: true, stdout: '', stderr: "can't find session: cell-a" };
+      return { code: 0, err: false, stdout: '', stderr: '' };
+    },
+  });
+  const record = {
+    version: 1, family: 'other', launchId: LID,
+    sessionId: '$5', paneId: '%9', tmuxSocket: ctx.socketCorrente,
+    serverPid: null, panePid: 4242, paneStarttime: 111, ts: 1,
+  };
+  const esito = await valutaLancio(ctx, { stato: 'presente', record });
+  assert.equal(esito.prova, 'ternary', JSON.stringify(esito));
+  assert.ok(esito.blocchi.includes(BLOCCHI.SERVER_UNKNOWN), JSON.stringify(esito.blocchi));
+  assert.ok(!esito.blocchi.includes(BLOCCHI.SESSION_PRESENT), 'un id su un listener non correlato non è un duplicato provato');
+  assert.equal(esito.proofs.sessionIdOriginale, 'session', 'l\'evidenza dice quale oggetto è stato visto');
+  assert.equal(esito.riconciliabile, false);
 });

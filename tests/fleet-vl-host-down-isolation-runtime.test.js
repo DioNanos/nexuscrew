@@ -54,6 +54,10 @@ const attendiVivo = async (figlio) => {
 function mondo(t, extraCfg = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-host-isolation-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, 'CellaIso');
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -433,7 +437,32 @@ test('F1: rifiuto dello stop da parte dell\'host → HOST_STOP_FAILED, host vivo
   assert.equal(sessioniVive(w).length, 1);
   const record = path.join(w.filesRoot, launchTarget.DIR, `${SESSIONE}.json`);
   assert.equal(JSON.parse(fs.readFileSync(record, 'utf8')).incerto, true, 'lancio incerto');
-  await assert.rejects(() => fleet.up('CellaIso'), (e) => e.fleetCode === 'STOP_UNKNOWN', 'up bloccato');
+  // S3 / Sedicesimo: canale posseduto e presenza VIVA provata => duplicato
+  // vivo, nessun nuovo lancio. Contatori PRIMA dell'up, confrontati DOPO.
+  const prima = JSON.parse(fs.readFileSync(record, 'utf8'));
+  const sessionePrima = sessioniVive(w).length;
+  const stopPrima = stops(w);
+  const legacyPrima = conta(w.vllog, 'stop:legacy');
+  const claimDir = path.join(w.home, '.nexuscrew', 'vl-root-claims');
+  const claimPrima = fs.existsSync(claimDir) ? fs.readdirSync(claimDir).filter((n) => n.endsWith('.lease')).length : 0;
+  const recoDir = path.join(w.filesRoot, launchTarget.DIR, 'reconciled');
+  const recoPrima = fs.existsSync(recoDir) ? fs.readdirSync(recoDir).length : 0;
+  const nascita = (p) => Number((fs.readFileSync(`/proc/${p}/stat`, 'utf8').split(') ')[1] || '').split(' ')[19]);
+  const nascitaPrima = nascita(host.pid);
+  await assert.rejects(() => fleet.up('CellaIso'), (e) => e.status === 409
+    && e.fleetCode === 'SESSION_DUPLICATE', 'duplicato vivo provato: nessun up');
+  const dopo = JSON.parse(fs.readFileSync(record, 'utf8'));
+  assert.equal(dopo.launchId, prima.launchId, 'stesso launchId: nessun lancio nuovo registrato');
+  assert.equal(dopo.incerto, true, 'il flag incerto resta');
+  assert.equal(sessioniVive(w).length, sessionePrima, 'una sola sessione: nessuna new-session');
+  assert.equal(stops(w), stopPrima, 'nessun altro stop');
+  assert.equal(conta(w.vllog, 'stop:legacy'), legacyPrima, 'zero stop legacy');
+  const claimDopo = fs.existsSync(claimDir) ? fs.readdirSync(claimDir).filter((n) => n.endsWith('.lease')).length : 0;
+  assert.equal(claimDopo, claimPrima, 'claim originale conservata');
+  const recoDopo = fs.existsSync(recoDir) ? fs.readdirSync(recoDir).length : 0;
+  assert.equal(recoDopo, recoPrima, 'nessuna quarantena');
+  assert.equal(vivo(host.pid), true, 'host originale ancora vivo');
+  assert.equal(nascita(host.pid), nascitaPrima, 'identità dell host invariata');
 });
 
 // 5. Timeout del CLI di stop (budget corto): il comando muore, TIMEOUT, l'host

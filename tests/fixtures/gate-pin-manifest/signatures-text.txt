@@ -1,0 +1,4 @@
+not valid json, only text lines matching signatures:
+"v": 2
+"flock": "/usr/bin/flock"
+"helper": "ok"

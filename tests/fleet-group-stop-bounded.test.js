@@ -268,3 +268,62 @@ test('coordinatore: un\'osservazione che non termina non tiene appesa la fase', 
   assert.notEqual(esito.outcome, 'ready-to-exit');
   assert.ok(Date.now() - inizio < 3000, 'la fase deve rientrare dal budget');
 });
+
+// --- voce 13: zero eseguibili e un figlio uscito non raccolto --------------
+// /proc sintetica con UN solo membro del gruppo, in stato Z: la sonda resta
+// positiva (il PGID esiste per lo zombie), il censimento conta 0 eseguibili e
+// 1 Z. Prima della correzione questo caso restava `ignoto/sonda` dopo una
+// ripetizione di 1,5 s; adesso e' un conteggio conclusivo.
+function procConZombie(t, pgrp) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-group-z-'));
+  fs.mkdirSync(path.join(root, 'self'));
+  fs.writeFileSync(path.join(root, 'cpuinfo'), 'processor\t: 0\n');
+  // Il NOSTRO pid, in un gruppo diverso dal bersaglio: la sonda rifiuta di
+  // interrogare il gruppo del demone e senza questa voce non partirebbe.
+  fs.mkdirSync(path.join(root, String(process.pid)));
+  fs.writeFileSync(path.join(root, String(process.pid), 'stat'),
+    `${process.pid} (test) S 1 ${process.pid + 1} ${process.pid + 1} 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n`);
+  // Il bersaglio: un solo membro, gia' uscito e non raccolto (Z).
+  const pid = 700001;
+  fs.mkdirSync(path.join(root, String(pid)));
+  fs.writeFileSync(path.join(root, String(pid), 'stat'),
+    `${pid} (syn) Z 1 ${pgrp} ${pgrp} 0 0 -1 0 -1 0 0 0 0 0 0 0 0 0 0 0 0 0\n`);
+  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); });
+  return root;
+}
+
+test('voce 13: zero eseguibili e un Z sono un conteggio conclusivo, senza 1,5 s di attesa', async (t) => {
+  const root = procConZombie(t, PGRP_BERSAGLIO);
+  let attese = 0;
+  const inizio = Date.now();
+  const esito = await gruppo.osservaGruppoDopoUscita({
+    pgrp: PGRP_BERSAGLIO,
+    identita: { nascita: 123 },
+    deadlineAt: Date.now() + 5000,
+    monoNow: () => Date.now(),
+    procRoot: root,
+    // La sonda non lancia: processo assente o uscito, il PGID resta positivo.
+    inviaSegnaleZero: () => {},
+    // Elenco dei membri noti del lancio: completo e vuoto (nessuno noto vivo).
+    noti: [],
+    leggiIdentita: () => ({ esito: 'presente', nascita: 123, stato: 'Z' }),
+    attesa: async (ms) => { attese += 1; await new Promise((r) => setTimeout(r, ms)); },
+  });
+  assert.deepEqual(esito, { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 1 });
+  assert.ok(Date.now() - inizio < 1000, `nessuna ripetizione da 1,5 s (attese=${attese}, ${Date.now() - inizio} ms)`);
+  assert.ok(attese <= 4, 'solo la finestra breve di assestamento, non il giro da 1,5 s');
+});
+
+test('voce 13: conti e verdetto — killed-zombie-held e\' un gruppo pulito, con lo zombie accanto', () => {
+  const dopo = { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti', zombie: 2 };
+  const v = gruppo.classificaEsito({ ready: { conti: dopo }, uscito: true, dopo });
+  assert.equal(v.outcome, 'killed-zombie-held');
+  assert.equal(v.conti.zombie, 2, 'il conteggio viaggia con l\'esito');
+  assert.equal(gruppo.esitoGruppoPulito(v.outcome), true, 'il teardown puo\' procedere');
+  // Senza zombie resta l'esito di sempre.
+  const senza = { inGruppo: 0, fuoriGruppo: 0, qualita: 'noti' };
+  assert.equal(gruppo.classificaEsito({ ready: { conti: senza }, uscito: true, dopo: senza }).outcome, 'killed-clean');
+  // Un eseguibile residuo resta un rifiuto, con o senza zombie accanto.
+  const residuo = { inGruppo: 1, fuoriGruppo: 0, qualita: 'noti', zombie: 1 };
+  assert.equal(gruppo.classificaEsito({ ready: { conti: residuo }, uscito: true, dopo: residuo }).outcome, 'stop-incomplete');
+});

@@ -105,8 +105,26 @@ async function preparaDaemon(t, celleBoot) {
     return { status: r.status, json: await r.json().catch(() => ({})) };
   };
 
+  // The orphan sweep filter, shared by the drain barrier and the final
+  // snapshot: any ps line quoting the sandbox home (the sweep itself excluded).
+  const righeSuperstiti = () => String(spawnSync('ps', ['-eo', 'args'], { encoding: 'utf8' }).stdout || '')
+    .split('\n')
+    .filter((l) => l.includes(home) && !l.includes('ps -eo'));
+
   t.after(async () => {
-    try { await api('POST', '/api/fleet/down', { cell: celleBoot[0] }); } catch (_) {}
+    // Stop EVERY booted cell, not just the first one: leaving the others to
+    // the tmux kill-server makes their exit asynchronous and the final sweep
+    // can catch a supervisor still walking through its SIGHUP shutdown. A
+    // structured stop-unknown with a proven exit stays acceptable (fermoSpurio,
+    // same contract as the test bodies); any other non-200 outcome is recorded
+    // and reported as a note, it never masks the sweep below.
+    const downAnomali = [];
+    for (const cella of celleBoot) {
+      try {
+        const r = await api('POST', '/api/fleet/down', { cell: cella });
+        if (r.status !== 200 && !fermoSpurio(r.json)) downAnomali.push(`${cella}:${r.status}`);
+      } catch (_) { downAnomali.push(`${cella}:errore`); }
+    }
     try { server.close(); } catch (_) {}
     // Server DI TEST chiuso per socket esatto, uscita verificata, poi nessun
     // client può più parlarci (point 3 of the design clarification).
@@ -126,16 +144,36 @@ async function preparaDaemon(t, celleBoot) {
       try { process.kill(serverPid, 'SIGKILL'); } catch (_) {}
       verificaUscitaServer(spawnSync, serverPid);
     }
+    // Bounded drain barrier: a supervisor's exit after kill-server is
+    // asynchronous (SIGHUP -> stopping -> exit), so wait a fixed window for
+    // the sandbox process list to empty before taking the snapshot. The final
+    // snapshot is NOT replaced by the barrier: a leftover that survives the
+    // window still fails the sweep below.
+    try {
+      await attendi(() => righeSuperstiti().length === 0, 3000, 100, 'svuotamento processi della sandbox');
+    } catch (_) { /* the snapshot below decides */ }
     // Inventario processi vuoto: nessun processo sopravvive legato alla sandbox.
-    const ps = spawnSync('ps', ['-eo', 'args'], { encoding: 'utf8' });
-    const superstite = String(ps.stdout || '').split('\n').filter((l) => l.includes(home) && !l.includes('ps -eo'));
-    if (superstite.length) throw new Error(`processi orfani sulla sandbox: ${superstite.slice(0, 3).join(' | ')}`);
+    const superstite = righeSuperstiti();
+    // Compute the failure first, then ALWAYS remove the sandbox and restore the
+    // environment, then throw: a red must not poison the next test with a
+    // leftover home/tmuxd or a hijacked TMUX_TMPDIR/LC_CTYPE.
+    let errore = null;
+    if (superstite.length) {
+      const notaDown = downAnomali.length ? ` (down non puliti: ${downAnomali.join(', ')})` : '';
+      errore = new Error(`processi orfani sulla sandbox${notaDown}: ${superstite.slice(0, 3).join(' | ')}`);
+    } else if (downAnomali.length) {
+      // An unclean down is a failure on its own even when the sandbox ends up
+      // empty: reporting it only alongside orphans would let a broken fleet
+      // stop path pass this suite silently.
+      errore = new Error(`down non puliti senza orfani: ${downAnomali.join(', ')}`);
+    }
     try { fs.rmSync(home, { recursive: true, force: true }); } catch (_) {}
     try { fs.rmSync(tmuxd, { recursive: true, force: true }); } catch (_) {}
     if (prevTmuxTmpdir === undefined) delete process.env.TMUX_TMPDIR;
     else process.env.TMUX_TMPDIR = prevTmuxTmpdir;
     if (prevLcCtype === undefined) delete process.env.LC_CTYPE;
     else process.env.LC_CTYPE = prevLcCtype;
+    if (errore) throw errore;
   });
 
   return { home, port, token, nodeId, tmuxEnv, hasSession, api, tmuxd };

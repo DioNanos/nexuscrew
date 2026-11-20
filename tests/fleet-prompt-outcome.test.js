@@ -31,7 +31,8 @@ function pending(over = {}) {
     state: 'pending', ts: 1700000000000, deadlineTs: 1700000020400, ...over,
   };
 }
-// Il terminale non porta deadlineTs (solo il pending lo ha): fixture senza.
+// Fixture del terminale: senza deadlineTs, che il terminale puo' portare solo
+// quando la consegna e' conclusa oltre il limite di ammissione.
 function terminale(over = {}) {
   const { deadlineTs, ...resto } = pending(over);
   return resto;
@@ -78,6 +79,9 @@ test('record: round-trip dei quattro stati, chiavi esatte, nessuna extra accetta
 // --- 2. Campi fuori catalogo rifiutati in scrittura -------------------------
 test('record: state/reason/notReady/version/event fuori catalogo rifiutati', () => {
   const root = tmpRoot(); const dir = dirSessione(root);
+  // Directory separata per i record AMMESSI: la directory dei rifiuti deve
+  // restare inesistente alla fine del test.
+  const rootOk = tmpRoot(); const dirOk = dirSessione(rootOk);
   try {
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'delivered' })), false);
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'submitted', reason: 'submitted' })), false,
@@ -92,8 +96,17 @@ test('record: state/reason/notReady/version/event fuori catalogo rifiutati', () 
     assert.equal(activityFiles.scriviRecordPrompt(dir, terminale({ state: 'skipped', reason: 'not-ready', notReady: 'whatever' })), false);
     assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ notReady: 'not-ready-auth' })), false,
       'notReady solo con skipped');
-    assert.equal(activityFiles.scriviRecordPrompt(dir, { ...terminale({ state: 'submitted' }), deadlineTs: 1 }), false,
-      'deadlineTs solo con pending');
+    // Il limite di ammissione e' ammesso anche sul terminale (una consegna che
+    // conclude DOPO la scadenza lo porta con se') e deve restare un numero
+    // finito. Un lancio diverso per caso: il terminale e' immutabile.
+    const conLimite = { ...terminale({ launchId: 'e'.repeat(16), state: 'submitted' }), deadlineTs: 1 };
+    assert.equal(activityFiles.scriviRecordPrompt(dirOk, conLimite), true,
+      'deadlineTs sul terminale e\' un dato ammesso');
+    assert.equal(activityFiles.scriviRecordPrompt(dirOk, conLimite), true,
+      'ripubblicazione identica con deadlineTs non idempotente');
+    assert.equal(activityFiles.scriviRecordPrompt(dir, { ...terminale({ launchId: 'f'.repeat(16), state: 'submitted' }), deadlineTs: 'x' }), false,
+      'deadlineTs non finito rifiutato');
+    assert.equal(activityFiles.scriviRecordPrompt(dirOk, terminale({ launchId: 'a'.repeat(16), state: 'submitted' })), true);
     assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ deadlineTs: 1699999999999 })), false,
       'deadlineTs precedente a ts rifiutato');
     assert.equal(activityFiles.scriviRecordPrompt(dir, pending({ version: 2 })), false);
@@ -103,7 +116,10 @@ test('record: state/reason/notReady/version/event fuori catalogo rifiutati', () 
       'deadline-exceeded ammesso su skipped (zero paste attestato)');
     assert.equal(validPromptRecord(terminale({ state: 'unknown', reason: 'deadline-exceeded' })), true);
     assert.equal(fs.existsSync(dir), false, 'nessun file né directory per un record rifiutato');
-  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(rootOk, { recursive: true, force: true });
+  }
 });
 
 // --- 3. launchId ostile ------------------------------------------------------

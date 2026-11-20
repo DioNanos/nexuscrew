@@ -15,6 +15,7 @@ const { notifyRoutes } = require('../lib/notify/routes.js');
 const { createLeaseManager } = require('../lib/fleet/cell-lease-server.js');
 const { persistIdentityChannel } = require('../lib/mcp/identity-provider.js');
 const { createMcpServer } = require('../lib/mcp/server.js');
+const { catalogFixture } = require('./helpers/lease-catalog.js');
 
 const LOCAL = 'a'.repeat(32);
 const CELL = 'Dev';
@@ -92,7 +93,9 @@ async function makeHub(t, { identityMode = 'authority', introspectStatus = null,
       return out;
     },
   };
-  const fleetP = Promise.resolve({ available: true, lease });
+  const catalog = catalogFixture([{ id: CELL }]);
+  t.after(() => catalog.cleanup());
+  const fleetP = Promise.resolve({ available: true, lease, leaseCellCatalog: catalog.leaseCellCatalog });
   const notifier = {
     emit: async (frame) => {
       notifies.push(frame);

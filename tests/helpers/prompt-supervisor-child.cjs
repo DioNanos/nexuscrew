@@ -13,18 +13,40 @@ const { EventEmitter } = require('node:events');
 const cellExec = require('../../lib/fleet/cell-exec.js');
 
 const cfg = JSON.parse(process.argv[2]);
-if (process.env.NC_CHILD_TRACE) {
-  const Orig = net.createConnection;
-  net.createConnection = function (...a) {
-    const t = Date.now() % 100000; const s = Orig.apply(this, a);
+let holdReconnect = false;
+const OrigCreateConnection = net.createConnection;
+net.createConnection = function (...a) {
+  // Quando il test trattiene il reconnect verso lo stablePath (stringa),
+  // restituisce un socket finto che rifiuta sul tick successivo: il supervisore
+  // resta nel ciclo di retry senza raggiungere il nuovo demone finche' il test
+  // non sblocca l'ordine con release-reconnect.
+  if (holdReconnect && typeof a[0] === 'string') {
+    const s = new EventEmitter();
+    s.destroyed = false;
+    s.writable = false;
+    s.setEncoding = () => s;
+    s.write = () => false;
+    s.destroy = () => {
+      if (s.destroyed) return;
+      s.destroyed = true;
+      process.nextTick(() => s.emit('close'));
+    };
+    process.nextTick(() => {
+      if (!s.destroyed) s.emit('error', Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }));
+    });
+    return s;
+  }
+  const s = OrigCreateConnection.apply(this, a);
+  if (process.env.NC_CHILD_TRACE) {
+    const t = Date.now() % 100000;
     process.stderr.write(`${t} conn ${JSON.stringify(a[0])}\n`);
     s.on('connect', () => process.stderr.write(`${Date.now() % 100000} connected\n`));
     s.on('end', () => process.stderr.write(`${Date.now() % 100000} end\n`));
     s.on('close', () => process.stderr.write(`${Date.now() % 100000} close\n`));
     s.on('error', (e) => process.stderr.write(`${Date.now() % 100000} error ${e.code}\n`));
-    return s;
-  };
-}
+  }
+  return s;
+};
 const out = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 
 let corrente = null;
@@ -65,10 +87,10 @@ sock.once('connect', () => {
     monoNow: () => Date.now(),
     sleep: async () => {},
     process: new EventEmitter(),
-    // Solo le attese brevi della consegna si accorciano; i timer del lease
-    // (refresh, cadenza di riconnessione) restano reali.
-    setTimeout: (fn, ms) => setTimeout(fn, (Number(ms) || 0) <= 1500 ? 5 : ms),
-    clearTimeout: (h) => clearTimeout(h),
+    // Nessun wrapper sui timer: le durate del lease (nominali E tagliate al
+    // residuo: retry, budget del tentativo, deadline) restano quelle vere del
+    // runtime, cosi' il banco non accorcia la finestra che il client usa per
+    // attendere una risposta utile.
     tmuxExec: async () => ({ err: null, stdout: '', stderr: '', code: 0 }),
     // Il trasporto e' l'unico punto finto: ogni consegna lascia una riga nel
     // log, cosi' «zero paste» e' osservabile dal processo padre.
@@ -88,6 +110,8 @@ rl.on('line', (riga) => {
   if (cmd === 'exit-child' && corrente) { const c = corrente; corrente = null; c.emit('exit', 1, null); }
   else if (cmd === 'lock-dir') { try { fs.chmodSync(cfg.dir, 0o500); out({ ev: 'locked' }); } catch (_) { out({ ev: 'lock-failed' }); } }
   else if (cmd === 'unlock-dir') { try { fs.chmodSync(cfg.dir, 0o700); out({ ev: 'unlocked' }); } catch (_) { /* best-effort */ } }
+  else if (cmd === 'hold-reconnect') { holdReconnect = true; out({ ev: 'reconnect-held' }); }
+  else if (cmd === 'release-reconnect') { holdReconnect = false; out({ ev: 'reconnect-released' }); }
   else if (cmd === 'quit') process.exit(0);
 });
 void uscita;

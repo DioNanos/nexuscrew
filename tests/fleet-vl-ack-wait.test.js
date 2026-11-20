@@ -110,7 +110,7 @@ function tetto(residuo) {
 // `sullaPausa(ms, sposta)` puo' muovere il clock durante la pausa.
 async function corsa({
   stati, budgetMs = 8000, deadlineAt, conIdentita = false, stopOut = ACK, stopCode = 0,
-  sulloStatus, sullaPausa, alInternal,
+  sulloStatus, sullaPausa, alInternal, osservaKernel, identitaNodo,
 } = {}) {
   const home = casa();
   const bin = scriviBin(path.join(home, 'vl'));
@@ -145,6 +145,8 @@ async function corsa({
   };
   const esito = await host.fermaHost({
     record: rec, bin, budgetMs, deadlineAt, monoNow: () => ora, isolamento: 'isolato',
+    ...(typeof osservaKernel === 'function' ? { osservaKernel } : {}),
+    ...(typeof identitaNodo === 'function' ? { identitaNodo } : {}),
     spawnImpl, attesaImpl: async (ms) => {
       pause.push({ ms, ora });
       if (sullaPausa) sullaPausa(ms, (v) => { ora = v; });
@@ -172,9 +174,15 @@ function peer(extra = {}) {
 test('ack, due live e un none entro la deadline: un solo stop e host fermo', async () => {
   const atteso = `${4242}:${1000}:12345:11111111-2222-3333-4444-555555555555:99:4242:4242`;
   const vivo = { out: statoJson('live', { capabilities: [CAP], peer_identity: peer() }) };
+  // La promozione dopo l'ack chiede la prova del kernel nel dominio
+  // registrato. Il doppio del test e' coerente con la sua stessa identita':
+  // stesso boot e stesso spazio dei pid. Gli assert e gli argv non cambiano.
+  const nodo = () => ({ bootId: '11111111-2222-3333-4444-555555555555', pidNamespaceInode: '99' });
   const r = await corsa({
     conIdentita: true,
     stati: [vivo, vivo, vivo, { out: NONE }],
+    identitaNodo: nodo,
+    osservaKernel: () => ({ state: 'absent', node: nodo() }),
   });
   assert.equal(r.esito.outcome, 'host-stopped-clean');
   assert.equal(r.esito.via, 'internal');

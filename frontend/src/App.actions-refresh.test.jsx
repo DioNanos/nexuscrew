@@ -70,6 +70,7 @@ vi.mock('./components/VlSessionView.jsx', () => ({ default: () => null }));
 vi.mock('./components/GridView.jsx', () => ({ default: () => <div /> }));
 
 import App from './App.jsx';
+import { loadLastRoster, saveLastRoster } from './lib/last-roster.js';
 
 const HUB = ['hub'];
 
@@ -122,11 +123,15 @@ describe('le azioni cella chiedono il refresh della route toccata', () => {
     await agisci('act-boot');
   });
 
-  it('conferma power: nessun errore e refresh della route della cella in foglio', async () => {
+  it('conferma power: POST riuscito, nessuna lettura forzata (il roster segue il suo poll)', async () => {
     render(<App />);
     // Il foglio power porta la SUA route: prima si apre, poi si conferma.
     fireEvent.click(await screen.findByTestId('open-power'));
-    await agisci('act-confirm');
+    fireEvent.click(await screen.findByTestId('act-confirm'));
+    await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(1));
+    // Un successo certo non chiede una rilettura: il foglio non dipende dalla
+    // GET e il roster locale si aggiorna col proprio giro periodico.
+    expect(mocks.refreshFleetRoute).not.toHaveBeenCalled();
   });
 });
 
@@ -153,13 +158,13 @@ describe('risposta persa: una rilettura differita per tupla, nessun replay', () 
     mocks.fleetUp.mockRejectedValue(peerTimeout());
     render(<App />);
     await conferma();
-    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledWith(HUB, 't'));
+    // Nessun kick immediato dopo l'azione: la lettura e' quella DIFFERITA, e
+    // arriva dopo la finestra, una sola volta.
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledWith(HUB, 't'), { timeout: 4000 });
     expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
-    // la differita arriva dopo la finestra, e solo una volta
-    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2), { timeout: 4000 });
     expect(mocks.fleetUp).toHaveBeenCalledTimes(1);
     await new Promise((r) => setTimeout(r, 200));
-    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(2);
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
   });
 
   it('due richieste ravvicinate sulla stessa tupla: una sola rilettura differita', async () => {
@@ -168,11 +173,11 @@ describe('risposta persa: una rilettura differita per tupla, nessun replay', () 
     await conferma();
     fireEvent.click(screen.getByTestId('act-confirm'));
     await waitFor(() => expect(mocks.fleetUp).toHaveBeenCalledTimes(2));
-    // due letture immediate (una per azione) e UNA SOLA differita: la seconda
-    // richiesta cade nella stessa finestra e viene coalesciuta, non raddoppiata
-    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3), { timeout: 4000 });
+    // Una SOLA lettura differita: la seconda richiesta cade nella stessa
+    // finestra e viene coalesciuta, non raddoppiata.
+    await waitFor(() => expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1), { timeout: 4000 });
     await new Promise((r) => setTimeout(r, 200));
-    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -273,9 +278,10 @@ describe('contesto cambiato: la lettura differita non parte', () => {
     await act(async () => { fireEvent.click(screen.getByTestId('act-confirm')); await Promise.resolve(); await Promise.resolve(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
     vi.useRealTimers();
-    // due letture immediate (una per azione) e UNA differita, quella dell'azione
-    // nuova: la vecchia non le ruba il posto con la chiave della tupla
-    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(3);
+    // Nessun kick immediato dopo l'azione: resta UNA sola lettura differita,
+    // quella dell'azione nuova. La vecchia non le ruba il posto con la chiave
+    // della tupla.
+    expect(mocks.refreshFleetRoute).toHaveBeenCalledTimes(1);
   });
 
   it('una ragione terminale già arrivata toglie senso alla lettura', async () => {
@@ -325,6 +331,43 @@ describe('rilettura dopo un cambio di credenziale', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(1501); });
     vi.useRealTimers();
     const nuove = mocks.refreshFleetRoute.mock.calls.filter((args) => args[1] === 'token-2');
-    expect(nuove.length, 'the old credential swallowed the new action deferred read').toBe(2);
+    expect(nuove.length, 'the old credential swallowed the new action deferred read').toBe(1);
+  });
+});
+
+// R4: the state of a REMOTE route is not the local roster.
+// Nessuna rilettura diretta dopo l'azione: l'unico writer del roster locale e'
+// il consumer locale del treno, e un'azione su una route remota non ne provoca
+// una lettura di conferma.
+describe('azione su una route remota: il roster locale resta suo', () => {
+  it('un up remoto non legge lo stato ne scrive il roster locale', async () => {
+    saveLastRoster('local', [{ cell: 'Locale', tmuxSession: 'cloud-Locale', engine: 'shell.local' }]);
+    render(<App />);
+    fireEvent.click(await screen.findByTestId('open-power'));
+    const letturePrima = mocks.fleetStatus.mock.calls.length;
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('act-confirm'));
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(mocks.fleetUp).toHaveBeenCalledTimes(1);
+    expect(mocks.fleetStatus.mock.calls.length, 'nessuna GET di conferma dopo l\'azione')
+      .toBe(letturePrima);
+    expect(loadLastRoster('local').map((c) => c.cell)).toEqual(['Locale']);
+  });
+
+  it('il roster locale si aggiorna dal consumer locale, non da una rilettura dell\'azione', async () => {
+    render(<App />);
+    // Il treno pubblica uno snapshot: e' il consumer locale ad applicarlo.
+    const consumer = mocks.subscribeFleetRoute.mock.calls
+      .map((a) => a[2]).filter((f) => typeof f === 'function').pop();
+    expect(consumer, 'il desktop si sottoscrive al treno locale').toBeTruthy();
+    await act(async () => {
+      consumer({
+        at: Date.now(),
+        sessionsJson: { sessions: [] },
+        fs: { available: true, cells: [{ cell: 'Riletta' }] },
+      });
+    });
+    expect(loadLastRoster('local').map((c) => c.cell)).toEqual(['Riletta']);
   });
 });

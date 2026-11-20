@@ -21,12 +21,12 @@
 // The normal product surface is the PWA. `nexuscrew` starts it in background;
 // `nexuscrew show` starts it when needed and opens it.
 const { dispatch } = require('../lib/cli/commands.js');
-Promise.resolve(dispatch(process.argv.slice(2)))
+Promise.resolve().then(() => dispatch(process.argv.slice(2)))
   .then((r) => {
     if (!r || !r.keepAlive) process.exitCode = (r && r.code) || 0;
   })
   .catch((e) => {
     process.stderr.write(`nexuscrew: ${String((e && e.message) || e)}\n`);
-    process.exitCode = 1;
+    process.exitCode = (e && Number.isInteger(e.exitCode) && e.exitCode > 0) ? e.exitCode : 1;
   });
 0;

@@ -70,6 +70,10 @@ function attendi(check, ms = 4000, passo = 20) {
 function creaMondo(t, { respawnAllaMorte = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-vlbar-'));
   const home = path.join(root, 'home');
+  // Explicit home mode: keep the fixture umask-independent (the product
+  // rejects group-writable ancestors of the vl root / broker runtime dir).
+  fs.mkdirSync(home, { recursive: true, mode: 0o755 });
+  fs.chmodSync(home, 0o755);
   const cwd = path.join(home, CELLA);
   fs.mkdirSync(cwd, { recursive: true });
   fs.mkdirSync(path.join(home, '.local', 'bin'), { recursive: true });
@@ -208,29 +212,37 @@ process.exit(0);
   });
   let payloadLancio = null;
   const mgr = createLeaseManager({ home });
-  const runtime = createBuiltinRuntime({
-    cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, vlLaunchCooldownMs: 0, groupStopBudgetMs: 4000, log: () => {}, env: {} },
-    home, defsPath, tmuxBin, readonly: () => false,
-    identityOwnerInstanceId: OWNER_INSTANCE_ID,
-    launchBroker: {
-      issue: async (req) => { payloadLancio = req; return { socketPath: path.join(root, 'broker.sock'), nonce: 'b'.repeat(64) }; },
-      revoke: async () => {}, close: async () => {},
-    },
-    leaseManager: mgr,
-    boot: loadDefinitions(defsPath),
-  });
+  const runtimes = [];
+  const nuovoRuntime = () => {
+    const rt = createBuiltinRuntime({
+      cfg: { launchReadyMs: 0, filesRoot, activityHooks: true, vlLaunchCooldownMs: 0, groupStopBudgetMs: 4000, log: () => {}, env: {} },
+      home, defsPath, tmuxBin, readonly: () => false,
+      identityOwnerInstanceId: OWNER_INSTANCE_ID,
+      launchBroker: {
+        issue: async (req) => { payloadLancio = req; return { socketPath: path.join(root, 'broker.sock'), nonce: 'b'.repeat(64) }; },
+        revoke: async () => {}, close: async () => {},
+      },
+      leaseManager: mgr,
+      boot: loadDefinitions(defsPath),
+    });
+    runtimes.push(rt);
+    return rt;
+  };
+  const runtime = nuovoRuntime();
   const hostPid = () => { try { return Number(fs.readFileSync(hostpid, 'utf8').trim()) || 0; } catch (_) { return 0; } };
   t.after(() => {
     // Zero orfani: l'host finto si spegne per pid esatto prima della pulizia.
     const p = hostPid();
     if (p > 0) { try { process.kill(p, 'SIGKILL'); } catch (_) {} }
     try { process.kill(paneChild.pid, 'SIGKILL'); } catch (_) {}
-    try { runtime.shutdown(); } catch (_) {}
+    for (const rt of runtimes) {
+      try { rt.shutdown(); } catch (_) {}
+    }
     try { mgr.close(); } catch (_) {}
     fs.rmSync(root, { recursive: true, force: true });
   });
   return {
-    root, home, filesRoot, mgr, runtime, paneChild, hostpid, hostScript, hostPid,
+    root, home, filesRoot, mgr, runtime, nuovoRuntime, paneChild, hostpid, hostScript, hostPid,
     payloadLancio: () => payloadLancio,
     logVl: () => fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean),
     logTmux: () => { try { return fs.readFileSync(logTmux, 'utf8').split('\n').filter(Boolean); } catch (_) { return []; } },
@@ -288,8 +300,9 @@ test('resolved-dead vl: tre prove + barriera host attestata -> host fermo e root
   w.spegniSessione();
   await uccidiSupervisore(w);
   w.runtime.shutdown();
+  const rtRiavviato = w.nuovoRuntime();
   const spia = spiaOrdineRimozione(t, w.hostPid);
-  const esito = await w.runtime.down(CELLA);
+  const esito = await rtRiavviato.down(CELLA);
   assert.equal(esito.ok, true);
   assert.equal(esito.outcome, 'resolved-dead');
   assert.equal(esito.host, 'host-stopped-clean');
@@ -301,7 +314,7 @@ test('resolved-dead vl: tre prove + barriera host attestata -> host fermo e root
   assert.equal(spia.rimozioni.length, 1);
   assert.equal(spia.rimozioni[0].hostVivo, false, 'la barriera host precede la rimozione del record');
   // il lancio successivo non e' bloccato dal record residuo
-  const dopo = await w.runtime.up(CELLA);
+  const dopo = await rtRiavviato.up(CELLA);
   assert.equal(dopo.ok, true);
 });
 
@@ -316,8 +329,9 @@ test('resolved-dead vl con contesto host assente: la barriera non e\' dimostrabi
   w.spegniSessione();
   await uccidiSupervisore(w);
   w.runtime.shutdown();
+  const rtRiavviato = w.nuovoRuntime();
   fs.rmSync(path.dirname(w.contestoPath()), { recursive: true, force: true });
-  await assert.rejects(() => w.runtime.down(CELLA), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
+  await assert.rejects(() => rtRiavviato.down(CELLA), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
@@ -325,7 +339,7 @@ test('resolved-dead vl con contesto host assente: la barriera non e\' dimostrabi
   assert.equal(w.logVl().filter((r) => r.startsWith('stop:')).length, 0);
   let vivo = false; try { process.kill(hostPrima, 0); vivo = true; } catch (_) { vivo = false; }
   assert.equal(vivo, true, 'l\'host separato resta vivo: la sua morte non e\' provata');
-  await assert.rejects(() => w.runtime.up(CELLA), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+  await assert.rejects(() => rtRiavviato.up(CELLA), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
 });
 
 // --- (3) negativo: contesto host corrotto -----------------------------------
@@ -337,8 +351,9 @@ test('resolved-dead vl con contesto host corrotto: la barriera non e\' dimostrab
   w.spegniSessione();
   await uccidiSupervisore(w);
   w.runtime.shutdown();
+  const rtRiavviato = w.nuovoRuntime();
   fs.writeFileSync(w.contestoPath(), '{ questo non e\' json');
-  await assert.rejects(() => w.runtime.down(CELLA), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
+  await assert.rejects(() => rtRiavviato.down(CELLA), (e) => e.fleetCode === 'HOST_UNRESOLVABLE');
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
@@ -354,6 +369,7 @@ test('resolved-dead vl con host sostituito: tuple mutata, la barriera rifiuta se
   w.spegniSessione();
   await uccidiSupervisore(w);
   w.runtime.shutdown();
+  const rtRiavviato = w.nuovoRuntime();
   // l'host registrato viene SOSTITUITO (helper --respawn: il vecchio pid
   // muore per pid esatto, il pidfile nomina un processo vivo nato DOPO): la
   // tuple osservata in /proc non e' piu' quella registrata
@@ -361,7 +377,7 @@ test('resolved-dead vl con host sostituito: tuple mutata, la barriera rifiuta se
   spawnSync(process.execPath, [w.hostScript, '--respawn', w.hostpid]);
   const nuovo = w.hostPid();
   assert.ok(nuovo > 0, 'respawn dell\'host fallito');
-  await assert.rejects(() => w.runtime.down(CELLA), (e) => e.fleetCode === 'HOST_STOP_FAILED' || e.fleetCode === 'HOST_IDENTITY_CHANGED');
+  await assert.rejects(() => rtRiavviato.down(CELLA), (e) => e.fleetCode === 'HOST_STOP_FAILED' || e.fleetCode === 'HOST_IDENTITY_CHANGED');
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
@@ -381,6 +397,7 @@ test('resolved-dead vl con claim della root non rilasciabile: record e guardia i
   w.spegniSessione();
   await uccidiSupervisore(w);
   w.runtime.shutdown();
+  const rtRiavviato = w.nuovoRuntime();
   // il record lease della root viene corrotto: il rilascio torna uncertain e
   // il claim non risulta rilasciato — la chiusura non si dichiara
   const lease = fs.readdirSync(w.claimsDir()).find((f) => f.endsWith('lease'));
@@ -390,7 +407,7 @@ test('resolved-dead vl con claim della root non rilasciabile: record e guardia i
   let revoke = 0;
   const revoca = w.mgr.revokeControl.bind(w.mgr);
   w.mgr.revokeControl = (id) => { revoke += 1; return revoca(id); };
-  await assert.rejects(() => w.runtime.down(CELLA), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
+  await assert.rejects(() => rtRiavviato.down(CELLA), (e) => e.fleetCode === 'CLAIM_UNCERTAIN');
   const letto = launchTarget.leggi(w.filesRoot, NOME);
   assert.equal(letto.stato, 'presente');
   assert.equal(letto.record.incerto, true);
@@ -399,6 +416,24 @@ test('resolved-dead vl con claim della root non rilasciabile: record e guardia i
   // l'host e' stato fermato dalla barriera (l'ordine e' quello), ma il
   // lancio NON si dichiara chiuso: la root resta sotto osservazione
   await attendi(() => { try { process.kill(hostPrima, 0); return false; } catch (_) { return true; } });
+});
+
+test('sulla vecchia istanza fermata con shutdown(), down e up rifiutano con RUNTIME_DISARMED', async (t) => {
+  const w = creaMondo(t);
+  await attendi(() => { try { process.kill(w.paneChild.pid, 0); return true; } catch (_) { return false; } });
+  await w.runtime.up(CELLA);
+  w.spegniSessione();
+  await uccidiSupervisore(w);
+  w.runtime.shutdown();
+  assert.equal(w.runtime.isDisarmed(), true);
+  await assert.rejects(
+    () => w.runtime.down(CELLA),
+    (e) => e.status === 503 && e.fleetCode === 'RUNTIME_DISARMED',
+  );
+  await assert.rejects(
+    () => w.runtime.up(CELLA),
+    (e) => e.status === 503 && e.fleetCode === 'RUNTIME_DISARMED',
+  );
 });
 
 // --- supervisore reale lato cella (lease vero + coordinatore vero) ----------
@@ -522,4 +557,73 @@ test('down vl con host NUOVO nato con la morte del canale: la barriera del recup
   assert.equal(vivo, true, 'l\'host nuovo resta vivo: la barriera non lo ferma');
   assert.equal(sup.conta.stop, 1, 'un solo comando stop: nessun doppio stop');
   await assert.rejects(() => w.runtime.up(CELLA), (e) => e.status === 409 && e.fleetCode === 'STOP_UNKNOWN');
+});
+
+// --- S3 giro 3: l'UNICO blocco e' la barriera dell'host --------------------
+//
+// Record INCERTO la cui unica prova mancante e' la barriera dell'host: fase
+// `creating` con un bootId di un ALTRO avvio (prova di boot: il lancio e'
+// certamente di un boot precedente), sessione assente, lease none. La barriera
+// passiva non ha il contesto di QUESTO lancio nella base -> rifiuta. Atteso:
+// 409 STOP_UNKNOWN con le prove e il codice originario, record e claim
+// intatti, nessuna quarantena, zero host-stop, zero nuovo lancio.
+// Questo test e' il killer del mutante «barriera host saltata».
+test('S3-g3: incerto con la sola barriera host negativa -> STOP_UNKNOWN con prove, nessun effetto', async (t) => {
+  const w = creaMondo(t);
+  const radici = require('../lib/fleet/vl-roots.js');
+  const { sharedTmuxSocketPath } = require('../lib/runtime/env.js');
+  const LID = 'cd'.repeat(8);
+  const bootCorrente = fs.readFileSync('/proc/sys/kernel/random/boot_id', 'utf8').trim();
+  const pidNs = String(fs.statSync('/proc/self/ns/pid').ino);
+  const root = radici.radiceServer(w.home, OWNER_INSTANCE_ID, CELLA);
+  // Host VIVO sulla root (non di questo lancio): la barriera non lo tocca.
+  const { spawnSync } = require('node:child_process');
+  spawnSync(process.execPath, [w.hostScript, '--respawn', w.hostpid]);
+  const host = w.hostPid();
+  assert.ok(host > 0, 'host vivo sulla root');
+  // Base della cella PRESENTE ma senza il contesto di questo lancio: la
+  // barriera non e' dimostrabile (context-missing), non si tocca l'host.
+  fs.mkdirSync(vlCellBaseDir(w.home, OWNER_INSTANCE_ID, CELLA), { recursive: true, mode: 0o700 });
+  const scritto = launchTarget.registraPrepared(w.filesRoot, NOME, {
+    launchId: LID, family: 'vl', cellId: CELLA, ownerInstanceId: OWNER_INSTANCE_ID,
+    tmuxSocket: sharedTmuxSocketPath(), bootId: '22222222-2222-4222-8222-222222222222',
+    pidNs, daemonInc: 'inc-0', res: { vlOwner: OWNER_INSTANCE_ID, vlRoot: root },
+  });
+  assert.equal(scritto && scritto.ok, true, JSON.stringify(scritto));
+  assert.equal(launchTarget.avanza(w.filesRoot, NOME, { launchId: LID, da: 'prepared', a: 'creating', campi: {} }).ok, true);
+  assert.notEqual(bootCorrente, '22222222-2222-4222-8222-222222222222');
+  assert.equal(launchTarget.marcaIncerto(w.filesRoot, NOME), true);
+
+  const recordPath = path.join(w.filesRoot, launchTarget.DIR, `${NOME}.json`);
+  const prima = fs.readFileSync(recordPath, 'utf8');
+  const claimPrima = fs.existsSync(w.claimsDir()) ? fs.readdirSync(w.claimsDir()).filter((n) => n.endsWith('.lease')).length : 0;
+  const recoDir = path.join(w.filesRoot, launchTarget.DIR, 'reconciled');
+  const recoPrima = fs.existsSync(recoDir) ? fs.readdirSync(recoDir).length : 0;
+  const stopPrima = w.logVl().filter((r) => r.startsWith('stop:')).length;
+  const newSessionPrima = w.logTmux().filter((r) => r.includes('new-session')).length;
+  const sessioniPrima = w.sessioni().length;
+  const vivo = (p) => { try { process.kill(p, 0); return true; } catch (_) { return false; } };
+  const nascita = (p) => Number((fs.readFileSync(`/proc/${p}/stat`, 'utf8').split(') ')[1] || '').split(' ')[19]);
+  const nascitaPrima = nascita(host);
+
+  const err = await w.runtime.up(CELLA).then(() => null, (e) => e);
+  assert.ok(err, 'nessun up riuscito: la barriera host e\' l\'unico blocco');
+  assert.equal(err.status, 409);
+  assert.equal(err.fleetCode, 'STOP_UNKNOWN');
+  assert.ok(err.data && err.data.prove, 'le prove nel data');
+  // Le prove dell'evaluator possono essere vuote (il lancio e' provabilmente
+  // morto): il blocco REALE e' la barriera host, e viaggia nella riconciliazione.
+  assert.ok(err.data.riconciliazione && typeof err.data.riconciliazione.codice === 'string',
+    `il dettaglio del percorso condiviso: ${JSON.stringify(err.data && err.data.riconciliazione)}`);
+
+  assert.equal(fs.readFileSync(recordPath, 'utf8'), prima, 'record intatto (stesso launchId, ancora incerto)');
+  const claimDopo = fs.existsSync(w.claimsDir()) ? fs.readdirSync(w.claimsDir()).filter((n) => n.endsWith('.lease')).length : 0;
+  assert.equal(claimDopo, claimPrima, 'claim intatta');
+  const recoDopo = fs.existsSync(recoDir) ? fs.readdirSync(recoDir).length : 0;
+  assert.equal(recoDopo, recoPrima, 'nessuna quarantena');
+  assert.equal(w.logVl().filter((r) => r.startsWith('stop:')).length, stopPrima, 'zero host-stop');
+  assert.equal(w.logTmux().filter((r) => r.includes('new-session')).length, newSessionPrima, 'zero nuovo lancio');
+  assert.equal(w.sessioni().length, sessioniPrima, 'nessuna sessione creata');
+  assert.equal(vivo(host), true, 'host originale vivo');
+  assert.equal(nascita(host), nascitaPrima, 'identita\' dell host invariata');
 });

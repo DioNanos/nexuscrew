@@ -425,7 +425,7 @@ test('B3/GC1: post-restart con cella LIVE il reconnect oltre il bound live (now+
   // Su HEAD il bound live persistito era null -> post-restart un reconnect oltre era lease (fail-open).
   // Con GC1 il bound e' now+GRACE_MS -> oltre quel bound, deny.
   // Fixture dal percorso di produzione (track + attachInitial -> bindLiveSocket). Nessun EOF.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-livebound-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-bound-live-'));
   const clock = { t: 10_000 };
   let mgr = null; let pairClient = null;
   try {
@@ -455,7 +455,7 @@ test('B3/GC1: post-restart con cella LIVE il reconnect oltre il bound live (now+
 test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scaduta = deny', async () => {
   // GC1.6: assente/illeggibile/non-intero -> grace scaduta -> deny.
   // Fixture prodotta dal percorso (track + attachInitial + EOF), poi bound corroto.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-corrupt-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-bound-corrupt-'));
   const clock = { t: 10_000 };
   let mgr = null; let pairClient = null;
   try {
@@ -487,7 +487,7 @@ test('B3/GC1.6: graceDeadline illeggibile/non-intero su disco = grace gia scadut
 
 test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS), per-cell', async () => {
   // GC1.1/GC1.2: il refresh rinfresca il bound e lo persiste PRIMA dell'ACK.
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-refresh-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-bound-refresh-'));
   const clock = { t: 10_000 };
   let mgr = null; let client = null;
   try {
@@ -515,7 +515,7 @@ test('B3/GC1.2: refresh rinfresca il bound durevole su disco (now+GRACE_MS), per
 test('B3/GC1.2: persistenza fallita nel refresh = nessun ACK e nessun proof (errore non ingoiato)', async () => {
   // GC1.2: se writePersisted non committa al refresh, nessun ACK (e nessun proof
   // nuovo: il detentore resta col proof vecchio, che scade per conto suo).
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-b3-noack-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'celllease-bound-noack-'));
   const clock = { t: 10_000 };
   let writeFail = false;
   const fakeFs = { ...fs, writeFileSync(...args) { if (writeFail) throw new Error('disk full'); return fs.writeFileSync(...args); } };

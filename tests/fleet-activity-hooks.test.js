@@ -199,7 +199,7 @@ test('a binary without version output refuses an unverifiable isolated launch', 
   const m = mondo(t);
   binarioFinto(m, 'codex', '#!/bin/sh\nexit 0\n');
   const r = resolveManagedEngine({ id: 'ex', managed: { client: 'codex', provider: 'native', model: '' } },
-    { id: 'Dev', cwd: m.cwd, tmuxSession: 'cloud-Dev' }, { home: m.home, env: {} });
+    { id: 'Dev', cwd: m.cwd, tmuxSession: 'cloud-Dev' }, { home: m.home, env: {}, filesRoot: m.filesRoot });
   assert.equal(r.ok, false);
   assert.match(r.reason, /capability could not be verified/);
 });

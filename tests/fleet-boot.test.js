@@ -147,6 +147,33 @@ test('bootCells: lo skip esige il control ARMATO, CONNESSO e legato allo STESSO 
   }
 });
 
+test('bootCells: duplicate senza prova -> la riga failed elenca le prove mancanti, l\'esito resta failed', async () => {
+  const launchId = 'cd'.repeat(8);
+  const casi = [
+    ['launch-state non consultabile', undefined, 'live', ['live', 'attested', 'control', 'lease']],
+    ['live ma phase non ancora attested', attesaViva({ phase: 'claimed' }), 'live', ['attested', 'lease']],
+    ['control armato per un ALTRO lancio', attesaViva({ control: { armed: true, connected: true, launchId: 'ff'.repeat(8) } }), 'live', ['control', 'lease']],
+    ['lease non live nello status corrente', attesaViva(), 'none', ['lease']],
+  ];
+  for (const [etichetta, launchState, lease, attese] of casi) {
+    const righe = [];
+    const fleet = mockFleet(
+      [{ cell: 'A', boot: true }],
+      async () => { throw httpError(409, 'dup', { fleetCode: 'SESSION_DUPLICATE' }); },
+      launchState ? async () => launchState : undefined,
+    );
+    fleet.status = async () => statusConLease([{ cell: 'A', boot: true, lease }]);
+    const r = await bootCells(fleet, { log: (m) => righe.push(m) });
+    assert.deepEqual(r.failed, [{ cell: 'A', code: 'SESSION_DUPLICATE' }], `${etichetta}: la decisione non cambia`);
+    assert.deepEqual(r.skipped, [], `${etichetta}: nessuno skip`);
+    const riga = righe.find((l) => /duplicate session without a current proof/.test(l));
+    assert.ok(riga, `${etichetta}: la riga failed esiste: ${righe.join(' | ')}`);
+    const m = riga.match(/missing proofs?:\s*([a-z, ]+)/);
+    assert.ok(m, `${etichetta}: la riga elenca le prove mancanti: ${riga}`);
+    assert.deepEqual(m[1].split(',').map((s) => s.trim()).sort(), attese.slice().sort(), `${etichetta}: elenco esatto`);
+  }
+});
+
 test('bootCells: 409 SENZA code (legacy/untagged) -> failed, mai skip', async () => {
   const fleet = mockFleet(
     [{ cell: 'A', boot: true }],
@@ -509,7 +536,9 @@ test('client: daemon assente oltre budget -> exit 1, zero POST, zero spawn local
   }));
   assert.equal(r.code, 1);
   assert.equal(r.reason, 'daemon-unreachable');
-  assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 0);
+  // Il contratto e' «nessun POST di LANCIO»: l'avviso all'operatore e' una POST
+  // diversa, sullo stesso canale di nc_notify, e non e' un secondo up.
+  assert.equal(fake.calls.filter((c) => c.method === 'POST' && c.path === '/api/fleet/up').length, 0);
 });
 
 test('client: fleet disabilitata NELLA CONFIG locale -> code 0, esito distinto, zero richieste', async () => {
@@ -554,7 +583,8 @@ test('client: supervision assente oltre budget -> exit 1, zero POST (fail-closed
   const r = await runFleetBoot(bootOpts(fake.impl));
   assert.equal(r.code, 1);
   assert.equal(r.reason, 'supervision-absent');
-  assert.equal(fake.calls.filter((c) => c.method === 'POST').length, 0);
+  // Come sopra: zero POST di lancio; l'avviso operatore e' un'altra POST.
+  assert.equal(fake.calls.filter((c) => c.method === 'POST' && c.path === '/api/fleet/up').length, 0);
 });
 
 test('client: daemon senza campo supervision -> trattato come assente, exit 1', async () => {
@@ -708,6 +738,13 @@ test('dispatch fleet-boot: daemon ok tutto started -> exit 0', async () => {
 test('dispatch fleet-boot: disabled nella config -> exit 0', async () => {
   const { code } = await runBootDispatch({ cfg: { fleetEnabled: false } });
   assert.equal(code, 0);
+});
+
+test('dispatch fleet-boot: il reason di uscita finisce nel log, non si perde', async () => {
+  const righe = [];
+  const { code } = await runBootDispatch({ readNodeId: () => null, log: (m) => righe.push(String(m)) });
+  assert.equal(code, 1);
+  assert.ok(righe.some((m) => /identity-unavailable/.test(m)), `il reason e' nel log di uscita: ${righe.join(' | ')}`);
 });
 
 test('dispatch fleet-boot Termux entra in HOME prima di inizializzare Fleet', async () => {

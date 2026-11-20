@@ -181,7 +181,7 @@ test('up su una cella viva: 409 «già in esecuzione» e activity.gen INTATTO', 
   await assert.rejects(() => w.runtime.up('CellaProva'), (e) => {
     assert.equal(e.status, 409, 'stesso 409 che dava la new-session');
     assert.equal(e.fleetCode, 'SESSION_DUPLICATE');
-    assert.match(String(e.message), /già in esecuzione/);
+    assert.match(String(e.message), /session already running/);
     return true;
   });
 

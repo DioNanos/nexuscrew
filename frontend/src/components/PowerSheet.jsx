@@ -5,6 +5,7 @@ import { fleetStatus, fleetDefinitions } from '../lib/api.js';
 import { ncControlCode, promptDeliveryBadge, promptInitialReasonKey, promptInitialStateKey } from '../lib/roster-view-model.js';
 import './PowerSheet.css';
 import EngineOptions from './fleet/EngineOptions.jsx';
+import LaunchAttestPanel from './fleet/LaunchAttestPanel.jsx';
 
 // Launch editor CONDIVISO da Home (SessionList), Sidebar (App) e Impostazioni
 // (FleetTab). Un solo posto per accendere/spegnere una cella, così non si
@@ -220,6 +221,11 @@ export default function PowerSheet({ cell, token, route = [], autorevole = true,
             <small>{t('prompt-initial-control')}: {t(`nc-control-${ncCodice}`)}</small>
           )}
         </div>
+
+        {/* Azione SECONDARIA locale: la pratica di lancio di QUESTA cella, sul
+            nodo che la possiede. Sulla route federata non si offre: l'atto e'
+            dell'owner, e il server rifiuta comunque la conferma da un peer. */}
+        {routeKey === '' && token && <LaunchAttestPanel cell={cell} token={token} />}
 
         {err && <div className="nc-err">{err}</div>}
 

@@ -76,14 +76,6 @@ describe('FleetTab power sheet', () => {
       .toBe('start still in progress: check the cell state'));
   });
 
-  it('il foglio NON aspetta il refresh per chiudersi: up ok + refresh appeso = chiuso', async () => {
-    // Il refresh iniziale (mount) riesce; dal successivo, fleetStatus pende.
-    state.hangStatusAfter = 1;
-    const { user, submit } = await apriFoglio();
-    await user.click(submit);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'save and start' })).toBeNull());
-  });
-
   it('errore vero 500: il foglio resta aperto con il messaggio', async () => {
     state.upImpl = () => json({ error: 'boom' }, 500);
     const { user, submit } = await apriFoglio();
@@ -91,5 +83,24 @@ describe('FleetTab power sheet', () => {
     const foglio = () => document.querySelector('form.nc-power-sheet');
     await waitFor(() => expect(foglio().textContent).toContain('boom'));
     expect(foglio() && screen.getByRole('button', { name: 'save and start' }).disabled).toBe(false);
+  });
+
+  it('il POST fallito mostra il suo errore anche con lo status periodico appeso', async () => {
+    state.hangStatusAfter = 1; // ogni lettura successiva pende
+    state.upImpl = () => json({ error: 'boom' }, 500);
+    const { user, submit } = await apriFoglio();
+    await user.click(submit);
+    await waitFor(() => expect(document.querySelector('form.nc-power-sheet').textContent)
+      .toContain('boom'), { timeout: 2500 });
+    expect(document.querySelector('form.nc-power-sheet')).toBeTruthy();
+  });
+
+  // Il foglio non aspetta la GET: dopo un 200 si chiude anche con la lettura
+  // dello stato pendente. La prova è il form assente, non il nome del bottone.
+  it('up riuscito con GET pendente: il form sparisce, nessuna attesa', async () => {
+    state.hangStatusAfter = 1;
+    const { user, submit } = await apriFoglio();
+    await user.click(submit);
+    await waitFor(() => expect(document.querySelector('form.nc-power-sheet')).toBeNull(), { timeout: 2500 });
   });
 });

@@ -83,14 +83,14 @@ test('window-size latest: usare di nuovo il client grande riporta la size grande
 });
 
 // --- Size policy deck (§5b): tile grid/deck = ignore-size, owner = focus ---
-// Sessioni con nome unico prefissato nxc-b3-test-, kill garantito in cleanup.
+// Sessioni con nome unico prefissato nxc-size-test-, kill garantito in cleanup.
 const settle = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Due attach deck concorrenti (takeSize:false → ignore-size) sulla STESSA sessione
 // NON devono contendere la geometria: la finestra resta di dimensione dell'owner.
 test('size policy: due deck ignore-size non restringono la sessione', { timeout: 15000 }, async (t) => {
   if (!ptyAvailable) return t.skip('no real PTY provider');
-  const S = 'nxc-b3-test-noncontend-' + process.pid;
+  const S = 'nxc-size-test-noncontend-' + process.pid;
   tmux(['new-session', '-d', '-s', S, '-x', '120', '-y', '40']);
   tmux(['set-option', '-t', `=${S}:`, 'window-size', 'latest']);
   try {
@@ -114,7 +114,7 @@ test('size policy: due deck ignore-size non restringono la sessione', { timeout:
 // sposta la geometria. Verifica reale della transizione size-owner (§7 advisory b).
 test('size policy: il focus promuove il size-owner (transizione stabile)', { timeout: 15000 }, async (t) => {
   if (!ptyAvailable) return t.skip('no real PTY provider');
-  const S = 'nxc-b3-test-focus-' + process.pid;
+  const S = 'nxc-size-test-focus-' + process.pid;
   tmux(['new-session', '-d', '-s', S, '-x', '120', '-y', '40']);
   tmux(['set-option', '-t', `=${S}:`, 'window-size', 'latest']);
   try {

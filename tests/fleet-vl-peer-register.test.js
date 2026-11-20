@@ -368,6 +368,9 @@ test('unit: fsync della DIRECTORY che fallisce (EIO) — l\'errore sale, nessuna
   const impl = {
     ...fs,
     openSync: (p, flags, mode) => (p === stateDir ? SENTINEL : fs.openSync(p, flags, mode)),
+    // The sentinel answers the descriptor qualification with the real identity
+    // of the ring, so the only injected fault left is the sync itself.
+    fstatSync: (fd, opts) => (fd === SENTINEL ? fs.lstatSync(stateDir) : fs.fstatSync(fd, opts)),
     fsyncSync: (fd) => { if (fd === SENTINEL) throw eio(); return fs.fsyncSync(fd); },
     closeSync: (fd) => { if (fd !== SENTINEL) fs.closeSync(fd); },
   };
